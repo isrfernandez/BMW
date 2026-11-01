@@ -20,7 +20,7 @@ class DemoSource : VehicleDataSource {
         scope.launch {
             VehicleRepository.updateStatus { it.copy(connected = true) }
             var t = 0.0
-            var doors = Doors(false, false, false, false, trunk = false, hood = false)
+            var doors = CLOSED
             var tick = 0
             while (isActive) {
                 val speed = (70 + 60 * sin(t / 9)).roundToInt()
@@ -42,19 +42,26 @@ class DemoSource : VehicleDataSource {
                 // Sin GPS real, el mapa del Inicio recorre una ruta de ejemplo a esta velocidad.
                 RouteTracker.simulate(speed, 0.05)
                 t += 0.1
-                // Cada 4 s, una combinación aleatoria de puertas, capó y maletero abiertos.
-                if (++tick % 80 == 0) doors = randomDoors()
+                // Ciclo de 30 s: 24 s todo cerrado (se ve el mapa del Inicio) y 6 s con
+                // una combinación aleatoria de puertas, capó y maletero abiertos.
+                when (++tick % 600) {
+                    480 -> doors = randomDoors()
+                    0 -> doors = CLOSED
+                }
                 delay(50)
             }
         }
     }
 
-    /** Una de cada cuatro veces todo cerrado; si no, cada pieza abierta con un 35 % (al menos una). */
+    /** Cada pieza abierta con un 35 % (al menos una). */
     private fun randomDoors(): Doors {
-        if (Random.nextInt(4) == 0) return Doors(false, false, false, false, trunk = false, hood = false)
         while (true) {
             val o = List(6) { Random.nextFloat() < 0.35f }
             if (o.any { it }) return Doors(o[0], o[1], o[2], o[3], trunk = o[4], hood = o[5])
         }
+    }
+
+    private companion object {
+        val CLOSED = Doors(false, false, false, false, trunk = false, hood = false)
     }
 }
