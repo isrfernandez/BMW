@@ -1,5 +1,6 @@
 package com.cockpitf30.vehicle.source
 
+import com.cockpitf30.nav.RouteTracker
 import com.cockpitf30.vehicle.Doors
 import com.cockpitf30.vehicle.Tyres
 import com.cockpitf30.vehicle.VehicleRepository
@@ -38,6 +39,8 @@ class DemoSource : VehicleDataSource {
                     )
                 }
                 VehicleRepository.updateStatus { it.copy(framesReceived = it.framesReceived + 1) }
+                // Sin GPS real, el mapa del Inicio recorre una ruta de ejemplo a esta velocidad.
+                RouteTracker.simulate(speed, 0.05)
                 t += 0.1
                 // Cada 4 s, una combinación aleatoria de puertas, capó y maletero abiertos.
                 if (++tick % 80 == 0) doors = randomDoors()
