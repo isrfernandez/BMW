@@ -1,5 +1,8 @@
 package com.cockpitf30.ui.screens
 
+import androidx.annotation.DrawableRes
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -18,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -27,6 +31,7 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -45,11 +50,13 @@ private const val BODY_LEFT = 0.255f
 private const val BODY_RIGHT = 0.715f
 private const val FRONT_AXLE = 0.28f
 private const val REAR_AXLE = 0.71f
+/** Las capas de puertas abiertas son más anchas que la escena: 48 px de margen a cada lado. */
+private const val LAYER_PAD = 48f / 576f
 
 /**
  * Escena del coche visto desde arriba (morro arriba) con fondo de hexágonos, centrada y fundida
  * con el fondo. Alrededor, la presión de cada rueda a la altura de su eje, autonomía y puertas;
- * lo abierto se marca en rojo sobre la imagen. Sin datos se muestra "--".
+ * lo abierto se muestra abierto y velado en rojo sobre la imagen. Sin datos se muestra "--".
  */
 @Composable
 fun VehicleScreen() {
@@ -77,10 +84,21 @@ fun VehicleScreen() {
                     .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
                     .drawWithContent {
                     drawContent()
-                    drawDoors(state.doors)
                     vignette()
                 },
             )
+
+            // Capó, maletero y puertas abiertos: imágenes veladas en rojo encima de la escena,
+            // fuera de la viñeta para que las puertas no se pierdan por los lados.
+            Box(Modifier.offset(x = left - w * LAYER_PAD).size(w * (1 + 2 * LAYER_PAD), h)) {
+                val d = state.doors
+                OpenLayer(d.hood, R.drawable.car_top_hood)
+                OpenLayer(d.trunk, R.drawable.car_top_trunk)
+                OpenLayer(d.driver, R.drawable.car_top_door_fl)
+                OpenLayer(d.passenger, R.drawable.car_top_door_fr)
+                OpenLayer(d.rearLeft, R.drawable.car_top_door_rl)
+                OpenLayer(d.rearRight, R.drawable.car_top_door_rr)
+            }
 
             val t = state.tyres
             val chip = 220.dp
@@ -153,22 +171,11 @@ private fun DrawScope.vignette() {
     drawRect(Brush.verticalGradient(0f to Color.Transparent, fy to Color.Black, 1f - fy to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
 }
 
-/** Puertas, capó y maletero abiertos en rojo sobre la imagen (coordenadas relativas a la escena). */
-private fun DrawScope.drawDoors(d: Doors) {
-    val w = size.width
-    val h = size.height
-    val stroke = 7.dp.toPx()
-    val red = Cockpit.Alert
-    fun side(open: Boolean?, x: Float, from: Float, to: Float) {
-        if (open != true) return
-        drawLine(red.copy(alpha = 0.35f), Offset(w * x, h * from), Offset(w * x, h * to), stroke * 3)
-        drawLine(red, Offset(w * x, h * from), Offset(w * x, h * to), stroke)
+/** Una pieza abierta (puerta, capó o maletero) que aparece y desaparece con un fundido. */
+@Composable
+private fun OpenLayer(open: Boolean?, @DrawableRes res: Int) {
+    val alpha by animateFloatAsState(if (open == true) 1f else 0f, tween(350), label = "puerta")
+    if (alpha > 0f) {
+        Image(painterResource(res), null, Modifier.fillMaxSize().alpha(alpha), contentScale = ContentScale.FillBounds)
     }
-    side(d.driver, BODY_LEFT, 0.36f, 0.55f)
-    side(d.rearLeft, BODY_LEFT, 0.56f, 0.69f)
-    side(d.passenger, BODY_RIGHT, 0.36f, 0.55f)
-    side(d.rearRight, BODY_RIGHT, 0.56f, 0.69f)
-    if (d.hood == true) drawRect(red.copy(alpha = 0.3f), Offset(w * 0.30f, h * 0.13f), Size(w * 0.38f, h * 0.18f))
-    if (d.trunk == true) drawRect(red.copy(alpha = 0.3f), Offset(w * 0.32f, h * 0.76f), Size(w * 0.36f, h * 0.115f))
 }
-

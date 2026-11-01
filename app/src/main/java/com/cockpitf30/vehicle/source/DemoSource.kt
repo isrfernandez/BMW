@@ -9,6 +9,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.random.Random
 
 /** Datos simulados para probar la interfaz fuera del coche. */
 class DemoSource : VehicleDataSource {
@@ -18,6 +19,8 @@ class DemoSource : VehicleDataSource {
         scope.launch {
             VehicleRepository.updateStatus { it.copy(connected = true) }
             var t = 0.0
+            var doors = Doors(false, false, false, false, trunk = false, hood = false)
+            var tick = 0
             while (isActive) {
                 val speed = (70 + 60 * sin(t / 9)).roundToInt()
                 val rpm = (900 + speed * 28 + 600 * sin(t / 2)).roundToInt()
@@ -31,13 +34,24 @@ class DemoSource : VehicleDataSource {
                         oilTempC = (60 + t * 2).coerceAtMost(105.0).roundToInt(),
                         rangeKm = 451,
                         tyres = Tyres(2.4f, 2.4f, 2.3f, 2.4f),
-                        doors = Doors(false, false, false, false, trunk = (t.toInt() / 40) % 2 == 1, hood = false),
+                        doors = doors,
                     )
                 }
                 VehicleRepository.updateStatus { it.copy(framesReceived = it.framesReceived + 1) }
                 t += 0.1
+                // Cada 4 s, una combinación aleatoria de puertas, capó y maletero abiertos.
+                if (++tick % 80 == 0) doors = randomDoors()
                 delay(50)
             }
+        }
+    }
+
+    /** Una de cada cuatro veces todo cerrado; si no, cada pieza abierta con un 35 % (al menos una). */
+    private fun randomDoors(): Doors {
+        if (Random.nextInt(4) == 0) return Doors(false, false, false, false, trunk = false, hood = false)
+        while (true) {
+            val o = List(6) { Random.nextFloat() < 0.35f }
+            if (o.any { it }) return Doors(o[0], o[1], o[2], o[3], trunk = o[4], hood = o[5])
         }
     }
 }
