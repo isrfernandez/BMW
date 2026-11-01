@@ -40,15 +40,28 @@ private val RouteGlow = Color(0xFF29B6F6)
 private val RouteCore = Color(0xFFBFE9FF)
 
 /**
- * Las teselas de CARTO vienen en grises: las pasamos a luminancia y las teñimos de azul acero,
+ * Las teselas oscuras vienen en grises: las pasamos a luminancia y las teñimos de azul acero,
  * algo más oscuras, para que el mapa quede "apagado" detrás del cuadro y la ruta destaque.
  */
 private val MapTint = ColorFilter.colorMatrix(
     ColorMatrix(
         floatArrayOf(
-            0.3f * 0.42f, 0.59f * 0.42f, 0.11f * 0.42f, 0f, 2f,
-            0.3f * 0.66f, 0.59f * 0.66f, 0.11f * 0.66f, 0f, 6f,
-            0.3f * 1.05f, 0.59f * 1.05f, 0.11f * 1.05f, 0f, 14f,
+            // Ganancia > 1 y desplazamiento negativo: el fondo gris se hunde y las calles se separan.
+            0.3f * 0.50f, 0.59f * 0.50f, 0.11f * 0.50f, 0f, -10f,
+            0.3f * 0.80f, 0.59f * 0.80f, 0.11f * 0.80f, 0f, -12f,
+            0.3f * 1.30f, 0.59f * 1.30f, 0.11f * 1.30f, 0f, -14f,
+            0f, 0f, 0f, 1f, 0f,
+        ),
+    ),
+)
+
+/** OpenStreetMap viene claro: invertimos la luminancia (fondo oscuro, calles claras) y teñimos igual. */
+private val MapTintInverted = ColorFilter.colorMatrix(
+    ColorMatrix(
+        floatArrayOf(
+            -0.3f * 0.30f, -0.59f * 0.30f, -0.11f * 0.30f, 0f, 2f + 255f * 0.30f,
+            -0.3f * 0.48f, -0.59f * 0.48f, -0.11f * 0.48f, 0f, 6f + 255f * 0.48f,
+            -0.3f * 0.80f, -0.59f * 0.80f, -0.11f * 0.80f, 0f, 14f + 255f * 0.80f,
             0f, 0f, 0f, 1f, 0f,
         ),
     ),
@@ -74,14 +87,17 @@ class MapFrame(
  * Se dibuja dentro de [bounds]; quien llama ya ha recortado al panel.
  */
 fun DrawScope.drawMap(bounds: Rect, frame: MapFrame, tm: TextMeasurer, text: MapText) {
+    val provider = MapTiles.provider.value
     val u = density
     drawRect(MapBase, bounds.topLeft, bounds.size)
     val anchor = Offset(bounds.center.x, bounds.top + bounds.height * 0.64f)
     val pos = frame.position
 
-    val z = floor(frame.zoom).toInt()
+    // Por encima del zoom máximo del servidor se amplía su última tesela.
+    val z = minOf(floor(frame.zoom).toInt(), provider.maxZoom)
     val k = u * 2f.pow(frame.zoom - z)
     val tile = TileMath.TILE * k
+    val tint = if (provider.dark) MapTint else MapTintInverted
 
     if (pos != null) {
         val wx = TileMath.worldX(pos.lon, z)
@@ -103,14 +119,14 @@ fun DrawScope.drawMap(bounds: Rect, frame: MapFrame, tm: TextMeasurer, text: Map
                 val size = IntSize(ceil(left + tile).toInt() - dst.x + 1, ceil(top + tile).toInt() - dst.y + 1)
                 val img = MapTiles.get(z, tx, ty)
                 if (img != null) {
-                    drawImage(img, dstOffset = dst, dstSize = size, colorFilter = MapTint, filterQuality = FilterQuality.Medium)
+                    drawImage(img, dstOffset = dst, dstSize = size, colorFilter = tint, filterQuality = FilterQuality.Medium)
                 } else {
                     // Mientras llega, la tesela del zoom anterior ampliada (si está en memoria).
                     MapTiles.peek(z - 1, tx shr 1, ty shr 1)?.let { parent ->
                         val half = parent.width / 2
                         drawImage(
                             parent, srcOffset = IntOffset((tx and 1) * half, (ty and 1) * half), srcSize = IntSize(half, half),
-                            dstOffset = dst, dstSize = size, colorFilter = MapTint, filterQuality = FilterQuality.Medium,
+                            dstOffset = dst, dstSize = size, colorFilter = tint, filterQuality = FilterQuality.Medium,
                         )
                     }
                 }
@@ -273,8 +289,14 @@ private fun DrawScope.drawHud(bounds: Rect, anchor: Offset, frame: MapFrame, tm:
     drawText(sl, color = Color.White.copy(alpha = 0.55f), topLeft = Offset(bx + barW + 8 * u, by - sl.size.height / 2f))
 
     // Atribución obligatoria de los datos del mapa.
-    val att = tm.measure("© OpenStreetMap  © CARTO", text.small)
+    val provider = MapTiles.provider.value
+    val att = tm.measure(provider.attribution, text.small)
     drawText(att, color = Color.White.copy(alpha = 0.28f), topLeft = Offset(bounds.center.x - 150 * u - att.size.width, by - att.size.height / 2f))
+    // Si el servidor del mapa falla, lo decimos (ayuda a saber por qué no se ven calles).
+    MapTiles.lastError.value?.let { err ->
+        val el = tm.measure("MAPA · $err", text.small)
+        drawText(el, color = Cockpit.Alert.copy(alpha = 0.85f), topLeft = Offset(bounds.center.x - 150 * u - el.size.width, by - att.size.height / 2f - el.size.height - 4 * u))
+    }
 }
 
 private fun cardinal(deg: Float): String {

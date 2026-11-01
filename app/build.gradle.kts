@@ -13,7 +13,7 @@ android {
         // Las unidades TopWay/ZQ suelen venir con Android 10–13.
         minSdk = 26
         targetSdk = 34
-        versionCode = 13
+        versionCode = 14
         versionName = "0.9.4"
     }
 
