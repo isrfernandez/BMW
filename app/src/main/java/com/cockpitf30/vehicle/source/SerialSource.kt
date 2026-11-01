@@ -1,6 +1,7 @@
 package com.cockpitf30.vehicle.source
 
 import com.cockpitf30.vehicle.VehicleRepository
+import com.cockpitf30.vehicle.probe.PortProbe
 import com.cockpitf30.vehicle.raise.RaiseBmwDecoder
 import com.cockpitf30.vehicle.raise.RaiseFramer
 import kotlinx.coroutines.CoroutineScope
@@ -54,11 +55,16 @@ class SerialSource(
                         while (isActive) {
                             val n = input.read(buffer)
                             if (n < 0) break
-                            if (n > 0) framer.feed(buffer, n)
+                            if (n > 0) {
+                                VehicleRepository.updateStatus { it.copy(bytesReceived = it.bytesReceived + n) }
+                                // Todo lo que llega, por si el formato no es el Raise que suponemos.
+                                VehicleRepository.logBytes(PortProbe.hex(buffer, minOf(n, 64)) + if (n > 64) " …(+${n - 64})" else "")
+                                framer.feed(buffer, n)
+                            }
                         }
                     }
                 } catch (e: IOException) {
-                    VehicleRepository.updateStatus { it.copy(connected = false, lastError = e.message) }
+                    VehicleRepository.updateStatus { it.copy(connected = false, lastError = "$path: ${e.message}") }
                 } catch (e: SecurityException) {
                     VehicleRepository.updateStatus { it.copy(connected = false, lastError = "Sin permiso: ${e.message}") }
                 }
@@ -84,9 +90,6 @@ class SerialSource(
         private const val RETRY_MS = 3_000L
 
         /** Puertos candidatos en placas MediaTek. */
-        fun candidatePorts(): List<File> =
-            File("/dev").listFiles { f -> f.name.startsWith("ttyMT") || f.name.startsWith("ttyS") }
-                ?.sortedBy { it.name }
-                .orEmpty()
+        fun candidatePorts(): List<File> = PortProbe.candidates()
     }
 }

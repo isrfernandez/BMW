@@ -36,6 +36,10 @@ Lanzador y panel de datos con estética BMW para la radio Wondefoo **ZQ9109** (1
 
 1. Abre **Diagnóstico** y elige *Demo* para comprobar la interfaz y que la ruleta mueve el foco.
 2. Gira y pulsa el iDrive y mira la lista de *Eventos de entrada*. Si la ruleta no mueve el foco, ahí verás qué manda (código de tecla, fuente, eje) para ajustar `input/IDriveInput.kt`.
+   Si algún botón del iDrive manda una tecla rara, en *Ruleta iDrive: enseñar botones* toca la función (Abajo, OK, Atrás…) y pulsa ese botón: queda guardado y no hace falta recompilar.
+3. En *Puerto serie*, «Probar todos los puertos» intenta abrir cada `/dev/tty*` y escucha 2 s: dice si hay permiso y cuántos bytes llegan. En *Bytes en crudo* sale todo lo que se lee, aunque no sean tramas Raise.
+4. En *Apps del CAN / MCU*, «Buscar apps del coche» lista las apps del fabricante (canbus, MCU…) y las acciones de broadcast que declaran; «Escuchar sus broadcasts» apunta los que lleguen al abrir una puerta o arrancar.
+5. «Compartir informe» o «Guardar informe en Descargas» junta todo en un .txt.
 3. Elige *Serie* y prueba cada puerto `ttyMT*`. Si sale `rw` en el puerto y aparecen tramas `2E …` al arrancar, acelerar o abrir puertas, el formato coincide. Anota qué bytes cambian y corrige `vehicle/raise/RaiseBmwDecoder.kt`.
 
 ## Correcciones a las pistas de partida

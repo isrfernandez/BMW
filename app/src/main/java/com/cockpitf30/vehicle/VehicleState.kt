@@ -41,5 +41,7 @@ data class SourceStatus(
     val connected: Boolean = false,
     val framesReceived: Long = 0,
     val badChecksums: Long = 0,
+    /** Bytes leídos del puerto, formen trama o no. */
+    val bytesReceived: Long = 0,
     val lastError: String? = null,
 )
