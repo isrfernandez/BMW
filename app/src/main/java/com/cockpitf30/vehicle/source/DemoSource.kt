@@ -38,7 +38,8 @@ class DemoSource : VehicleDataSource {
                         doors = doors,
                     )
                 }
-                VehicleRepository.updateStatus { it.copy(framesReceived = it.framesReceived + 1) }
+                // El contador se publica una vez por segundo: cada cambio de estado recompone el Inicio.
+                if (tick % 20 == 0) VehicleRepository.updateStatus { it.copy(framesReceived = it.framesReceived + 20) }
                 // Sin GPS real, el mapa del Inicio recorre una ruta de ejemplo a esta velocidad.
                 RouteTracker.simulate(speed, 0.05)
                 t += 0.1

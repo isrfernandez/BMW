@@ -67,6 +67,9 @@ import com.cockpitf30.ui.screens.openMusic
 import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.ui.theme.CockpitTheme
 import com.cockpitf30.vehicle.VehicleRepository
+import com.cockpitf30.ui.components.ClusterIntro
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 
@@ -223,6 +226,24 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
         }
     }
     BackHandler(enabled = screen != Screen.HOME) { screen = Screen.HOME }
+
+    // Puerta, capó o maletero abierto: se abre la pantalla Vehículo (vista cenital con cada puerta).
+    // Al cerrarse todo se vuelve al Inicio, que ya abre en el mapa. En Diagnóstico no se interrumpe.
+    LaunchedEffect(Unit) {
+        var autoOpened = false
+        VehicleRepository.state.map { it.doors.anyOpen }.distinctUntilChanged().collect { open ->
+            if (open && screen != Screen.VEHICLE && screen != Screen.DIAGNOSTICS) {
+                screen = Screen.VEHICLE
+                autoOpened = true
+            } else if (!open && autoOpened) {
+                autoOpened = false
+                if (screen == Screen.VEHICLE) {
+                    ClusterIntro.done = true
+                    screen = Screen.HOME
+                }
+            }
+        }
+    }
 
     val context = LocalContext.current
     val sideItems = listOf(
