@@ -3,6 +3,8 @@ package com.cockpitf30.ui.components
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -12,6 +14,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -110,8 +114,14 @@ private const val RPM_RED = 6000
  */
 @Composable
 fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier = Modifier) {
-    val speed by animateFloatAsState(state.speedKmh?.let(::speedFraction) ?: 0f, tween(180), label = "speed")
-    val rpm by animateFloatAsState(((state.rpm ?: 0).coerceIn(0, RPM_MAX)).toFloat() / RPM_MAX, tween(180), label = "rpm")
+    // Muelle en vez de tween: los datos llegan cada 50 ms y un tween reiniciado a cada dato va a
+    // tirones; el muelle conserva la velocidad de la aguja al cambiar de objetivo.
+    val needle = spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
+    val speed by animateFloatAsState(state.speedKmh?.let(::speedFraction) ?: 0f, needle, label = "speed")
+    val rpm by animateFloatAsState(((state.rpm ?: 0).coerceIn(0, RPM_MAX)).toFloat() / RPM_MAX, needle, label = "rpm")
+    // El halo de las cifras solo necesita unos pocos niveles: así el texto no se recompone en cada fotograma.
+    val speedGlow by remember { derivedStateOf { (speed * 10).roundToInt() / 10f } }
+    val rpmGlow by remember { derivedStateOf { (rpm * 10).roundToInt() / 10f } }
     // Muchos rótulos se miden en cada fotograma (hay animación continua): caché amplia.
     val measurer = rememberTextMeasurer(cacheSize = 96)
     val scaleStyle = numeric(30, FontWeight.SemiBold)
@@ -189,7 +199,8 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         Canvas(Modifier.fillMaxSize()) {
             tileVersion // se vuelve a dibujar cuando llega una tesela
             val geo = g.px(this)
-            val map = MapFrame(route, smooth.position, smooth.bearing, zoom, phase)
+            val now = smooth.value // se lee al dibujar: el mapa se mueve sin recomponer el cuadro
+            val map = MapFrame(route, now.position, now.bearing, zoom, phase)
             drawPanel(geo, scene, state, measurer, overlay, page.value, map, mapText, focused)
             drawFrame(geo, mirrored = false, fraction = speed, glow = Cyan, deep = Cockpit.Blue, hot = SpeedHot, phase = phase)
             drawFrame(geo, mirrored = true, fraction = rpm, glow = RpmGlow, deep = Cockpit.Alert, hot = RpmHot, phase = (phase + 0.5f) % 1f)
@@ -212,9 +223,9 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
                 .padding(start = g.contentInset, end = g.contentInset),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TabValue(state.speedKmh?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false, glow = Cyan, intensity = speed)
+            TabValue(state.speedKmh?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false, glow = Cyan, intensity = speedGlow)
             Spacer(Modifier.weight(1.5f))
-            TabValue(state.gear ?: "--", state.rpm?.let { "$it rpm" } ?: "-- rpm", Modifier.weight(1f), alignEnd = true, glow = RpmGlow, intensity = rpm)
+            TabValue(state.gear ?: "--", state.rpm?.let { "$it rpm" } ?: "-- rpm", Modifier.weight(1f), alignEnd = true, glow = RpmGlow, intensity = rpmGlow)
         }
         StatusLine(
             state, status,
@@ -227,15 +238,24 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
 /** Posición y rumbo suavizados: el GPS da una lectura por segundo y el mapa no debe ir a saltos. */
 private class SmoothRoute(val position: GeoPoint?, val bearing: Float)
 
+/**
+ * Posición y rumbo suavizados como estado que se lee al dibujar (no en la composición). Cada tramo
+ * dura lo que tardó en llegar el último dato: 1 s con GPS real, 50 ms en la demo, así el mapa va
+ * a velocidad constante en vez de ir siempre por detrás reiniciando una animación de 1 s.
+ */
 @Composable
-private fun rememberSmoothRoute(route: RouteState): SmoothRoute {
+private fun rememberSmoothRoute(route: RouteState): State<SmoothRoute> {
     var from by remember { mutableStateOf(route.position) }
     var to by remember { mutableStateOf(route.position) }
     val progress = remember { Animatable(1f) }
     val bearing = remember { Animatable(route.bearing) }
+    val lastUpdate = remember { longArrayOf(0L) }
     LaunchedEffect(route.position) {
         val target = route.position
         val current = from?.let { f -> to?.let { t -> lerp(f, t, progress.value) } } ?: target
+        val now = System.currentTimeMillis()
+        val interval = (now - lastUpdate[0]).coerceIn(50L, 1000L).toInt()
+        lastUpdate[0] = now
         // Un salto grande (primer fijo, cambio de fuente) no se anima.
         if (current == null || target == null || RouteTracker.distance(current, target) > 300) {
             from = target; to = target; progress.snapTo(1f)
@@ -243,16 +263,19 @@ private fun rememberSmoothRoute(route: RouteState): SmoothRoute {
         }
         from = current; to = target
         progress.snapTo(0f)
-        progress.animateTo(1f, tween(1000, easing = LinearEasing))
+        progress.animateTo(1f, tween(interval, easing = LinearEasing))
     }
     LaunchedEffect(route.bearing) {
-        // Por el camino más corto (de 350° a 10° son 20°, no 340°).
+        // Por el camino más corto (de 350° a 10° son 20°, no 340°). Muelle: no frena a cada dato.
         val delta = ((route.bearing - bearing.value) % 360 + 540) % 360 - 180
-        bearing.animateTo(bearing.value + delta, tween(900, easing = FastOutSlowInEasing))
+        bearing.animateTo(bearing.value + delta, spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessVeryLow))
     }
-    val f = from; val t = to
-    val pos = if (f != null && t != null) lerp(f, t, progress.value) else t
-    return SmoothRoute(pos, bearing.value)
+    return remember {
+        derivedStateOf {
+            val f = from; val t = to
+            SmoothRoute(if (f != null && t != null) lerp(f, t, progress.value) else t, bearing.value)
+        }
+    }
 }
 
 private fun lerp(a: GeoPoint, b: GeoPoint, f: Float) = GeoPoint(a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f)
