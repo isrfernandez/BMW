@@ -87,7 +87,13 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_ASKED_LOCATION, false)
         set(value) = prefs.edit().putBoolean(KEY_ASKED_LOCATION, value).apply()
 
+    /** Zona central del Inicio: true = mapa, false = coche (con una puerta abierta siempre el coche). */
+    var homeMap: Boolean
+        get() = prefs.getBoolean(KEY_HOME_MAP, true)
+        set(value) = prefs.edit().putBoolean(KEY_HOME_MAP, value).apply()
+
     private companion object {
+        const val KEY_HOME_MAP = "home_map"
         const val KEY_APPS_LAYOUT = "apps_layout"
         const val KEY_APPS_AZ = "apps_az"
         const val KEY_CARD_ORDER = "card_order"

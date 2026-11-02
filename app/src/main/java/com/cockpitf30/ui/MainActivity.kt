@@ -55,6 +55,7 @@ import com.cockpitf30.ui.screens.Reorder
 import com.cockpitf30.ui.screens.WeatherScreen
 import com.cockpitf30.ui.screens.PhoneScreen
 import com.cockpitf30.weather.WeatherRepository
+import com.cockpitf30.nav.RouteTracker
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -205,11 +206,13 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     // Tiempo: refresco cada 30 min y, la primera vez, pedir permiso de ubicación.
     val ctx = LocalContext.current
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        RouteTracker.start(ctx)
         scope.launch { WeatherRepository.refresh(ctx) }
     }
     LaunchedEffect(Unit) {
         val settings = AppSettings(ctx)
         WeatherRepository.loadCache(ctx)
+        RouteTracker.start(ctx)
         if (!settings.askedLocation && settings.weatherPlace == null && !WeatherRepository.hasLocationPermission(ctx)) {
             settings.askedLocation = true
             locationPermission.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION))
