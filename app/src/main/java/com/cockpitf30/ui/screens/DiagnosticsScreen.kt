@@ -72,6 +72,9 @@ fun DiagnosticsScreen() {
     var probes by remember { mutableStateOf<List<String>?>(null) }
     var packages by remember { mutableStateOf<List<SystemProbe.PackageReport>?>(null) }
     var props by remember { mutableStateOf<List<String>>(emptyList()) }
+    var sysApps by remember { mutableStateOf<List<String>>(emptyList()) }
+    var services by remember { mutableStateOf<List<String>>(emptyList()) }
+    var jars by remember { mutableStateOf<List<String>>(emptyList()) }
     var busy by remember { mutableStateOf<String?>(null) }
 
     var mode by remember { mutableStateOf(settings.sourceMode) }
@@ -100,12 +103,15 @@ fun DiagnosticsScreen() {
             withContext(Dispatchers.IO) {
                 packages = SystemProbe.scan(context)
                 props = SystemProbe.properties()
+                sysApps = SystemProbe.systemApps(context)
+                services = SystemProbe.systemServices()
+                jars = SystemProbe.frameworkJars()
             }
             busy = null
         }
     }
 
-    fun report() = buildReport(context, status, probes, packages, props, input, raw, bytes, broadcasts)
+    fun report() = buildReport(context, status, probes, packages, props, input, raw, bytes, broadcasts, sysApps, services, jars)
     val automotive = remember { CarPropertySource.isAvailable(context) }
 
     fun apply() {
@@ -215,6 +221,10 @@ fun DiagnosticsScreen() {
                         if (p.actions.size > 8) Mono("  … y ${p.actions.size - 8} más (en el informe)")
                     }
                 }
+                if (sysApps.isNotEmpty() || services.isNotEmpty()) {
+                    Info("Apps del sistema: ${sysApps.size} · servicios del sistema: ${services.size} · jars del framework: ${jars.size} (todo en el informe)", Cockpit.TextDim)
+                    (services + jars).filter(SystemProbe::interesting).take(20).forEach { Mono(it) }
+                }
                 if (props.isNotEmpty()) {
                     Info("Propiedades del sistema relacionadas:", Cockpit.TextDim)
                     props.take(30).forEach { Mono(it) }
@@ -297,6 +307,9 @@ private fun buildReport(
     raw: List<String>,
     bytes: List<String>,
     broadcasts: List<String>,
+    sysApps: List<String>,
+    services: List<String>,
+    jars: List<String>,
 ): String = buildString {
     val dm = context.resources.displayMetrics
     appendLine("Cockpit F30 · informe de diagnóstico · ${java.time.LocalDateTime.now()}")
@@ -333,6 +346,9 @@ private fun buildReport(
         appendLine("== $title")
         lines.forEach(::appendLine)
     }
+    section("Servicios del sistema", services)
+    section("Jars del framework", jars)
+    section("Apps del sistema", sysApps)
     section("Broadcasts", broadcasts)
     section("Eventos de entrada", input)
     section("Tramas Raise", raw)
