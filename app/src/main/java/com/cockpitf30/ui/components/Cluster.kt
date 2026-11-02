@@ -27,14 +27,13 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cockpitf30.nav.GeoPoint
 import com.cockpitf30.nav.MapTiles
 import com.cockpitf30.nav.RouteState
 import com.cockpitf30.nav.RouteTracker
-import com.cockpitf30.system.AppSettings
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -148,23 +147,28 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         0f, 1f, infiniteRepeatable(tween(3200, easing = LinearEasing)), label = "phase",
     )
 
-    // Zona central deslizante: 0 = coche, 1 = mapa. Con una puerta abierta se fuerza el coche.
-    val context = LocalContext.current
-    val settings = remember { AppSettings(context) }
-    var wantMap by remember { mutableStateOf(settings.homeMap) }
+    // Zona central deslizante: 0 = coche, 1 = mapa. Al arrancar la app se ve el coche y a los
+    // 10 s pasa al mapa; después el Inicio abre ya en el mapa (p. ej. al volver de la pantalla de
+    // puertas). Deslizando u OK se vuelve a ver el coche, que se queda hasta volver a deslizar.
     val doorsOpen = state.doors.anyOpen
-    // Fundido entre el coche cerrado y el abierto.
+    // Fundido entre el coche cerrado y el abierto (con puertas abiertas se abre la pantalla Vehículo).
     val openness by animateFloatAsState(if (doorsOpen) 1f else 0f, tween(700, easing = FastOutSlowInEasing), label = "open")
-    val page = remember { Animatable(if (wantMap && !doorsOpen) 1f else 0f) }
+    var wantMap by remember { mutableStateOf(ClusterIntro.done) }
+    val page = remember { Animatable(if (wantMap) 1f else 0f) }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(wantMap, doorsOpen) {
-        page.animateTo(if (wantMap && !doorsOpen) 1f else 0f, tween(650, easing = FastOutSlowInEasing))
-    }
     fun choose(map: Boolean) {
         wantMap = map
-        settings.homeMap = map
-        // Si no cambia la elección (p. ej. arrastre a medias), el efecto no se relanza: volvemos aquí.
-        scope.launch { page.animateTo(if (map && !doorsOpen) 1f else 0f, tween(450, easing = FastOutSlowInEasing)) }
+        ClusterIntro.done = true
+        scope.launch { page.animateTo(if (map) 1f else 0f, tween(450, easing = FastOutSlowInEasing)) }
+    }
+    LaunchedEffect(Unit) {
+        if (ClusterIntro.done) return@LaunchedEffect
+        delay(ClusterIntro.CAR_MS)
+        if (!ClusterIntro.done) {
+            ClusterIntro.done = true
+            wantMap = true
+            page.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
+        }
     }
     var focused by remember { mutableStateOf(false) }
 
@@ -177,8 +181,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
 
     BoxWithConstraints(
         modifier
-            .pointerInput(doorsOpen) {
-                if (doorsOpen) return@pointerInput
+            .pointerInput(Unit) {
                 // Deslizar a izquierda o derecha en el panel cambia entre coche y mapa.
                 var start = 0f
                 detectHorizontalDragGestures(
@@ -197,7 +200,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             // Ruleta: el panel es un elemento más; OK alterna entre coche y mapa.
             .onFocusChanged { focused = it.isFocused }
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                if (!doorsOpen) choose(!wantMap)
+                choose(!wantMap)
             },
     ) {
         val g = Geometry(maxWidth, maxHeight)
@@ -238,6 +241,12 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
                 .padding(start = g.scaleWidth - 10.dp, end = g.scaleWidth - 10.dp, top = 8.dp),
         )
     }
+}
+
+/** Presentación del Inicio: el coche se ve solo durante los primeros segundos tras arrancar la app. */
+object ClusterIntro {
+    const val CAR_MS = 10_000L
+    @Volatile var done = false
 }
 
 /** Posición y rumbo suavizados: el GPS da una lectura por segundo y el mapa no debe ir a saltos. */
@@ -434,27 +443,49 @@ private fun DrawScope.drawCar(
             y += l.size.height + g.dp(12f)
         }
 
-        // Presión de las ruedas: delanteras arriba, traseras junto a las ruedas.
+        // Presión de cada rueda con una línea hasta ella. Las del lado derecho quedan ocultas: la
+        // línea va a la esquina del coche más cercana. Coordenadas medidas sobre car_34_closed (790x564).
         val t = state.tyres
-        // Fuera de la silueta, también con las puertas abiertas (llegan hasta x 0.97).
-        tyre(tm, st, "DEL. IZQ.", t.frontLeft, at(0.03f, 0.30f), alignRight = true)
-        tyre(tm, st, "DEL. DER.", t.frontRight, at(0.99f, 0.30f), alignRight = false)
-        tyre(tm, st, "TRAS. IZQ.", t.rearLeft, at(0.03f, 0.70f), alignRight = true)
-        tyre(tm, st, "TRAS. DER.", t.rearRight, at(0.99f, 0.70f), alignRight = false)
+        fun bar(v: Float?) = v?.let { "%.1f".format(it) } ?: "--"
+        marker(tm, st, "DEL. IZQ.", bar(t.frontLeft), " bar", at(0.456f, 0.78f), at(0.58f, 0.82f), alignRight = false)
+        marker(tm, st, "TRAS. IZQ.", bar(t.rearLeft), " bar", at(0.787f, 0.475f), at(0.92f, 0.52f), alignRight = false)
+        marker(tm, st, "DEL. DER.", bar(t.frontRight), " bar", at(0.19f, 0.585f), at(0.05f, 0.62f), alignRight = true, hidden = true)
+        marker(tm, st, "TRAS. DER.", bar(t.rearRight), " bar", at(0.80f, 0.255f), at(0.90f, 0.17f), alignRight = false, hidden = true)
+        // Autonomía arriba a la izquierda, sin línea.
+        marker(tm, st, "AUTONOMÍA", state.rangeKm?.toString() ?: "--", " km", null, at(0.10f, 0.17f), alignRight = true)
     }
 }
 
-/** Presión de una rueda: rótulo pequeño y valor en Saira; "--" si no hay dato. */
-private fun DrawScope.tyre(tm: TextMeasurer, st: Overlay, caption: String, bar: Float?, at: Offset, alignRight: Boolean) {
+private val MarkerShadow = Shadow(Color.Black.copy(alpha = 0.9f), Offset(0f, 2f), 10f)
+
+/**
+ * Marcador sin fondo: rótulo pequeño y valor en Saira con sombra para que se lean sobre la escena.
+ * Con [wheel], un punto en la rueda (hueco si queda oculta) y una línea fina hasta el texto.
+ */
+private fun DrawScope.marker(
+    tm: TextMeasurer, st: Overlay, caption: String, value: String, unit: String,
+    wheel: Offset?, label: Offset, alignRight: Boolean, hidden: Boolean = false,
+) {
     val c = tm.measure(caption, st.caption)
-    val v = tm.measure(bar?.let { "%.1f".format(it) } ?: "--", st.value)
-    val u = tm.measure(" bar", st.unit)
+    val v = tm.measure(value, st.value)
+    val u = tm.measure(unit, st.unit)
+    val gap = 8.dp.toPx()
+    if (wheel != null) {
+        val line = Color.White.copy(alpha = if (hidden) 0.35f else 0.55f)
+        drawLine(line, wheel, label, 1.2.dp.toPx(), StrokeCap.Round)
+        drawCircle(Cyan.copy(alpha = 0.35f), 7.dp.toPx(), wheel, blendMode = BlendMode.Plus)
+        if (hidden) drawCircle(Cyan, 3.5.dp.toPx(), wheel, style = Stroke(1.5.dp.toPx()))
+        else drawCircle(Color.White, 3.5.dp.toPx(), wheel)
+    }
     val width = maxOf(c.size.width, v.size.width + u.size.width)
-    val x = if (alignRight) at.x - width else at.x
-    drawRoundRect(Color.Black.copy(alpha = 0.35f), Offset(x - 10.dp.toPx(), at.y - 6.dp.toPx()), Size(width + 20.dp.toPx(), c.size.height + v.size.height + 10.dp.toPx()), CornerRadius(8.dp.toPx()))
-    drawText(c, color = Color.White.copy(alpha = 0.65f), topLeft = Offset(x, at.y))
-    drawText(v, color = Color.White, topLeft = Offset(x, at.y + c.size.height))
-    drawText(u, color = Color.White.copy(alpha = 0.65f), topLeft = Offset(x + v.size.width, at.y + c.size.height + v.size.height - u.size.height - 3.dp.toPx()))
+    val h = c.size.height + v.size.height
+    val x = if (alignRight) label.x - gap - width else label.x + gap
+    val y = label.y - h / 2f
+    fun right(w: Int) = if (alignRight) x + width - w else x
+    drawText(c, color = Color.White.copy(alpha = 0.7f), topLeft = Offset(right(c.size.width), y), shadow = MarkerShadow)
+    val vx = if (alignRight) x + width - v.size.width - u.size.width else x
+    drawText(v, color = Color.White, topLeft = Offset(vx, y + c.size.height), shadow = MarkerShadow)
+    drawText(u, color = Color.White.copy(alpha = 0.7f), topLeft = Offset(vx + v.size.width, y + h - u.size.height - 3.dp.toPx()), shadow = MarkerShadow)
 }
 
 /** Marco en chevron: línea exterior fina y brillante, línea interior gruesa y franja entre ambas con el relleno del valor. */
