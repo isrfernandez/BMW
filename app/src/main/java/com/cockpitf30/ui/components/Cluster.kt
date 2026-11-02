@@ -3,6 +3,8 @@ package com.cockpitf30.ui.components
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -12,6 +14,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -23,14 +27,13 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cockpitf30.nav.GeoPoint
 import com.cockpitf30.nav.MapTiles
 import com.cockpitf30.nav.RouteState
 import com.cockpitf30.nav.RouteTracker
-import com.cockpitf30.system.AppSettings
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -104,20 +107,29 @@ private const val RPM_RED = 6000
 
 /**
  * Cuadro de instrumentos estilo iDrive 8: marcos en chevron cian (velocidad) y rojo (rpm) con las
- * cifras por fuera, panel central con la imagen del coche visto desde atrás y sus indicadores,
+ * cifras por fuera, panel central con la imagen del coche en vista 3/4 (cerrado o con lo abierto en rojo) y sus indicadores,
  * velocidad y marcha en pestañas oscuras, combustible y aceite, y una línea de estado debajo.
  * Lo que no llega se muestra "--".
  */
 @Composable
 fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier = Modifier) {
-    val speed by animateFloatAsState(state.speedKmh?.let(::speedFraction) ?: 0f, tween(180), label = "speed")
-    val rpm by animateFloatAsState(((state.rpm ?: 0).coerceIn(0, RPM_MAX)).toFloat() / RPM_MAX, tween(180), label = "rpm")
+    // Muelle en vez de tween: los datos llegan cada 50 ms y un tween reiniciado a cada dato va a
+    // tirones; el muelle conserva la velocidad de la aguja al cambiar de objetivo.
+    val needle = spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
+    val speed by animateFloatAsState(state.speedKmh?.let(::speedFraction) ?: 0f, needle, label = "speed")
+    val rpm by animateFloatAsState(((state.rpm ?: 0).coerceIn(0, RPM_MAX)).toFloat() / RPM_MAX, needle, label = "rpm")
+    // El halo de las cifras solo necesita unos pocos niveles: así el texto no se recompone en cada fotograma.
+    val speedGlow by remember { derivedStateOf { (speed * 10).roundToInt() / 10f } }
+    val rpmGlow by remember { derivedStateOf { (rpm * 10).roundToInt() / 10f } }
     // Muchos rótulos se miden en cada fotograma (hay animación continua): caché amplia.
     val measurer = rememberTextMeasurer(cacheSize = 96)
     val scaleStyle = numeric(30, FontWeight.SemiBold)
     val smallStyle = numeric(17, FontWeight.SemiBold)
     val captionStyle = numeric(17, FontWeight.Medium)
-    val scene = ImageBitmap.imageResource(R.drawable.car_rear_scene)
+    val scene = CarScene(
+        closed = ImageBitmap.imageResource(R.drawable.car_34_closed),
+        open = ImageBitmap.imageResource(R.drawable.car_34_open),
+    )
     val overlay = Overlay(
         value = numeric(24, FontWeight.SemiBold),
         unit = numeric(14),
@@ -135,21 +147,28 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         0f, 1f, infiniteRepeatable(tween(3200, easing = LinearEasing)), label = "phase",
     )
 
-    // Zona central deslizante: 0 = coche, 1 = mapa. Con una puerta abierta se fuerza el coche.
-    val context = LocalContext.current
-    val settings = remember { AppSettings(context) }
-    var wantMap by remember { mutableStateOf(settings.homeMap) }
+    // Zona central deslizante: 0 = coche, 1 = mapa. Al arrancar la app se ve el coche y a los
+    // 10 s pasa al mapa; después el Inicio abre ya en el mapa (p. ej. al volver de la pantalla de
+    // puertas). Deslizando u OK se vuelve a ver el coche, que se queda hasta volver a deslizar.
     val doorsOpen = state.doors.anyOpen
-    val page = remember { Animatable(if (wantMap && !doorsOpen) 1f else 0f) }
+    // Fundido entre el coche cerrado y el abierto (con puertas abiertas se abre la pantalla Vehículo).
+    val openness by animateFloatAsState(if (doorsOpen) 1f else 0f, tween(700, easing = FastOutSlowInEasing), label = "open")
+    var wantMap by remember { mutableStateOf(ClusterIntro.done) }
+    val page = remember { Animatable(if (wantMap) 1f else 0f) }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(wantMap, doorsOpen) {
-        page.animateTo(if (wantMap && !doorsOpen) 1f else 0f, tween(650, easing = FastOutSlowInEasing))
-    }
     fun choose(map: Boolean) {
         wantMap = map
-        settings.homeMap = map
-        // Si no cambia la elección (p. ej. arrastre a medias), el efecto no se relanza: volvemos aquí.
-        scope.launch { page.animateTo(if (map && !doorsOpen) 1f else 0f, tween(450, easing = FastOutSlowInEasing)) }
+        ClusterIntro.done = true
+        scope.launch { page.animateTo(if (map) 1f else 0f, tween(450, easing = FastOutSlowInEasing)) }
+    }
+    LaunchedEffect(Unit) {
+        if (ClusterIntro.done) return@LaunchedEffect
+        delay(ClusterIntro.CAR_MS)
+        if (!ClusterIntro.done) {
+            ClusterIntro.done = true
+            wantMap = true
+            page.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
+        }
     }
     var focused by remember { mutableStateOf(false) }
 
@@ -162,8 +181,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
 
     BoxWithConstraints(
         modifier
-            .pointerInput(doorsOpen) {
-                if (doorsOpen) return@pointerInput
+            .pointerInput(Unit) {
                 // Deslizar a izquierda o derecha en el panel cambia entre coche y mapa.
                 var start = 0f
                 detectHorizontalDragGestures(
@@ -182,15 +200,16 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             // Ruleta: el panel es un elemento más; OK alterna entre coche y mapa.
             .onFocusChanged { focused = it.isFocused }
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                if (!doorsOpen) choose(!wantMap)
+                choose(!wantMap)
             },
     ) {
         val g = Geometry(maxWidth, maxHeight)
         Canvas(Modifier.fillMaxSize()) {
             tileVersion // se vuelve a dibujar cuando llega una tesela
             val geo = g.px(this)
-            val map = MapFrame(route, smooth.position, smooth.bearing, zoom, phase)
-            drawPanel(geo, scene, state, measurer, overlay, page.value, map, mapText, focused)
+            val now = smooth.value // se lee al dibujar: el mapa se mueve sin recomponer el cuadro
+            val map = MapFrame(route, now.position, now.bearing, zoom, phase)
+            drawPanel(geo, scene, openness, state, measurer, overlay, page.value, map, mapText, focused)
             drawFrame(geo, mirrored = false, fraction = speed, glow = Cyan, deep = Cockpit.Blue, hot = SpeedHot, phase = phase)
             drawFrame(geo, mirrored = true, fraction = rpm, glow = RpmGlow, deep = Cockpit.Alert, hot = RpmHot, phase = (phase + 0.5f) % 1f)
 
@@ -212,9 +231,9 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
                 .padding(start = g.contentInset, end = g.contentInset),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TabValue(state.speedKmh?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false, glow = Cyan, intensity = speed)
+            TabValue(state.speedKmh?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false, glow = Cyan, intensity = speedGlow)
             Spacer(Modifier.weight(1.5f))
-            TabValue(state.gear ?: "--", state.rpm?.let { "$it rpm" } ?: "-- rpm", Modifier.weight(1f), alignEnd = true, glow = RpmGlow, intensity = rpm)
+            TabValue(state.gear ?: "--", state.rpm?.let { "$it rpm" } ?: "-- rpm", Modifier.weight(1f), alignEnd = true, glow = RpmGlow, intensity = rpmGlow)
         }
         StatusLine(
             state, status,
@@ -224,18 +243,33 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     }
 }
 
+/** Presentación del Inicio: el coche se ve solo durante los primeros segundos tras arrancar la app. */
+object ClusterIntro {
+    const val CAR_MS = 10_000L
+    @Volatile var done = false
+}
+
 /** Posición y rumbo suavizados: el GPS da una lectura por segundo y el mapa no debe ir a saltos. */
 private class SmoothRoute(val position: GeoPoint?, val bearing: Float)
 
+/**
+ * Posición y rumbo suavizados como estado que se lee al dibujar (no en la composición). Cada tramo
+ * dura lo que tardó en llegar el último dato: 1 s con GPS real, 50 ms en la demo, así el mapa va
+ * a velocidad constante en vez de ir siempre por detrás reiniciando una animación de 1 s.
+ */
 @Composable
-private fun rememberSmoothRoute(route: RouteState): SmoothRoute {
+private fun rememberSmoothRoute(route: RouteState): State<SmoothRoute> {
     var from by remember { mutableStateOf(route.position) }
     var to by remember { mutableStateOf(route.position) }
     val progress = remember { Animatable(1f) }
     val bearing = remember { Animatable(route.bearing) }
+    val lastUpdate = remember { longArrayOf(0L) }
     LaunchedEffect(route.position) {
         val target = route.position
         val current = from?.let { f -> to?.let { t -> lerp(f, t, progress.value) } } ?: target
+        val now = System.currentTimeMillis()
+        val interval = (now - lastUpdate[0]).coerceIn(50L, 1000L).toInt()
+        lastUpdate[0] = now
         // Un salto grande (primer fijo, cambio de fuente) no se anima.
         if (current == null || target == null || RouteTracker.distance(current, target) > 300) {
             from = target; to = target; progress.snapTo(1f)
@@ -243,16 +277,19 @@ private fun rememberSmoothRoute(route: RouteState): SmoothRoute {
         }
         from = current; to = target
         progress.snapTo(0f)
-        progress.animateTo(1f, tween(1000, easing = LinearEasing))
+        progress.animateTo(1f, tween(interval, easing = LinearEasing))
     }
     LaunchedEffect(route.bearing) {
-        // Por el camino más corto (de 350° a 10° son 20°, no 340°).
+        // Por el camino más corto (de 350° a 10° son 20°, no 340°). Muelle: no frena a cada dato.
         val delta = ((route.bearing - bearing.value) % 360 + 540) % 360 - 180
-        bearing.animateTo(bearing.value + delta, tween(900, easing = FastOutSlowInEasing))
+        bearing.animateTo(bearing.value + delta, spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessVeryLow))
     }
-    val f = from; val t = to
-    val pos = if (f != null && t != null) lerp(f, t, progress.value) else t
-    return SmoothRoute(pos, bearing.value)
+    return remember {
+        derivedStateOf {
+            val f = from; val t = to
+            SmoothRoute(if (f != null && t != null) lerp(f, t, progress.value) else t, bearing.value)
+        }
+    }
 }
 
 private fun lerp(a: GeoPoint, b: GeoPoint, f: Float) = GeoPoint(a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f)
@@ -310,8 +347,11 @@ private class Overlay(val value: TextStyle, val unit: TextStyle, val caption: Te
  * con una viñeta oscura hacia los chevrons. Encima, presiones de las ruedas y testigos de
  * puertas, maletero y capó abiertos.
  */
+/** Vista 3/4 del coche: cerrado y con puertas, capó y maletero abiertos (mismo encuadre). */
+private class CarScene(val closed: ImageBitmap, val open: ImageBitmap)
+
 private fun DrawScope.drawPanel(
-    g: GeoPx, scene: ImageBitmap, state: VehicleState, tm: TextMeasurer, st: Overlay,
+    g: GeoPx, scene: CarScene, openness: Float, state: VehicleState, tm: TextMeasurer, st: Overlay,
     page: Float, map: MapFrame, mapText: MapText, focused: Boolean,
 ) {
     val inset = g.band + g.dp(14f)
@@ -324,7 +364,7 @@ private fun DrawScope.drawPanel(
     )
     val panel = roundedPolygon(pts, g.dp(22f))
     val ph = bottom - top
-    val iw = ph * scene.width / scene.height
+    val iw = ph * scene.closed.width / scene.closed.height
     val il = g.w / 2 - iw / 2
 
     val pw = g.w - 2 * (g.xv + inset)
@@ -335,7 +375,7 @@ private fun DrawScope.drawPanel(
     clipPath(panel) {
         // Página del mapa, entrando por la derecha.
         if (page > 0f) translate(left = (1f - page) * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawMap(bounds, map, tm, mapText) } }
-        if (page < 1f) translate(left = -page * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawCar(g, scene, state, tm, st, il, iw, top, ph, bottom) } }
+        if (page < 1f) translate(left = -page * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawCar(g, scene, openness, state, tm, st, il, iw, top, ph, bottom) } }
     }
     val edge = if (focused) Cyan.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.10f)
     if (focused) drawPath(panel, Cyan.copy(alpha = 0.25f), style = Stroke(g.dp(8f)), blendMode = BlendMode.Plus)
@@ -358,35 +398,32 @@ private fun DrawScope.drawPageDots(g: GeoPx, bottom: Float, page: Float) {
     }
 }
 
-/** Vista del coche visto desde atrás con presiones y testigos de lo que está abierto. */
+/**
+ * Coche en vista 3/4 con presiones. Si hay algo abierto se funde con la imagen de puertas, capó y
+ * maletero abiertos (brillo rojo) y se rotula arriba qué está abierto.
+ */
 private fun DrawScope.drawCar(
-    g: GeoPx, scene: ImageBitmap, state: VehicleState, tm: TextMeasurer, st: Overlay,
+    g: GeoPx, scene: CarScene, openness: Float, state: VehicleState, tm: TextMeasurer, st: Overlay,
     il: Float, iw: Float, top: Float, ph: Float, bottom: Float,
 ) {
     val ir = il + iw
     run {
         drawRect(SceneTop, Offset(0f, top), Size(size.width, ph))
-        drawImage(
-            scene,
-            dstOffset = IntOffset(il.roundToInt(), top.roundToInt()),
-            dstSize = IntSize(iw.roundToInt(), ph.roundToInt()),
-        )
-        // Viñeta: funde los bordes de la imagen con el fondo del panel.
-        val fade = iw * 0.26f
+        val dst = IntOffset(il.roundToInt(), top.roundToInt())
+        val dstSize = IntSize(iw.roundToInt(), ph.roundToInt())
+        if (openness < 1f) drawImage(scene.closed, dstOffset = dst, dstSize = dstSize)
+        if (openness > 0f) drawImage(scene.open, dstOffset = dst, dstSize = dstSize, alpha = openness)
+        // Viñeta: funde los bordes de la imagen con el fondo del panel (la imagen ya trae borde suave).
+        val fade = iw * 0.10f
         drawRect(Brush.horizontalGradient(listOf(SceneTop, Color.Transparent), startX = il, endX = il + fade), Offset(il - 1f, top), Size(fade + 1f, ph))
         drawRect(Brush.horizontalGradient(listOf(Color.Transparent, SceneTop), startX = ir - fade, endX = ir), Offset(ir - fade, top), Size(fade + 1f, ph))
         drawRect(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.45f), Color.Transparent), startY = top, endY = top + ph * 0.18f), Offset(0f, top), Size(size.width, ph * 0.18f))
         drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.35f)), startY = bottom - ph * 0.15f, endY = bottom), Offset(0f, bottom - ph * 0.15f), Size(size.width, ph * 0.15f))
 
-        // Puntos de la imagen en proporción (el coche ocupa x 0.31–0.70 de la escena).
+        // Puntos de la imagen en proporción (el coche ocupa x 0.12–0.86 de la escena).
         fun at(fx: Float, fy: Float) = Offset(il + iw * fx, top + ph * fy)
         val d = state.doors
         val red = Cockpit.Alert
-        val line = g.dp(5f)
-        if (d.trunk == true) drawRoundRect(red.copy(alpha = 0.35f), at(0.37f, 0.40f), Size(iw * 0.26f, ph * 0.24f), CornerRadius(g.dp(10f)))
-        if (d.driver == true || d.rearLeft == true) drawLine(red, at(0.315f, 0.36f), at(0.315f, 0.78f), line)
-        if (d.passenger == true || d.rearRight == true) drawLine(red, at(0.69f, 0.36f), at(0.69f, 0.78f), line)
-        if (d.hood == true) drawLine(red, at(0.40f, 0.05f), at(0.60f, 0.05f), line)
 
         // Rótulos de lo que está abierto, arriba en el centro.
         val open = buildList {
@@ -406,26 +443,49 @@ private fun DrawScope.drawCar(
             y += l.size.height + g.dp(12f)
         }
 
-        // Presión de las ruedas: delanteras arriba, traseras junto a las ruedas.
+        // Presión de cada rueda con una línea hasta ella. Las del lado derecho quedan ocultas: sus
+        // rótulos van a la izquierda y la línea llega al costado derecho del coche. Coordenadas medidas sobre car_34_closed (790x564).
         val t = state.tyres
-        tyre(tm, st, "DEL. IZQ.", t.frontLeft, at(0.27f, 0.30f), alignRight = true)
-        tyre(tm, st, "DEL. DER.", t.frontRight, at(0.73f, 0.30f), alignRight = false)
-        tyre(tm, st, "TRAS. IZQ.", t.rearLeft, at(0.27f, 0.70f), alignRight = true)
-        tyre(tm, st, "TRAS. DER.", t.rearRight, at(0.73f, 0.70f), alignRight = false)
+        fun bar(v: Float?) = v?.let { "%.1f".format(it) } ?: "--"
+        marker(tm, st, "DEL. IZQ.", bar(t.frontLeft), " bar", at(0.456f, 0.78f), at(0.58f, 0.82f), alignRight = false)
+        marker(tm, st, "TRAS. IZQ.", bar(t.rearLeft), " bar", at(0.787f, 0.475f), at(0.92f, 0.52f), alignRight = false)
+        marker(tm, st, "DEL. DER.", bar(t.frontRight), " bar", at(0.19f, 0.585f), at(0.05f, 0.62f), alignRight = true, hidden = true)
+        marker(tm, st, "TRAS. DER.", bar(t.rearRight), " bar", at(0.52f, 0.27f), at(0.05f, 0.30f), alignRight = true, hidden = true)
+        // Autonomía arriba a la derecha, sin línea.
+        marker(tm, st, "AUTONOMÍA", state.rangeKm?.toString() ?: "--", " km", null, at(0.90f, 0.17f), alignRight = false)
     }
 }
 
-/** Presión de una rueda: rótulo pequeño y valor en Saira; "--" si no hay dato. */
-private fun DrawScope.tyre(tm: TextMeasurer, st: Overlay, caption: String, bar: Float?, at: Offset, alignRight: Boolean) {
+private val MarkerShadow = Shadow(Color.Black.copy(alpha = 0.9f), Offset(0f, 2f), 10f)
+
+/**
+ * Marcador sin fondo: rótulo pequeño y valor en Saira con sombra para que se lean sobre la escena.
+ * Con [wheel], un punto en la rueda (hueco si queda oculta) y una línea fina hasta el texto.
+ */
+private fun DrawScope.marker(
+    tm: TextMeasurer, st: Overlay, caption: String, value: String, unit: String,
+    wheel: Offset?, label: Offset, alignRight: Boolean, hidden: Boolean = false,
+) {
     val c = tm.measure(caption, st.caption)
-    val v = tm.measure(bar?.let { "%.1f".format(it) } ?: "--", st.value)
-    val u = tm.measure(" bar", st.unit)
+    val v = tm.measure(value, st.value)
+    val u = tm.measure(unit, st.unit)
+    val gap = 8.dp.toPx()
+    if (wheel != null) {
+        val line = Color.White.copy(alpha = if (hidden) 0.35f else 0.55f)
+        drawLine(line, wheel, label, 1.2.dp.toPx(), StrokeCap.Round)
+        drawCircle(Cyan.copy(alpha = 0.35f), 7.dp.toPx(), wheel, blendMode = BlendMode.Plus)
+        if (hidden) drawCircle(Cyan, 3.5.dp.toPx(), wheel, style = Stroke(1.5.dp.toPx()))
+        else drawCircle(Color.White, 3.5.dp.toPx(), wheel)
+    }
     val width = maxOf(c.size.width, v.size.width + u.size.width)
-    val x = if (alignRight) at.x - width else at.x
-    drawRoundRect(Color.Black.copy(alpha = 0.35f), Offset(x - 10.dp.toPx(), at.y - 6.dp.toPx()), Size(width + 20.dp.toPx(), c.size.height + v.size.height + 10.dp.toPx()), CornerRadius(8.dp.toPx()))
-    drawText(c, color = Color.White.copy(alpha = 0.65f), topLeft = Offset(x, at.y))
-    drawText(v, color = Color.White, topLeft = Offset(x, at.y + c.size.height))
-    drawText(u, color = Color.White.copy(alpha = 0.65f), topLeft = Offset(x + v.size.width, at.y + c.size.height + v.size.height - u.size.height - 3.dp.toPx()))
+    val h = c.size.height + v.size.height
+    val x = if (alignRight) label.x - gap - width else label.x + gap
+    val y = label.y - h / 2f
+    fun right(w: Int) = if (alignRight) x + width - w else x
+    drawText(c, color = Color.White.copy(alpha = 0.7f), topLeft = Offset(right(c.size.width), y), shadow = MarkerShadow)
+    val vx = if (alignRight) x + width - v.size.width - u.size.width else x
+    drawText(v, color = Color.White, topLeft = Offset(vx, y + c.size.height), shadow = MarkerShadow)
+    drawText(u, color = Color.White.copy(alpha = 0.7f), topLeft = Offset(vx + v.size.width, y + h - u.size.height - 3.dp.toPx()), shadow = MarkerShadow)
 }
 
 /** Marco en chevron: línea exterior fina y brillante, línea interior gruesa y franja entre ambas con el relleno del valor. */
