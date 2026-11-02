@@ -443,16 +443,16 @@ private fun DrawScope.drawCar(
             y += l.size.height + g.dp(12f)
         }
 
-        // Presión de cada rueda con una línea hasta ella. Las del lado derecho quedan ocultas: la
-        // línea va a la esquina del coche más cercana. Coordenadas medidas sobre car_34_closed (790x564).
+        // Presión de cada rueda con una línea hasta ella. Las del lado derecho quedan ocultas: sus
+        // rótulos van a la izquierda y la línea llega al costado derecho del coche. Coordenadas medidas sobre car_34_closed (790x564).
         val t = state.tyres
         fun bar(v: Float?) = v?.let { "%.1f".format(it) } ?: "--"
         marker(tm, st, "DEL. IZQ.", bar(t.frontLeft), " bar", at(0.456f, 0.78f), at(0.58f, 0.82f), alignRight = false)
         marker(tm, st, "TRAS. IZQ.", bar(t.rearLeft), " bar", at(0.787f, 0.475f), at(0.92f, 0.52f), alignRight = false)
         marker(tm, st, "DEL. DER.", bar(t.frontRight), " bar", at(0.19f, 0.585f), at(0.05f, 0.62f), alignRight = true, hidden = true)
-        marker(tm, st, "TRAS. DER.", bar(t.rearRight), " bar", at(0.80f, 0.255f), at(0.90f, 0.17f), alignRight = false, hidden = true)
-        // Autonomía arriba a la izquierda, sin línea.
-        marker(tm, st, "AUTONOMÍA", state.rangeKm?.toString() ?: "--", " km", null, at(0.10f, 0.17f), alignRight = true)
+        marker(tm, st, "TRAS. DER.", bar(t.rearRight), " bar", at(0.52f, 0.27f), at(0.05f, 0.30f), alignRight = true, hidden = true)
+        // Autonomía arriba a la derecha, sin línea.
+        marker(tm, st, "AUTONOMÍA", state.rangeKm?.toString() ?: "--", " km", null, at(0.90f, 0.17f), alignRight = false)
     }
 }
 
