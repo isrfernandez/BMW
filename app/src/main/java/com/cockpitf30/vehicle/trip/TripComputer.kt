@@ -19,7 +19,7 @@ data class TripsState(
     /** Viaje en curso; null si el coche aún no se ha movido desde el último. */
     val current: Trip? = null,
     val last: Trip? = null,
-    val tankLiters: Float = 60f,
+    val tankLiters: Float = 57f,
     /** true con la fuente Demo: viajes de ejemplo que no se guardan. */
     val demo: Boolean = false,
 )

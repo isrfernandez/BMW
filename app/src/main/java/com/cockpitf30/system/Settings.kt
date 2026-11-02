@@ -101,9 +101,9 @@ class AppSettings(context: Context) {
         get() = prefs.getString(KEY_TRIP_LAST, null)
         set(value) = prefs.edit().putString(KEY_TRIP_LAST, value).apply()
 
-    /** Capacidad del depósito para estimar el consumo (F30: 60 l gasolina, 57 l diésel). */
+    /** Capacidad del depósito para estimar el consumo: 57 l (F30 diésel). */
     var tankLiters: Float
-        get() = prefs.getFloat(KEY_TANK, 60f)
+        get() = prefs.getFloat(KEY_TANK, 57f)
         set(value) = prefs.edit().putFloat(KEY_TANK, value).apply()
 
     private companion object {

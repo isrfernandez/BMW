@@ -2,6 +2,7 @@ package com.cockpitf30.vehicle.source
 
 import com.cockpitf30.nav.RouteTracker
 import com.cockpitf30.vehicle.Doors
+import com.cockpitf30.vehicle.GearEstimator
 import com.cockpitf30.vehicle.Tyres
 import com.cockpitf30.vehicle.VehicleRepository
 import kotlinx.coroutines.CoroutineScope
@@ -24,13 +25,15 @@ class DemoSource : VehicleDataSource {
             var tick = 0
             while (isActive) {
                 val speed = (70 + 60 * sin(t / 9)).roundToInt()
-                val rpm = (900 + speed * 28 + 600 * sin(t / 2)).roundToInt()
+                // Manual de 6: rpm según la marcha que tocaría a esa velocidad.
+                val gear = GearEstimator.gearFor(speed)
+                val rpm = if (speed < 3) 820 else (speed * 1000f / GearEstimator.KMH_PER_1000_RPM[gear - 1]).roundToInt().coerceAtLeast(850)
                 VehicleRepository.updateState {
                     it.copy(
                         speedKmh = speed,
                         rpm = rpm,
                         outsideTempC = 18.5f,
-                        gear = if (speed < 3) "P" else "D",
+                        gear = if (speed < 3) "N" else "$gear",
                         fuelLevel = 0.62f,
                         oilTempC = (60 + t * 2).coerceAtMost(105.0).roundToInt(),
                         rangeKm = 451,
