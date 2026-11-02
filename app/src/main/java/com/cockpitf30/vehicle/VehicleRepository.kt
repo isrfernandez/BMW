@@ -26,6 +26,10 @@ object VehicleRepository {
     private val _inputLog = MutableStateFlow<List<String>>(emptyList())
     val inputLog: StateFlow<List<String>> = _inputLog.asStateFlow()
 
+    /** Bytes en crudo tal como llegan del puerto (aunque no sean tramas Raise válidas). */
+    private val _byteLog = MutableStateFlow<List<String>>(emptyList())
+    val byteLog: StateFlow<List<String>> = _byteLog.asStateFlow()
+
     fun updateState(transform: (VehicleState) -> VehicleState) = _state.update(transform)
 
     fun updateStatus(transform: (SourceStatus) -> SourceStatus) = _status.update(transform)
@@ -34,9 +38,12 @@ object VehicleRepository {
         _state.value = VehicleState()
         _status.value = SourceStatus(sourceName = sourceName)
         _rawLog.value = emptyList()
+        _byteLog.value = emptyList()
     }
 
     fun logRaw(line: String) = _rawLog.update { (listOf(line) + it).take(LOG_SIZE) }
+
+    fun logBytes(line: String) = _byteLog.update { (listOf(line) + it).take(LOG_SIZE) }
 
     fun logInput(line: String) = _inputLog.update { (listOf(line) + it).take(LOG_SIZE) }
 }

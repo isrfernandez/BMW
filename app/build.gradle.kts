@@ -13,8 +13,19 @@ android {
         // Las unidades TopWay/ZQ suelen venir con Android 10–13.
         minSdk = 26
         targetSdk = 34
-        versionCode = 11
-        versionName = "0.9.2"
+        versionCode = 14
+        versionName = "0.9.4"
+    }
+
+    // Misma clave de depuración en el PC y en la nube: así cualquier APK de depuración se
+    // instala encima del anterior sin "las firmas no coinciden". Es una clave solo para pruebas.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("keystore/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {

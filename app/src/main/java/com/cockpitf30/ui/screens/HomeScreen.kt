@@ -103,8 +103,8 @@ object Reorder {
     var step: ((Int) -> Unit)? = null
 }
 
-private val CARD_WIDTH = 380.dp
-private val CARD_GAP = 20.dp
+private val CARD_WIDTH = 320.dp
+private val CARD_GAP = 16.dp
 
 @Composable
 fun HomeScreen(onOpen: (Screen) -> Unit) {
@@ -168,8 +168,8 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
     InitialFocus(firstCard)
 
     Column(Modifier.fillMaxSize().padding(top = 10.dp, bottom = 16.dp)) {
-        // El cuadro ocupa algo más de la mitad de la altura; las tarjetas, el resto.
-        ClusterStrip(state, status, Modifier.fillMaxWidth().height(410.dp).padding(horizontal = 12.dp))
+        // El cuadro (mapa e indicadores) ocupa dos tercios de la altura; las tarjetas, el resto.
+        ClusterStrip(state, status, Modifier.fillMaxWidth().height(480.dp).padding(horizontal = 12.dp))
         Spacer(Modifier.height(6.dp))
         LazyRow(
             Modifier.weight(1f).fillMaxWidth().onPreviewKeyEvent { e ->
@@ -241,7 +241,7 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                             WeatherCardContent(weather, animated = weather.forecast != null)
                         } else {
                             CardArt(card.theme)
-                            Column(Modifier.fillMaxSize().padding(24.dp)) {
+                            Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp)) {
                                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = card.bodyAlignment) {
                                     card.body?.invoke(state)
                                 }

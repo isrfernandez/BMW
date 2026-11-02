@@ -1,6 +1,7 @@
 package com.cockpitf30.system
 
 import android.content.Context
+import com.cockpitf30.input.IDriveInput
 import com.cockpitf30.weather.Place
 
 enum class SourceMode(val label: String) {
@@ -26,6 +27,11 @@ class AppSettings(context: Context) {
     var baudRate: Int
         get() = prefs.getInt(KEY_BAUD, 38400)
         set(value) = prefs.edit().putInt(KEY_BAUD, value).apply()
+
+    /** Teclas del iDrive aprendidas en Diagnóstico (ver IDriveInput.learned). */
+    var knobKeys: Map<Int, Int>
+        get() = IDriveInput.decode(prefs.getString(KEY_KNOB_KEYS, null))
+        set(value) = prefs.edit().putString(KEY_KNOB_KEYS, IDriveInput.encode(value)).apply()
 
     var askedBatteryExemption: Boolean
         get() = prefs.getBoolean(KEY_ASKED_BATTERY, false)
@@ -81,7 +87,13 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_ASKED_LOCATION, false)
         set(value) = prefs.edit().putBoolean(KEY_ASKED_LOCATION, value).apply()
 
+    /** Zona central del Inicio: true = mapa, false = coche (con una puerta abierta siempre el coche). */
+    var homeMap: Boolean
+        get() = prefs.getBoolean(KEY_HOME_MAP, true)
+        set(value) = prefs.edit().putBoolean(KEY_HOME_MAP, value).apply()
+
     private companion object {
+        const val KEY_HOME_MAP = "home_map"
         const val KEY_APPS_LAYOUT = "apps_layout"
         const val KEY_APPS_AZ = "apps_az"
         const val KEY_CARD_ORDER = "card_order"
@@ -98,5 +110,6 @@ class AppSettings(context: Context) {
         const val KEY_PATH = "serial_path"
         const val KEY_BAUD = "baud"
         const val KEY_ASKED_BATTERY = "asked_battery"
+        const val KEY_KNOB_KEYS = "knob_keys"
     }
 }

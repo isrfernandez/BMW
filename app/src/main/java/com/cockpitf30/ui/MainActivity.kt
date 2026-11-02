@@ -55,6 +55,7 @@ import com.cockpitf30.ui.screens.Reorder
 import com.cockpitf30.ui.screens.WeatherScreen
 import com.cockpitf30.ui.screens.PhoneScreen
 import com.cockpitf30.weather.WeatherRepository
+import com.cockpitf30.nav.RouteTracker
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -75,6 +76,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         hideSystemBars()
+        IDriveInput.learned = AppSettings(this).knobKeys
         VehicleService.start(this)
         askBatteryExemptionOnce()
 
@@ -101,11 +103,32 @@ class MainActivity : ComponentActivity() {
 
     // Falso positivo de lint: sobrescribir dispatchKeyEvent es API pública de Activity.
     @SuppressLint("RestrictedApi")
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        VehicleRepository.logInput(IDriveInput.describe(event))
+    override fun dispatchKeyEvent(raw: KeyEvent): Boolean {
+        VehicleRepository.logInput(IDriveInput.describe(raw))
+        // Modo aprender (Diagnóstico): la tecla se asigna a la función elegida y no hace nada más.
+        IDriveInput.learn(raw)?.let { map ->
+            AppSettings(this).knobKeys = map
+            swallowKey = raw.keyCode
+            return true
+        }
+        if (swallowKey == raw.keyCode) {
+            if (raw.action == KeyEvent.ACTION_UP) swallowKey = null
+            return true
+        }
+        // Teclas propias de la radio que se han enseñado: pasan a ser la tecla estándar.
+        val event = IDriveInput.translate(raw)
+        if (event.keyCode == KeyEvent.KEYCODE_BACK && raw.keyCode != KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_UP) onBackPressedDispatcher.onBackPressed()
+            return true
+        }
         // Tras una pulsación larga de OK, nos comemos sus repeticiones y el soltar para que no haga clic.
         if (swallowCenter && IDriveInput.isCenter(event.keyCode)) {
             if (event.action == KeyEvent.ACTION_UP) swallowCenter = false
+            return true
+        }
+        // Flechas, TAB, etc.: movemos el foco nosotros (con plan B si no hay nada en esa dirección).
+        IDriveInput.navActionFor(event.keyCode, event.isShiftPressed)?.let { action ->
+            if (event.action == KeyEvent.ACTION_DOWN) navActions.tryEmit(action)
             return true
         }
         val action = IDriveInput.fromKey(event) ?: return super.dispatchKeyEvent(event)
@@ -114,6 +137,7 @@ class MainActivity : ComponentActivity() {
         return true
     }
 
+    private var swallowKey: Int? = null
     private var swallowCenter = false
 
     private fun hideSystemBars() {
@@ -155,22 +179,40 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 // Nada tenía el foco: el primer giro solo lo coloca en el elemento por defecto de la pantalla.
                 if (Reorder.moving.value == null && DefaultFocus.request()) return@collect
             }
-            val dir = if (it == NavAction.NEXT) 1 else -1
+            val (dir, direction) = when (it) {
+                NavAction.DOWN -> 1 to FocusDirection.Down
+                NavAction.UP -> -1 to FocusDirection.Up
+                NavAction.RIGHT -> 1 to FocusDirection.Right
+                NavAction.LEFT -> -1 to FocusDirection.Left
+                NavAction.NEXT -> 1 to null
+                else -> -1 to null
+            }
             // En modo mover, la ruleta desplaza la tarjeta en vez del foco.
             val step = Reorder.step
-            if (Reorder.moving.value != null && step != null) step(dir)
-            else focusManager.moveFocus(if (dir > 0) FocusDirection.Next else FocusDirection.Previous)
+            if (Reorder.moving.value != null && step != null) {
+                step(dir)
+                return@collect
+            }
+            // Abajo en el último elemento de la barra lateral (o en una fila sin nada debajo)
+            // sigue al siguiente elemento en orden, como el giro de la ruleta.
+            val moved = direction?.let { d -> focusManager.moveFocus(d) } ?: false
+            if (!moved && !focusManager.moveFocus(if (dir > 0) FocusDirection.Next else FocusDirection.Previous)) {
+                // Nada se movió: probablemente el foco se perdió al cambiar de pantalla. Lo recolocamos.
+                DefaultFocus.request()
+            }
         }
     }
 
     // Tiempo: refresco cada 30 min y, la primera vez, pedir permiso de ubicación.
     val ctx = LocalContext.current
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        RouteTracker.start(ctx)
         scope.launch { WeatherRepository.refresh(ctx) }
     }
     LaunchedEffect(Unit) {
         val settings = AppSettings(ctx)
         WeatherRepository.loadCache(ctx)
+        RouteTracker.start(ctx)
         if (!settings.askedLocation && settings.weatherPlace == null && !WeatherRepository.hasLocationPermission(ctx)) {
             settings.askedLocation = true
             locationPermission.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION))

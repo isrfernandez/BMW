@@ -1,7 +1,37 @@
 package com.cockpitf30.ui.components
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.cockpitf30.nav.GeoPoint
+import com.cockpitf30.nav.MapTiles
+import com.cockpitf30.nav.RouteState
+import com.cockpitf30.nav.RouteTracker
+import com.cockpitf30.system.AppSettings
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -56,6 +86,9 @@ private val Cyan = Color(0xFF29B6F6)
 private val SpeedLabel = Color(0xFFE6F0FF)
 private val RpmGlow = Color(0xFFFF3B3B)
 private val RpmLabel = Color(0xFFFFD2D2)
+/** Color de la punta de cada barra, casi blanco: es donde "quema" la luz. */
+private val SpeedHot = Color(0xFFDDF4FF)
+private val RpmHot = Color(0xFFFFE1D6)
 /** Fondo del panel, del mismo azul marino que la escena del coche para que se funda. */
 private val SceneTop = Color(0xFF091A2D)
 
@@ -79,7 +112,8 @@ private const val RPM_RED = 6000
 fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier = Modifier) {
     val speed by animateFloatAsState(state.speedKmh?.let(::speedFraction) ?: 0f, tween(180), label = "speed")
     val rpm by animateFloatAsState(((state.rpm ?: 0).coerceIn(0, RPM_MAX)).toFloat() / RPM_MAX, tween(180), label = "rpm")
-    val measurer = rememberTextMeasurer()
+    // Muchos rótulos se miden en cada fotograma (hay animación continua): caché amplia.
+    val measurer = rememberTextMeasurer(cacheSize = 96)
     val scaleStyle = numeric(30, FontWeight.SemiBold)
     val smallStyle = numeric(17, FontWeight.SemiBold)
     val captionStyle = numeric(17, FontWeight.Medium)
@@ -90,14 +124,75 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         caption = MaterialTheme.typography.labelMedium,
         alert = MaterialTheme.typography.labelLarge,
     )
+    val mapText = MapText(
+        hud = numeric(20, FontWeight.SemiBold).copy(letterSpacing = 3.sp),
+        small = numeric(14, FontWeight.Medium).copy(letterSpacing = 1.sp),
+        alert = numeric(20, FontWeight.SemiBold).copy(letterSpacing = 4.sp),
+    )
 
-    BoxWithConstraints(modifier) {
+    // Fase de las animaciones de luz (destello de las barras, onda del GPS, barrido del mapa).
+    val phase by rememberInfiniteTransition(label = "light").animateFloat(
+        0f, 1f, infiniteRepeatable(tween(3200, easing = LinearEasing)), label = "phase",
+    )
+
+    // Zona central deslizante: 0 = coche, 1 = mapa. Con una puerta abierta se fuerza el coche.
+    val context = LocalContext.current
+    val settings = remember { AppSettings(context) }
+    var wantMap by remember { mutableStateOf(settings.homeMap) }
+    val doorsOpen = state.doors.anyOpen
+    val page = remember { Animatable(if (wantMap && !doorsOpen) 1f else 0f) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(wantMap, doorsOpen) {
+        page.animateTo(if (wantMap && !doorsOpen) 1f else 0f, tween(650, easing = FastOutSlowInEasing))
+    }
+    fun choose(map: Boolean) {
+        wantMap = map
+        settings.homeMap = map
+        // Si no cambia la elección (p. ej. arrastre a medias), el efecto no se relanza: volvemos aquí.
+        scope.launch { page.animateTo(if (map && !doorsOpen) 1f else 0f, tween(450, easing = FastOutSlowInEasing)) }
+    }
+    var focused by remember { mutableStateOf(false) }
+
+    val route by RouteTracker.state.collectAsStateWithLifecycle()
+    val tileVersion by MapTiles.version.collectAsStateWithLifecycle()
+    val smooth = rememberSmoothRoute(route)
+    val zoom by animateFloatAsState(
+        17f - ((state.speedKmh ?: 0).coerceIn(0, 130) / 130f) * 2f, tween(2500), label = "zoom",
+    )
+
+    BoxWithConstraints(
+        modifier
+            .pointerInput(doorsOpen) {
+                if (doorsOpen) return@pointerInput
+                // Deslizar a izquierda o derecha en el panel cambia entre coche y mapa.
+                var start = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { start = page.value },
+                    onDragEnd = {
+                        val moved = page.value - start
+                        choose(if (abs(moved) > 0.18f) moved > 0 else start > 0.5f)
+                    },
+                    onDragCancel = { choose(start > 0.5f) },
+                ) { change, dx ->
+                    change.consume()
+                    val w = size.width * 0.55f
+                    scope.launch { page.snapTo((page.value - dx / w).coerceIn(0f, 1f)) }
+                }
+            }
+            // Ruleta: el panel es un elemento más; OK alterna entre coche y mapa.
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                if (!doorsOpen) choose(!wantMap)
+            },
+    ) {
         val g = Geometry(maxWidth, maxHeight)
         Canvas(Modifier.fillMaxSize()) {
+            tileVersion // se vuelve a dibujar cuando llega una tesela
             val geo = g.px(this)
-            drawPanel(geo, scene, state, measurer, overlay)
-            drawFrame(geo, mirrored = false, fraction = speed, glow = Cyan, deep = Cockpit.Blue)
-            drawFrame(geo, mirrored = true, fraction = rpm, glow = RpmGlow, deep = Cockpit.Alert)
+            val map = MapFrame(route, smooth.position, smooth.bearing, zoom, phase)
+            drawPanel(geo, scene, state, measurer, overlay, page.value, map, mapText, focused)
+            drawFrame(geo, mirrored = false, fraction = speed, glow = Cyan, deep = Cockpit.Blue, hot = SpeedHot, phase = phase)
+            drawFrame(geo, mirrored = true, fraction = rpm, glow = RpmGlow, deep = Cockpit.Alert, hot = RpmHot, phase = (phase + 0.5f) % 1f)
 
             SPEED_MARKS.forEach { v -> drawMark(geo, measurer, "$v", speedFraction(v), false, scaleStyle, SpeedLabel) }
             (1..8).forEach { k ->
@@ -111,15 +206,15 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             drawMiniBar(geo, measurer, oil, listOf("150", "100", "50"), mirrored = true, smallStyle)
         }
 
-        // Velocidad y marcha en pestañas oscuras sobre el panel.
+        // Velocidad y marcha en pestañas oscuras sobre el panel, con halo del color de su barra.
         Row(
             Modifier.fillMaxWidth().height(g.frameBottom).padding(top = g.frameTop + 40.dp, bottom = 110.dp)
                 .padding(start = g.contentInset, end = g.contentInset),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TabValue(state.speedKmh?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false)
+            TabValue(state.speedKmh?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false, glow = Cyan, intensity = speed)
             Spacer(Modifier.weight(1.5f))
-            TabValue(state.gear ?: "--", state.rpm?.let { "$it rpm" } ?: "-- rpm", Modifier.weight(1f), alignEnd = true)
+            TabValue(state.gear ?: "--", state.rpm?.let { "$it rpm" } ?: "-- rpm", Modifier.weight(1f), alignEnd = true, glow = RpmGlow, intensity = rpm)
         }
         StatusLine(
             state, status,
@@ -128,6 +223,39 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         )
     }
 }
+
+/** Posición y rumbo suavizados: el GPS da una lectura por segundo y el mapa no debe ir a saltos. */
+private class SmoothRoute(val position: GeoPoint?, val bearing: Float)
+
+@Composable
+private fun rememberSmoothRoute(route: RouteState): SmoothRoute {
+    var from by remember { mutableStateOf(route.position) }
+    var to by remember { mutableStateOf(route.position) }
+    val progress = remember { Animatable(1f) }
+    val bearing = remember { Animatable(route.bearing) }
+    LaunchedEffect(route.position) {
+        val target = route.position
+        val current = from?.let { f -> to?.let { t -> lerp(f, t, progress.value) } } ?: target
+        // Un salto grande (primer fijo, cambio de fuente) no se anima.
+        if (current == null || target == null || RouteTracker.distance(current, target) > 300) {
+            from = target; to = target; progress.snapTo(1f)
+            return@LaunchedEffect
+        }
+        from = current; to = target
+        progress.snapTo(0f)
+        progress.animateTo(1f, tween(1000, easing = LinearEasing))
+    }
+    LaunchedEffect(route.bearing) {
+        // Por el camino más corto (de 350° a 10° son 20°, no 340°).
+        val delta = ((route.bearing - bearing.value) % 360 + 540) % 360 - 180
+        bearing.animateTo(bearing.value + delta, tween(900, easing = FastOutSlowInEasing))
+    }
+    val f = from; val t = to
+    val pos = if (f != null && t != null) lerp(f, t, progress.value) else t
+    return SmoothRoute(pos, bearing.value)
+}
+
+private fun lerp(a: GeoPoint, b: GeoPoint, f: Float) = GeoPoint(a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f)
 
 /** Medidas del cuadro en dp, compartidas entre el dibujo y los textos. */
 private class Geometry(val width: Dp, val height: Dp) {
@@ -182,7 +310,10 @@ private class Overlay(val value: TextStyle, val unit: TextStyle, val caption: Te
  * con una viñeta oscura hacia los chevrons. Encima, presiones de las ruedas y testigos de
  * puertas, maletero y capó abiertos.
  */
-private fun DrawScope.drawPanel(g: GeoPx, scene: ImageBitmap, state: VehicleState, tm: TextMeasurer, st: Overlay) {
+private fun DrawScope.drawPanel(
+    g: GeoPx, scene: ImageBitmap, state: VehicleState, tm: TextMeasurer, st: Overlay,
+    page: Float, map: MapFrame, mapText: MapText, focused: Boolean,
+) {
     val inset = g.band + g.dp(14f)
     val top = g.y0 + g.dp(16f)
     val bottom = g.y1 - g.dp(10f)
@@ -195,11 +326,46 @@ private fun DrawScope.drawPanel(g: GeoPx, scene: ImageBitmap, state: VehicleStat
     val ph = bottom - top
     val iw = ph * scene.width / scene.height
     val il = g.w / 2 - iw / 2
-    val ir = il + iw
+
+    val pw = g.w - 2 * (g.xv + inset)
+    val bounds = Rect(g.xv + inset, top, g.w - g.xv - inset, bottom)
 
     // Fondo liso del mismo tono que los bordes de la escena, para que la viñeta no deje corte.
     drawPath(panel, SceneTop)
     clipPath(panel) {
+        // Página del mapa, entrando por la derecha.
+        if (page > 0f) translate(left = (1f - page) * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawMap(bounds, map, tm, mapText) } }
+        if (page < 1f) translate(left = -page * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawCar(g, scene, state, tm, st, il, iw, top, ph, bottom) } }
+    }
+    val edge = if (focused) Cyan.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.10f)
+    if (focused) drawPath(panel, Cyan.copy(alpha = 0.25f), style = Stroke(g.dp(8f)), blendMode = BlendMode.Plus)
+    drawPath(panel, edge, style = Stroke(g.dp(if (focused) 2f else 1.2f)))
+    drawPageDots(g, bottom, page)
+}
+
+/** Dos marcas abajo en el centro: cuál de las dos vistas del panel se está viendo. */
+private fun DrawScope.drawPageDots(g: GeoPx, bottom: Float, page: Float) {
+    val y = bottom - g.dp(12f)
+    val w = g.dp(26f)
+    val gap = g.dp(8f)
+    listOf(1f - page, page).forEachIndexed { i, on ->
+        val x = g.w / 2 + (i - 1) * (w + gap) + gap / 2
+        drawLine(Color.White.copy(alpha = 0.22f), Offset(x, y), Offset(x + w, y), g.dp(3f), StrokeCap.Round)
+        if (on > 0.01f) {
+            drawLine(Cyan.copy(alpha = on * 0.35f), Offset(x, y), Offset(x + w, y), g.dp(9f), StrokeCap.Round, blendMode = BlendMode.Plus)
+            drawLine(Color.White.copy(alpha = on), Offset(x, y), Offset(x + w, y), g.dp(3f), StrokeCap.Round)
+        }
+    }
+}
+
+/** Vista del coche visto desde atrás con presiones y testigos de lo que está abierto. */
+private fun DrawScope.drawCar(
+    g: GeoPx, scene: ImageBitmap, state: VehicleState, tm: TextMeasurer, st: Overlay,
+    il: Float, iw: Float, top: Float, ph: Float, bottom: Float,
+) {
+    val ir = il + iw
+    run {
+        drawRect(SceneTop, Offset(0f, top), Size(size.width, ph))
         drawImage(
             scene,
             dstOffset = IntOffset(il.roundToInt(), top.roundToInt()),
@@ -247,7 +413,6 @@ private fun DrawScope.drawPanel(g: GeoPx, scene: ImageBitmap, state: VehicleStat
         tyre(tm, st, "TRAS. IZQ.", t.rearLeft, at(0.27f, 0.70f), alignRight = true)
         tyre(tm, st, "TRAS. DER.", t.rearRight, at(0.73f, 0.70f), alignRight = false)
     }
-    drawPath(panel, Color.White.copy(alpha = 0.10f), style = Stroke(g.dp(1.2f)))
 }
 
 /** Presión de una rueda: rótulo pequeño y valor en Saira; "--" si no hay dato. */
@@ -264,11 +429,19 @@ private fun DrawScope.tyre(tm: TextMeasurer, st: Overlay, caption: String, bar: 
 }
 
 /** Marco en chevron: línea exterior fina y brillante, línea interior gruesa y franja entre ambas con el relleno del valor. */
-private fun DrawScope.drawFrame(g: GeoPx, mirrored: Boolean, fraction: Float, glow: Color, deep: Color) {
+private fun DrawScope.drawFrame(g: GeoPx, mirrored: Boolean, fraction: Float, glow: Color, deep: Color, hot: Color, phase: Float) {
     fun o(x: Float, y: Float) = Offset(g.mirror(x, mirrored), y)
     fun chevron(inset: Float, top: Float, bottom: Float) = Path().apply {
         val a = o(g.chevronX(bottom, inset), bottom); val v = o(g.xv + inset, g.ym); val b = o(g.chevronX(top, inset), top)
         moveTo(a.x, a.y); lineTo(v.x, v.y); lineTo(b.x, b.y)
+    }
+
+    /** Tramo del chevron desplazado [inset] entre las alturas [yTop] y [yBottom]. */
+    fun segment(inset: Float, yTop: Float, yBottom: Float) = Path().apply {
+        val a = o(g.chevronX(yBottom, inset), yBottom)
+        moveTo(a.x, a.y)
+        if (yTop < g.ym && yBottom > g.ym) o(g.xv + inset, g.ym).let { lineTo(it.x, it.y) }
+        o(g.chevronX(yTop, inset), yTop).let { lineTo(it.x, it.y) }
     }
 
     /** Franja entre el borde exterior y el interior, de la altura [yTop] a [yBottom]. */
@@ -314,8 +487,52 @@ private fun DrawScope.drawFrame(g: GeoPx, mirrored: Boolean, fraction: Float, gl
                 drawPath(chevron(step * (i + 0.5f), g.y0 - g.band, g.y1 + g.band), color.copy(alpha = a * a), style = Stroke(step + 1f))
             }
         }
-        // Borde brillante en el nivel actual.
-        drawLine(glow, o(g.chevronX(level, 0f), level), o(g.chevronX(level, g.band * 0.7f), level), g.dp(3f))
+        val span = g.y1 - level
+        clipPath(band(level, g.y1)) {
+            // La barra se calienta hacia la punta: casi blanca en el nivel, del color pleno más abajo.
+            drawRect(
+                Brush.verticalGradient(
+                    0f to hot.copy(alpha = 0.6f), 0.22f to glow.copy(alpha = 0.35f), 1f to Color.Transparent,
+                    startY = level, endY = level + maxOf(span, g.dp(40f)),
+                ),
+                Offset(0f, level), Size(size.width, span), blendMode = BlendMode.Plus,
+            )
+            // Destello que sube por la barra hasta el nivel, una y otra vez.
+            val sy = g.y1 - (span + g.band) * phase
+            drawRect(
+                Brush.verticalGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.30f), Color.Transparent), startY = sy - g.band, endY = sy + g.band),
+                Offset(0f, sy - g.band), Size(size.width, g.band * 2), blendMode = BlendMode.Plus,
+            )
+        }
+        // Luz que sale de la barra hacia el centro del indicador, más intensa cuanto más alto el valor.
+        val innerX = g.chevronX(level, g.band)
+        val clipLeft = if (mirrored) g.w / 2 else 0f
+        val clipRight = if (mirrored) g.w else g.w / 2
+        val pool = g.band * (3.2f + 2.8f * fraction)
+        clipRect(clipLeft, g.y0, clipRight, g.y1) {
+            drawCircle(
+                Brush.radialGradient(
+                    0f to glow.copy(alpha = 0.10f + 0.22f * fraction), 0.5f to deep.copy(alpha = 0.06f + 0.10f * fraction), 1f to Color.Transparent,
+                    center = o(innerX, level), radius = pool,
+                ),
+                radius = pool, center = o(innerX, level), blendMode = BlendMode.Screen,
+            )
+        }
+        // Línea exterior encendida a lo largo del tramo lleno: neón con halo.
+        val lit = segment(0f, level, g.y1)
+        drawPath(lit, glow.copy(alpha = 0.18f), style = Stroke(g.dp(22f), cap = StrokeCap.Round), blendMode = BlendMode.Plus)
+        drawPath(lit, glow.copy(alpha = 0.45f), style = Stroke(g.dp(8f), cap = StrokeCap.Round), blendMode = BlendMode.Plus)
+        // Punta: borde blanco y foco de luz que se derrama fuera de la barra.
+        val tip = o(g.chevronX(level, g.band * 0.45f), level)
+        val bloom = g.band * 1.6f
+        drawCircle(
+            Brush.radialGradient(
+                0f to Color.White.copy(alpha = 0.6f), 0.2f to hot.copy(alpha = 0.38f), 0.55f to glow.copy(alpha = 0.14f), 1f to Color.Transparent,
+                center = tip, radius = bloom,
+            ),
+            radius = bloom, center = tip, blendMode = BlendMode.Plus,
+        )
+        drawLine(Color.White, o(g.chevronX(level, 0f), level), o(g.chevronX(level, g.band * 0.85f), level), g.dp(3f), StrokeCap.Round)
     }
     // Línea exterior brillante e interior gruesa.
     val outer = chevron(0f, g.y0, g.y1)
@@ -369,16 +586,18 @@ private fun DrawScope.drawMiniBar(g: GeoPx, tm: TextMeasurer, fraction: Float?, 
 }
 
 @Composable
-private fun TabValue(value: String, caption: String, modifier: Modifier = Modifier, alignEnd: Boolean) {
+private fun TabValue(value: String, caption: String, modifier: Modifier = Modifier, alignEnd: Boolean, glow: Color, intensity: Float) {
     Column(modifier, horizontalAlignment = if (alignEnd) Alignment.End else Alignment.Start) {
-        // Cifra directamente sobre la imagen, con sombra suave para que se lea sobre el azul.
-        Text(
-            value,
-            style = numeric(80, FontWeight.Bold).copy(shadow = Shadow(Color.Black.copy(alpha = 0.7f), Offset(0f, 3f), 18f)),
-            color = Cockpit.Text,
-            maxLines = 1,
-            modifier = Modifier.padding(horizontal = 20.dp),
-        )
+        // Cifra sobre la imagen: sombra oscura para que se lea y, encima, halo del color de su barra.
+        Box(Modifier.padding(horizontal = 20.dp)) {
+            val big = numeric(80, FontWeight.Bold)
+            Text(value, style = big.copy(shadow = Shadow(Color.Black.copy(alpha = 0.7f), Offset(0f, 3f), 18f)), color = Cockpit.Text, maxLines = 1)
+            Text(
+                value,
+                style = big.copy(shadow = Shadow(glow.copy(alpha = 0.55f + 0.4f * intensity), Offset.Zero, 26f + 20f * intensity)),
+                color = Cockpit.Text, maxLines = 1,
+            )
+        }
         Text(
             caption,
             style = numeric(20, FontWeight.Medium),

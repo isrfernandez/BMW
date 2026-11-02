@@ -11,6 +11,7 @@ class CockpitApp : Application() {
         val channel = NotificationChannel(CHANNEL_VEHICLE, getString(R.string.channel_name), NotificationManager.IMPORTANCE_MIN)
             .apply { setShowBadge(false) }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        com.cockpitf30.nav.MapTiles.init(this)
     }
 
     companion object {
