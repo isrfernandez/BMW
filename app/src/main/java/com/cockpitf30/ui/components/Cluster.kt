@@ -104,7 +104,7 @@ private const val RPM_RED = 6000
 
 /**
  * Cuadro de instrumentos estilo iDrive 8: marcos en chevron cian (velocidad) y rojo (rpm) con las
- * cifras por fuera, panel central con la imagen del coche visto desde atrás y sus indicadores,
+ * cifras por fuera, panel central con la imagen del coche en vista 3/4 (cerrado o con lo abierto en rojo) y sus indicadores,
  * velocidad y marcha en pestañas oscuras, combustible y aceite, y una línea de estado debajo.
  * Lo que no llega se muestra "--".
  */
@@ -117,7 +117,10 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     val scaleStyle = numeric(30, FontWeight.SemiBold)
     val smallStyle = numeric(17, FontWeight.SemiBold)
     val captionStyle = numeric(17, FontWeight.Medium)
-    val scene = ImageBitmap.imageResource(R.drawable.car_rear_scene)
+    val scene = CarScene(
+        closed = ImageBitmap.imageResource(R.drawable.car_34_closed),
+        open = ImageBitmap.imageResource(R.drawable.car_34_open),
+    )
     val overlay = Overlay(
         value = numeric(24, FontWeight.SemiBold),
         unit = numeric(14),
@@ -140,6 +143,8 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     val settings = remember { AppSettings(context) }
     var wantMap by remember { mutableStateOf(settings.homeMap) }
     val doorsOpen = state.doors.anyOpen
+    // Fundido entre el coche cerrado y el abierto.
+    val openness by animateFloatAsState(if (doorsOpen) 1f else 0f, tween(700, easing = FastOutSlowInEasing), label = "open")
     val page = remember { Animatable(if (wantMap && !doorsOpen) 1f else 0f) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(wantMap, doorsOpen) {
@@ -190,7 +195,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             tileVersion // se vuelve a dibujar cuando llega una tesela
             val geo = g.px(this)
             val map = MapFrame(route, smooth.position, smooth.bearing, zoom, phase)
-            drawPanel(geo, scene, state, measurer, overlay, page.value, map, mapText, focused)
+            drawPanel(geo, scene, openness, state, measurer, overlay, page.value, map, mapText, focused)
             drawFrame(geo, mirrored = false, fraction = speed, glow = Cyan, deep = Cockpit.Blue, hot = SpeedHot, phase = phase)
             drawFrame(geo, mirrored = true, fraction = rpm, glow = RpmGlow, deep = Cockpit.Alert, hot = RpmHot, phase = (phase + 0.5f) % 1f)
 
@@ -310,8 +315,11 @@ private class Overlay(val value: TextStyle, val unit: TextStyle, val caption: Te
  * con una viñeta oscura hacia los chevrons. Encima, presiones de las ruedas y testigos de
  * puertas, maletero y capó abiertos.
  */
+/** Vista 3/4 del coche: cerrado y con puertas, capó y maletero abiertos (mismo encuadre). */
+private class CarScene(val closed: ImageBitmap, val open: ImageBitmap)
+
 private fun DrawScope.drawPanel(
-    g: GeoPx, scene: ImageBitmap, state: VehicleState, tm: TextMeasurer, st: Overlay,
+    g: GeoPx, scene: CarScene, openness: Float, state: VehicleState, tm: TextMeasurer, st: Overlay,
     page: Float, map: MapFrame, mapText: MapText, focused: Boolean,
 ) {
     val inset = g.band + g.dp(14f)
@@ -324,7 +332,7 @@ private fun DrawScope.drawPanel(
     )
     val panel = roundedPolygon(pts, g.dp(22f))
     val ph = bottom - top
-    val iw = ph * scene.width / scene.height
+    val iw = ph * scene.closed.width / scene.closed.height
     val il = g.w / 2 - iw / 2
 
     val pw = g.w - 2 * (g.xv + inset)
@@ -335,7 +343,7 @@ private fun DrawScope.drawPanel(
     clipPath(panel) {
         // Página del mapa, entrando por la derecha.
         if (page > 0f) translate(left = (1f - page) * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawMap(bounds, map, tm, mapText) } }
-        if (page < 1f) translate(left = -page * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawCar(g, scene, state, tm, st, il, iw, top, ph, bottom) } }
+        if (page < 1f) translate(left = -page * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawCar(g, scene, openness, state, tm, st, il, iw, top, ph, bottom) } }
     }
     val edge = if (focused) Cyan.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.10f)
     if (focused) drawPath(panel, Cyan.copy(alpha = 0.25f), style = Stroke(g.dp(8f)), blendMode = BlendMode.Plus)
@@ -358,35 +366,32 @@ private fun DrawScope.drawPageDots(g: GeoPx, bottom: Float, page: Float) {
     }
 }
 
-/** Vista del coche visto desde atrás con presiones y testigos de lo que está abierto. */
+/**
+ * Coche en vista 3/4 con presiones. Si hay algo abierto se funde con la imagen de puertas, capó y
+ * maletero abiertos (brillo rojo) y se rotula arriba qué está abierto.
+ */
 private fun DrawScope.drawCar(
-    g: GeoPx, scene: ImageBitmap, state: VehicleState, tm: TextMeasurer, st: Overlay,
+    g: GeoPx, scene: CarScene, openness: Float, state: VehicleState, tm: TextMeasurer, st: Overlay,
     il: Float, iw: Float, top: Float, ph: Float, bottom: Float,
 ) {
     val ir = il + iw
     run {
         drawRect(SceneTop, Offset(0f, top), Size(size.width, ph))
-        drawImage(
-            scene,
-            dstOffset = IntOffset(il.roundToInt(), top.roundToInt()),
-            dstSize = IntSize(iw.roundToInt(), ph.roundToInt()),
-        )
-        // Viñeta: funde los bordes de la imagen con el fondo del panel.
-        val fade = iw * 0.26f
+        val dst = IntOffset(il.roundToInt(), top.roundToInt())
+        val dstSize = IntSize(iw.roundToInt(), ph.roundToInt())
+        if (openness < 1f) drawImage(scene.closed, dstOffset = dst, dstSize = dstSize)
+        if (openness > 0f) drawImage(scene.open, dstOffset = dst, dstSize = dstSize, alpha = openness)
+        // Viñeta: funde los bordes de la imagen con el fondo del panel (la imagen ya trae borde suave).
+        val fade = iw * 0.10f
         drawRect(Brush.horizontalGradient(listOf(SceneTop, Color.Transparent), startX = il, endX = il + fade), Offset(il - 1f, top), Size(fade + 1f, ph))
         drawRect(Brush.horizontalGradient(listOf(Color.Transparent, SceneTop), startX = ir - fade, endX = ir), Offset(ir - fade, top), Size(fade + 1f, ph))
         drawRect(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.45f), Color.Transparent), startY = top, endY = top + ph * 0.18f), Offset(0f, top), Size(size.width, ph * 0.18f))
         drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.35f)), startY = bottom - ph * 0.15f, endY = bottom), Offset(0f, bottom - ph * 0.15f), Size(size.width, ph * 0.15f))
 
-        // Puntos de la imagen en proporción (el coche ocupa x 0.31–0.70 de la escena).
+        // Puntos de la imagen en proporción (el coche ocupa x 0.12–0.86 de la escena).
         fun at(fx: Float, fy: Float) = Offset(il + iw * fx, top + ph * fy)
         val d = state.doors
         val red = Cockpit.Alert
-        val line = g.dp(5f)
-        if (d.trunk == true) drawRoundRect(red.copy(alpha = 0.35f), at(0.37f, 0.40f), Size(iw * 0.26f, ph * 0.24f), CornerRadius(g.dp(10f)))
-        if (d.driver == true || d.rearLeft == true) drawLine(red, at(0.315f, 0.36f), at(0.315f, 0.78f), line)
-        if (d.passenger == true || d.rearRight == true) drawLine(red, at(0.69f, 0.36f), at(0.69f, 0.78f), line)
-        if (d.hood == true) drawLine(red, at(0.40f, 0.05f), at(0.60f, 0.05f), line)
 
         // Rótulos de lo que está abierto, arriba en el centro.
         val open = buildList {
@@ -408,10 +413,11 @@ private fun DrawScope.drawCar(
 
         // Presión de las ruedas: delanteras arriba, traseras junto a las ruedas.
         val t = state.tyres
-        tyre(tm, st, "DEL. IZQ.", t.frontLeft, at(0.27f, 0.30f), alignRight = true)
-        tyre(tm, st, "DEL. DER.", t.frontRight, at(0.73f, 0.30f), alignRight = false)
-        tyre(tm, st, "TRAS. IZQ.", t.rearLeft, at(0.27f, 0.70f), alignRight = true)
-        tyre(tm, st, "TRAS. DER.", t.rearRight, at(0.73f, 0.70f), alignRight = false)
+        // Fuera de la silueta, también con las puertas abiertas (llegan hasta x 0.97).
+        tyre(tm, st, "DEL. IZQ.", t.frontLeft, at(0.03f, 0.30f), alignRight = true)
+        tyre(tm, st, "DEL. DER.", t.frontRight, at(0.99f, 0.30f), alignRight = false)
+        tyre(tm, st, "TRAS. IZQ.", t.rearLeft, at(0.03f, 0.70f), alignRight = true)
+        tyre(tm, st, "TRAS. DER.", t.rearRight, at(0.99f, 0.70f), alignRight = false)
     }
 }
 
