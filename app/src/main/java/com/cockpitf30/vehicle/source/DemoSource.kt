@@ -36,6 +36,7 @@ class DemoSource : VehicleDataSource {
                         rangeKm = 451,
                         tyres = Tyres(2.4f, 2.4f, 2.3f, 2.4f),
                         doors = doors,
+                        avgConsumption = (6.8 + 0.3 * sin(t / 40)).toFloat(),
                     )
                 }
                 // El contador se publica una vez por segundo: cada cambio de estado recompone el Inicio.

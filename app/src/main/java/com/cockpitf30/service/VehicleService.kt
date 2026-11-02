@@ -16,6 +16,7 @@ import com.cockpitf30.system.AppSettings
 import com.cockpitf30.system.SourceMode
 import com.cockpitf30.ui.MainActivity
 import com.cockpitf30.vehicle.VehicleRepository
+import com.cockpitf30.vehicle.trip.TripComputer
 import com.cockpitf30.vehicle.source.CarPropertySource
 import com.cockpitf30.vehicle.source.DemoSource
 import com.cockpitf30.vehicle.source.SerialSource
@@ -32,12 +33,14 @@ import kotlinx.coroutines.cancel
 class VehicleService : LifecycleService() {
     private var source: VehicleDataSource? = null
     private var sourceScope: CoroutineScope? = null
+    private val tripScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
         // El tipo specialUse solo existe desde Android 14; antes basta con el del manifiesto.
         val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
         ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), type)
+        TripComputer.start(this, tripScope)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -48,6 +51,8 @@ class VehicleService : LifecycleService() {
 
     override fun onDestroy() {
         stopSource()
+        tripScope.cancel()
+        TripComputer.stop()
         super.onDestroy()
     }
 

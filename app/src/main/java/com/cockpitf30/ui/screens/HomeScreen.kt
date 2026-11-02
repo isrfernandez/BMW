@@ -81,6 +81,7 @@ import com.cockpitf30.ui.components.InitialFocus
 import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.vehicle.VehicleRepository
 import com.cockpitf30.vehicle.VehicleState
+import com.cockpitf30.vehicle.trip.TripComputer
 
 /** Tarjeta de la parrilla panorámica: un resumen rápido de una función. */
 private class Card(
@@ -117,7 +118,7 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
         listOf(
             Card("music", "Música", "Abrir reproductor", CardTheme.MUSIC, ::openMusic),
             Card("nav", "Navegación", "Mapas", CardTheme.NAV, ::openMaps),
-            Card("trip", "Datos de viaje", "Velocidad y motor", CardTheme.TRIP, { onOpen(Screen.VEHICLE) }, Alignment.BottomStart) { TripBody(it) },
+            Card("trip", "Datos de viaje", "Duración, km y consumo", CardTheme.TRIP, { onOpen(Screen.TRIP) }, Alignment.BottomStart) { TripBody(it) },
             Card("weather", "Tiempo", "", CardTheme.WEATHER, { onOpen(Screen.WEATHER) }),
             Card("vehicle", "Vehículo", "Puertas y neumáticos", CardTheme.VEHICLE, { onOpen(Screen.VEHICLE) }),
             Card("phone", "Teléfono", "Marcador y contactos", CardTheme.PHONE, { onOpen(Screen.PHONE) }),
@@ -269,12 +270,14 @@ private fun MoveHint(modifier: Modifier = Modifier) {
     }
 }
 
-/** Velocidad y rpm con ancho fijo y dígitos tabulares, para que no salten al cambiar. */
+/** Kilómetros y duración del viaje en curso (o del último), con ancho fijo para que no salten. */
 @Composable
-private fun TripBody(state: VehicleState) {
+private fun TripBody(@Suppress("UNUSED_PARAMETER") state: VehicleState) {
+    val trips by TripComputer.state.collectAsStateWithLifecycle()
+    val trip = trips.current ?: trips.last
     Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.Bottom) {
-        Metric(state.speedKmh?.toString() ?: "--", "km/h", 100.dp)
-        Metric(state.rpm?.toString() ?: "--", "rpm", 128.dp)
+        Metric(trip?.let { km(it.distanceKm) } ?: "--", "km", 110.dp)
+        Metric(trip?.let { hm(it.durationMillis) } ?: "--", if (trips.current != null) "h · en curso" else "h · último", 128.dp)
     }
 }
 
@@ -324,4 +327,4 @@ internal fun launch(context: Context, intent: Intent) {
     }
 }
 
-enum class Screen { HOME, VEHICLE, APPS, DIAGNOSTICS, WEATHER, PHONE }
+enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, WEATHER, PHONE }

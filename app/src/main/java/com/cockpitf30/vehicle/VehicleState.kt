@@ -13,6 +13,8 @@ data class VehicleState(
     val oilTempC: Int? = null,
     val rangeKm: Int? = null,
     val tyres: Tyres = Tyres(),
+    /** Consumo medio del ordenador de a bordo en l/100 km, si la caja CAN lo manda. */
+    val avgConsumption: Float? = null,
 )
 
 /** Presión de cada neumático en bar. */

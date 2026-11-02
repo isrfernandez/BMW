@@ -51,6 +51,7 @@ import com.cockpitf30.ui.screens.DiagnosticsScreen
 import com.cockpitf30.ui.screens.HomeScreen
 import com.cockpitf30.ui.screens.Screen
 import com.cockpitf30.ui.screens.VehicleScreen
+import com.cockpitf30.ui.screens.TripScreen
 import com.cockpitf30.ui.screens.Reorder
 import com.cockpitf30.ui.screens.WeatherScreen
 import com.cockpitf30.ui.screens.PhoneScreen
@@ -272,6 +273,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
             when (current) {
                 Screen.HOME -> HomeScreen(onOpen = { screen = it })
                 Screen.VEHICLE -> VehicleScreen()
+                Screen.TRIP -> TripScreen()
                 Screen.APPS -> AppsScreen()
                 Screen.DIAGNOSTICS -> DiagnosticsScreen()
                 Screen.WEATHER -> WeatherScreen()
