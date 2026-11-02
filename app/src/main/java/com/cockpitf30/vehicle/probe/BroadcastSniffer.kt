@@ -28,10 +28,17 @@ object BroadcastSniffer {
 
     private var receiver: BroadcastReceiver? = null
 
+    private val NOISE = listOf(
+        "android.intent.", "android.net.", "android.bluetooth.", "android.media.", "android.app.", "android.provider.",
+        "android.hardware.usb.", "android.os.", "android.location.", "android.settings.", "android.accounts.",
+        "android.nfc.", "android.speech.", "android.service.", "android.appwidget.", "androidx.", "com.android.vending",
+    )
+
     fun start(context: Context, actions: Collection<String>) {
         stop(context)
         // Las del sistema (arranque, pantalla, red…) solo meten ruido.
-        val wanted = actions.filterNot { it.startsWith("android.") || it.startsWith("androidx.") || it.startsWith("com.android.vending") }.distinct().take(500)
+        // Ojo: esta radio usa acciones propias con prefijo "android.car.", que sí queremos.
+        val wanted = actions.filterNot { a -> NOISE.any { a.startsWith(it) } }.distinct().take(500)
         if (wanted.isEmpty()) return
         val filter = IntentFilter().apply { wanted.forEach(::addAction) }
         val r = object : BroadcastReceiver() {

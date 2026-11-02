@@ -82,6 +82,7 @@ import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.ui.theme.numeric
 import com.cockpitf30.vehicle.SourceStatus
 import com.cockpitf30.vehicle.VehicleState
+import com.cockpitf30.vehicle.GearEstimator
 import kotlin.math.abs
 import kotlin.math.hypot
 
@@ -233,7 +234,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         ) {
             TabValue(state.speedKmh?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false, glow = Cyan, intensity = speedGlow)
             Spacer(Modifier.weight(1.5f))
-            TabValue(state.gear ?: "--", state.rpm?.let { "$it rpm" } ?: "-- rpm", Modifier.weight(1f), alignEnd = true, glow = RpmGlow, intensity = rpmGlow)
+            TabValue(state.gear ?: GearEstimator.estimate(state.speedKmh, state.rpm) ?: "--", state.rpm?.let { "$it rpm" } ?: "-- rpm", Modifier.weight(1f), alignEnd = true, glow = RpmGlow, intensity = rpmGlow)
         }
         StatusLine(
             state, status,

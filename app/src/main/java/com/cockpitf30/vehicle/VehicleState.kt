@@ -6,13 +6,15 @@ data class VehicleState(
     val rpm: Int? = null,
     val doors: Doors = Doors(),
     val outsideTempC: Float? = null,
-    /** Marcha o posición del cambio: "P", "R", "N", "D", "M3"... */
+    /** Marcha: "N", "R", "1".."6" (manual de 6). Si el CAN no la da, ver [GearEstimator]. */
     val gear: String? = null,
     /** Nivel de combustible, 0.0 (vacío) a 1.0 (lleno). */
     val fuelLevel: Float? = null,
     val oilTempC: Int? = null,
     val rangeKm: Int? = null,
     val tyres: Tyres = Tyres(),
+    /** Consumo medio del ordenador de a bordo en l/100 km, si la caja CAN lo manda. */
+    val avgConsumption: Float? = null,
 )
 
 /** Presión de cada neumático en bar. */
