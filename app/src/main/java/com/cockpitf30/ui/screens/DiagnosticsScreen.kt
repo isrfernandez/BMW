@@ -75,6 +75,7 @@ fun DiagnosticsScreen() {
     var sysApps by remember { mutableStateOf<List<String>>(emptyList()) }
     var services by remember { mutableStateOf<List<String>>(emptyList()) }
     var jars by remember { mutableStateOf<List<String>>(emptyList()) }
+    var carProbe by remember { mutableStateOf<List<String>>(emptyList()) }
     var busy by remember { mutableStateOf<String?>(null) }
 
     var mode by remember { mutableStateOf(settings.sourceMode) }
@@ -111,7 +112,17 @@ fun DiagnosticsScreen() {
         }
     }
 
-    fun report() = buildReport(context, status, probes, packages, props, input, raw, bytes, broadcasts, sysApps, services, jars)
+    fun exploreCarService() {
+        busy = "Explorando el servicio del coche…"
+        scope.launch {
+            carProbe = withContext(Dispatchers.IO) {
+                runCatching { com.cockpitf30.vehicle.probe.CarServiceProbe.run(context) }.getOrElse { listOf("Error: $it") }
+            }
+            busy = null
+        }
+    }
+
+    fun report() = buildReport(context, status, probes, packages, props, input, raw, bytes, broadcasts, sysApps, services, jars, carProbe)
     val automotive = remember { CarPropertySource.isAvailable(context) }
 
     fun apply() {
@@ -221,6 +232,11 @@ fun DiagnosticsScreen() {
                         if (p.actions.size > 8) Mono("  … y ${p.actions.size - 8} más (en el informe)")
                     }
                 }
+                ChipRow(listOf("Explorar el servicio del coche (car / car_data)"), -1) { exploreCarService() }
+                if (carProbe.isNotEmpty()) {
+                    carProbe.take(40).forEach { Mono(it) }
+                    if (carProbe.size > 40) Mono("… y ${carProbe.size - 40} líneas más (en el informe)")
+                }
                 if (sysApps.isNotEmpty() || services.isNotEmpty()) {
                     Info("Apps del sistema: ${sysApps.size} · servicios del sistema: ${services.size} · jars del framework: ${jars.size} (todo en el informe)", Cockpit.TextDim)
                     (services + jars).filter(SystemProbe::interesting).take(20).forEach { Mono(it) }
@@ -310,6 +326,7 @@ private fun buildReport(
     sysApps: List<String>,
     services: List<String>,
     jars: List<String>,
+    carProbe: List<String>,
 ): String = buildString {
     val dm = context.resources.displayMetrics
     appendLine("Cockpit F30 · informe de diagnóstico · ${java.time.LocalDateTime.now()}")
@@ -346,6 +363,7 @@ private fun buildReport(
         appendLine("== $title")
         lines.forEach(::appendLine)
     }
+    section("Servicio del coche", carProbe.ifEmpty { listOf("(no se exploró: pulsa «Explorar el servicio del coche»)") })
     section("Servicios del sistema", services)
     section("Jars del framework", jars)
     section("Apps del sistema", sysApps)
