@@ -22,7 +22,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Rect
+import android.graphics.Bitmap
 import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
@@ -87,12 +92,13 @@ import kotlin.math.abs
 import kotlin.math.hypot
 
 private val Cyan = Color(0xFF29B6F6)
-private val SpeedLabel = Color(0xFFE6F0FF)
-private val RpmGlow = Color(0xFFFF3B3B)
-private val RpmLabel = Color(0xFFFFD2D2)
-/** Color de la punta de cada barra, casi blanco: es donde "quema" la luz. */
-private val SpeedHot = Color(0xFFDDF4FF)
-private val RpmHot = Color(0xFFFFE1D6)
+/** Cifras de la escala: champán en la velocidad, plata azulada en las rpm, rojo en la zona roja. */
+private val SpeedLabel = Color(0xFFF6E7CC)
+private val RpmLabel = Color(0xFFDCE8F6)
+private val RpmRed = Color(0xFFFF4A3D)
+/** Halo de las cifras grandes, del color de su marcador. */
+private val SpeedGlow = Color(0xFFFFB45E)
+private val RpmGlow = Color(0xFF5DA8FF)
 /** Fondo del panel, del mismo azul marino que la escena del coche para que se funda. */
 private val SceneTop = Color(0xFF091A2D)
 
@@ -105,6 +111,10 @@ private fun speedFraction(kmh: Int): Float {
 
 private const val RPM_MAX = 8000
 private const val RPM_RED = 6000
+
+/** Altura (0..1) de cada cifra de la escala, para grabar las marcas en la franja. */
+private val SPEED_FRACTIONS = SPEED_MARKS.map(::speedFraction)
+private val RPM_FRACTIONS = (0..8).map { it * 1000f / RPM_MAX }
 
 /**
  * Cuadro de instrumentos estilo iDrive 8: marcos en chevron cian (velocidad) y rojo (rpm) con las
@@ -127,14 +137,13 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     val scaleStyle = numeric(30, FontWeight.SemiBold)
     val smallStyle = numeric(17, FontWeight.SemiBold)
     val captionStyle = numeric(17, FontWeight.Medium)
-    val scene = CarScene(
-        closed = ImageBitmap.imageResource(R.drawable.car_34_closed),
-        open = ImageBitmap.imageResource(R.drawable.car_34_open),
-    )
+    val closedRes = ImageBitmap.imageResource(R.drawable.car_34_closed)
+    val openRes = ImageBitmap.imageResource(R.drawable.car_34_open)
+    // Presiones y autonomía en grande para leerlas de un vistazo conduciendo.
     val overlay = Overlay(
-        value = numeric(24, FontWeight.SemiBold),
-        unit = numeric(14),
-        caption = MaterialTheme.typography.labelMedium,
+        value = numeric(38, FontWeight.SemiBold),
+        unit = numeric(19, FontWeight.Medium),
+        caption = MaterialTheme.typography.labelLarge.copy(fontSize = 16.sp, letterSpacing = 1.sp),
         alert = MaterialTheme.typography.labelLarge,
     )
     val mapText = MapText(
@@ -205,18 +214,24 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             },
     ) {
         val g = Geometry(maxWidth, maxHeight)
+        // La imagen del coche se reduce una sola vez al tamaño exacto con que se dibuja: escalarla
+        // en cada fotograma con filtro bilineal la dejaba borrosa y con dientes.
+        val carHeightPx = with(LocalDensity.current) { g.carHeight.roundToPx() }
+        val scene = remember(closedRes, openRes, carHeightPx) {
+            CarScene(closedRes.scaledToHeight(carHeightPx), openRes.scaledToHeight(carHeightPx))
+        }
         Canvas(Modifier.fillMaxSize()) {
             tileVersion // se vuelve a dibujar cuando llega una tesela
             val geo = g.px(this)
             val now = smooth.value // se lee al dibujar: el mapa se mueve sin recomponer el cuadro
             val map = MapFrame(route, now.position, now.bearing, zoom, phase)
             drawPanel(geo, scene, openness, state, measurer, overlay, page.value, map, mapText, focused)
-            drawFrame(geo, mirrored = false, fraction = speed, glow = Cyan, deep = Cockpit.Blue, hot = SpeedHot, phase = phase)
-            drawFrame(geo, mirrored = true, fraction = rpm, glow = RpmGlow, deep = Cockpit.Alert, hot = RpmHot, phase = (phase + 0.5f) % 1f)
+            drawFrame(geo, mirrored = false, fraction = speed, look = SpeedMetal, marks = SPEED_FRACTIONS, phase = phase)
+            drawFrame(geo, mirrored = true, fraction = rpm, look = RpmMetal, marks = RPM_FRACTIONS, phase = (phase + 0.5f) % 1f)
 
             SPEED_MARKS.forEach { v -> drawMark(geo, measurer, "$v", speedFraction(v), false, scaleStyle, SpeedLabel) }
             (1..8).forEach { k ->
-                drawMark(geo, measurer, "$k", k * 1000f / RPM_MAX, true, scaleStyle, if (k * 1000 >= RPM_RED) RpmGlow else RpmLabel)
+                drawMark(geo, measurer, "$k", k * 1000f / RPM_MAX, true, scaleStyle, if (k * 1000 >= RPM_RED) RpmRed else RpmLabel)
             }
             drawCaption(geo, measurer, "km/h", mirrored = false, captionStyle)
             drawCaption(geo, measurer, "1/min x 1000", mirrored = true, captionStyle)
@@ -232,7 +247,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
                 .padding(start = g.contentInset, end = g.contentInset),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TabValue(state.speedKmh?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false, glow = Cyan, intensity = speedGlow)
+            TabValue(state.speedKmh?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false, glow = SpeedGlow, intensity = speedGlow)
             Spacer(Modifier.weight(1.5f))
             TabValue(state.gear ?: GearEstimator.estimate(state.speedKmh, state.rpm) ?: "--", state.rpm?.let { "$it rpm" } ?: "-- rpm", Modifier.weight(1f), alignEnd = true, glow = RpmGlow, intensity = rpmGlow)
         }
@@ -295,6 +310,21 @@ private fun rememberSmoothRoute(route: RouteState): State<SmoothRoute> {
 
 private fun lerp(a: GeoPoint, b: GeoPoint, f: Float) = GeoPoint(a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f)
 
+private val PANEL_TOP = 16.dp
+private val PANEL_BOTTOM = 10.dp
+
+/**
+ * Reduce la imagen a [h] px de alto con buena calidad: primero a mitades (cada paso promedia
+ * 2x2 píxeles) y al final un único ajuste fino. Así no se pierden píxeles como al saltar de golpe.
+ */
+private fun ImageBitmap.scaledToHeight(h: Int): ImageBitmap {
+    if (h <= 0 || h >= height) return this
+    var b = asAndroidBitmap()
+    while (b.height >= h * 2) b = Bitmap.createScaledBitmap(b, b.width / 2, b.height / 2, true)
+    if (b.height != h) b = Bitmap.createScaledBitmap(b, (b.width * h.toFloat() / b.height).roundToInt(), h, true)
+    return b.asImageBitmap()
+}
+
 /** Medidas del cuadro en dp, compartidas entre el dibujo y los textos. */
 private class Geometry(val width: Dp, val height: Dp) {
     val frameTop = 30.dp
@@ -304,6 +334,8 @@ private class Geometry(val width: Dp, val height: Dp) {
     val band = 64.dp
     val cut = (frameBottom - frameTop) * 0.24f
     val contentInset = scaleWidth + cut + band + 20.dp
+    /** Alto del panel central (y de la imagen del coche): ver [drawPanel]. */
+    val carHeight = frameBottom - frameTop - PANEL_TOP - PANEL_BOTTOM
 
     fun px(scope: DrawScope) = with(scope) {
         GeoPx(
@@ -356,8 +388,8 @@ private fun DrawScope.drawPanel(
     page: Float, map: MapFrame, mapText: MapText, focused: Boolean,
 ) {
     val inset = g.band + g.dp(14f)
-    val top = g.y0 + g.dp(16f)
-    val bottom = g.y1 - g.dp(10f)
+    val top = g.y0 + g.dp(PANEL_TOP.value)
+    val bottom = g.y1 - g.dp(PANEL_BOTTOM.value)
     val pts = listOf(
         Offset(g.chevronX(top, inset), top), Offset(g.w - g.chevronX(top, inset), top),
         Offset(g.w - g.xv - inset, g.ym), Offset(g.w - g.chevronX(bottom, inset), bottom),
@@ -412,8 +444,8 @@ private fun DrawScope.drawCar(
         drawRect(SceneTop, Offset(0f, top), Size(size.width, ph))
         val dst = IntOffset(il.roundToInt(), top.roundToInt())
         val dstSize = IntSize(iw.roundToInt(), ph.roundToInt())
-        if (openness < 1f) drawImage(scene.closed, dstOffset = dst, dstSize = dstSize)
-        if (openness > 0f) drawImage(scene.open, dstOffset = dst, dstSize = dstSize, alpha = openness)
+        if (openness < 1f) drawImage(scene.closed, dstOffset = dst, dstSize = dstSize, filterQuality = FilterQuality.High)
+        if (openness > 0f) drawImage(scene.open, dstOffset = dst, dstSize = dstSize, alpha = openness, filterQuality = FilterQuality.High)
         // Viñeta: funde los bordes de la imagen con el fondo del panel (la imagen ya trae borde suave).
         val fade = iw * 0.10f
         drawRect(Brush.horizontalGradient(listOf(SceneTop, Color.Transparent), startX = il, endX = il + fade), Offset(il - 1f, top), Size(fade + 1f, ph))
@@ -489,20 +521,46 @@ private fun DrawScope.marker(
     drawText(u, color = Color.White.copy(alpha = 0.7f), topLeft = Offset(vx + v.size.width, y + h - u.size.height - 3.dp.toPx()), shadow = MarkerShadow)
 }
 
-/** Marco en chevron: línea exterior fina y brillante, línea interior gruesa y franja entre ambas con el relleno del valor. */
-private fun DrawScope.drawFrame(g: GeoPx, mirrored: Boolean, fraction: Float, glow: Color, deep: Color, hot: Color, phase: Float) {
+/**
+ * Colores de un marcador en metal: [dark]/[mid]/[bright] forman el brillo cilíndrico del relleno,
+ * [tip] la punta encendida y [light] la luz que se derrama hacia el centro del cuadro.
+ */
+private class MetalLook(val dark: Color, val mid: Color, val bright: Color, val tip: Color, val light: Color)
+
+/** Velocidad en oro/champán; rpm en acero azulado. */
+private val SpeedMetal = MetalLook(Color(0xFF4A2E12), Color(0xFFC8954E), Color(0xFFFFE3B3), Color(0xFFFFF6E6), Color(0xFFFFB45E))
+private val RpmMetal = MetalLook(Color(0xFF14273F), Color(0xFF6E9CCB), Color(0xFFD9EBFF), Color(0xFFF2F8FF), Color(0xFF5DA8FF))
+/** Acero de la franja vacía y del bisel. */
+private val SteelMetal = MetalLook(Color(0xFF0E141D), Color(0xFF2C3B4E), Color(0xFF6E86A1), Color.White, Color(0xFF9FB8D3))
+
+/**
+ * Perfil de brillo a lo ancho de la franja (0 = borde exterior, 1 = interior), como una pieza de
+ * metal curvada: filo brillante, banda clara, zona oscura y reflejo suave cerca del interior.
+ */
+private fun metalShade(look: MetalLook, t: Float): Color {
+    val stops = listOf(
+        0f to look.bright, 0.07f to look.mid, 0.30f to look.bright, 0.52f to look.dark,
+        0.78f to look.mid, 0.92f to look.dark, 1f to look.dark,
+    )
+    for (i in 1 until stops.size) {
+        val (t1, c1) = stops[i]
+        if (t <= t1) {
+            val (t0, c0) = stops[i - 1]
+            return androidx.compose.ui.graphics.lerp(c0, c1, ((t - t0) / (t1 - t0)).coerceIn(0f, 1f))
+        }
+    }
+    return look.dark
+}
+
+/**
+ * Marco en chevron con aspecto metálico: bisel cromado por fuera, franja de acero con marcas de
+ * escala y, de abajo arriba, el relleno del valor en metal pulido ([look]) con la punta encendida.
+ */
+private fun DrawScope.drawFrame(g: GeoPx, mirrored: Boolean, fraction: Float, look: MetalLook, marks: List<Float>, phase: Float) {
     fun o(x: Float, y: Float) = Offset(g.mirror(x, mirrored), y)
     fun chevron(inset: Float, top: Float, bottom: Float) = Path().apply {
         val a = o(g.chevronX(bottom, inset), bottom); val v = o(g.xv + inset, g.ym); val b = o(g.chevronX(top, inset), top)
         moveTo(a.x, a.y); lineTo(v.x, v.y); lineTo(b.x, b.y)
-    }
-
-    /** Tramo del chevron desplazado [inset] entre las alturas [yTop] y [yBottom]. */
-    fun segment(inset: Float, yTop: Float, yBottom: Float) = Path().apply {
-        val a = o(g.chevronX(yBottom, inset), yBottom)
-        moveTo(a.x, a.y)
-        if (yTop < g.ym && yBottom > g.ym) o(g.xv + inset, g.ym).let { lineTo(it.x, it.y) }
-        o(g.chevronX(yTop, inset), yTop).let { lineTo(it.x, it.y) }
     }
 
     /** Franja entre el borde exterior y el interior, de la altura [yTop] a [yBottom]. */
@@ -517,51 +575,58 @@ private fun DrawScope.drawFrame(g: GeoPx, mirrored: Boolean, fraction: Float, gl
         close()
     }
 
-    // Líneas horizontales arriba y abajo que se pierden hacia el centro.
+    /** Pinta la franja con el perfil metálico de [m] mediante chevrons concéntricos. */
+    fun DrawScope.metal(m: MetalLook, alpha: Float) {
+        val steps = 24
+        val step = g.band / steps
+        for (i in 0 until steps) {
+            val t = (i + 0.5f) / steps
+            drawPath(chevron(step * (i + 0.5f), g.y0 - g.band, g.y1 + g.band), metalShade(m, t).copy(alpha = alpha), style = Stroke(step + 1f))
+        }
+    }
+
+    // Líneas horizontales arriba y abajo, en plata, que se pierden hacia el centro.
     val x0 = g.chevronX(g.y0, 0f)
     val topEnd = x0 + g.w * 0.17f
     val bottomEnd = g.w * 0.5f - g.dp(40f)
-    val fade = if (mirrored) listOf(Color.Transparent, glow) else listOf(glow, Color.Transparent)
+    val silver = Color(0xFFC9D6E4)
+    val fade = if (mirrored) listOf(Color.Transparent, silver) else listOf(silver, Color.Transparent)
     drawLine(Brush.horizontalGradient(fade, o(x0, 0f).x, o(topEnd, 0f).x), o(x0, g.y0), o(topEnd, g.y0), g.dp(2f))
-    drawLine(Brush.horizontalGradient(fade, o(x0, 0f).x, o(bottomEnd, 0f).x), o(g.chevronX(g.y1, 0f), g.y1), o(bottomEnd, g.y1), g.dp(3f))
+    drawLine(Brush.horizontalGradient(fade, o(x0, 0f).x, o(bottomEnd, 0f).x), o(g.chevronX(g.y1, 0f), g.y1), o(bottomEnd, g.y1), g.dp(2.5f))
 
-    // Franja de fondo con rayado diagonal.
+    // Franja vacía: acero oscuro con reflejo claro arriba (la luz viene de arriba, como en el iDrive).
     val full = band(g.y0, g.y1)
-    drawPath(full, Color(0xFF151A24))
+    drawPath(full, Color(0xFF0C1219))
     clipPath(full) {
-        var y = g.y0 - g.band
-        while (y < g.y1 + g.band) {
-            drawLine(Color.White.copy(alpha = 0.05f), o(g.xv - g.dp(10f), y + g.band), o(g.xv + g.cut + g.band, y), g.dp(2f))
-            y += g.dp(9f)
-        }
+        metal(SteelMetal, 0.65f)
+        drawRect(
+            Brush.verticalGradient(
+                0f to Color.White.copy(alpha = 0.16f), 0.35f to Color.Transparent, 0.75f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.35f),
+                startY = g.y0, endY = g.y1,
+            ),
+            Offset(0f, g.y0), Size(size.width, g.y1 - g.y0),
+        )
     }
-    // Relleno del valor, de abajo arriba.
+
+    // Relleno del valor, de abajo arriba, en metal pulido.
     if (fraction > 0f) {
         val level = g.y1 - (g.y1 - g.y0) * fraction
-        // Degradado perpendicular al borde: color pleno fuera y transparente hacia el centro.
-        clipPath(band(level, g.y1)) {
-            val steps = 20
-            val step = g.band / steps
-            for (i in 0 until steps) {
-                val a = 1f - i / steps.toFloat()
-                val color = if (i < steps / 3) glow else deep
-                drawPath(chevron(step * (i + 0.5f), g.y0 - g.band, g.y1 + g.band), color.copy(alpha = a * a), style = Stroke(step + 1f))
-            }
-        }
         val span = g.y1 - level
-        clipPath(band(level, g.y1)) {
-            // La barra se calienta hacia la punta: casi blanca en el nivel, del color pleno más abajo.
+        val filled = band(level, g.y1)
+        clipPath(filled) {
+            metal(look, 1f)
+            // Calor hacia la punta y algo más de sombra abajo: da volumen a la barra.
             drawRect(
                 Brush.verticalGradient(
-                    0f to hot.copy(alpha = 0.6f), 0.22f to glow.copy(alpha = 0.35f), 1f to Color.Transparent,
-                    startY = level, endY = level + maxOf(span, g.dp(40f)),
+                    0f to look.tip.copy(alpha = 0.55f), 0.18f to look.bright.copy(alpha = 0.18f), 0.6f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.30f),
+                    startY = level, endY = level + maxOf(span, g.dp(60f)),
                 ),
-                Offset(0f, level), Size(size.width, span), blendMode = BlendMode.Plus,
+                Offset(0f, level), Size(size.width, span),
             )
-            // Destello que sube por la barra hasta el nivel, una y otra vez.
+            // Reflejo que recorre la barra hasta el nivel, una y otra vez.
             val sy = g.y1 - (span + g.band) * phase
             drawRect(
-                Brush.verticalGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.30f), Color.Transparent), startY = sy - g.band, endY = sy + g.band),
+                Brush.verticalGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.22f), Color.Transparent), startY = sy - g.band, endY = sy + g.band),
                 Offset(0f, sy - g.band), Size(size.width, g.band * 2), blendMode = BlendMode.Plus,
             )
         }
@@ -573,33 +638,56 @@ private fun DrawScope.drawFrame(g: GeoPx, mirrored: Boolean, fraction: Float, gl
         clipRect(clipLeft, g.y0, clipRight, g.y1) {
             drawCircle(
                 Brush.radialGradient(
-                    0f to glow.copy(alpha = 0.10f + 0.22f * fraction), 0.5f to deep.copy(alpha = 0.06f + 0.10f * fraction), 1f to Color.Transparent,
+                    0f to look.light.copy(alpha = 0.10f + 0.20f * fraction), 0.5f to look.mid.copy(alpha = 0.05f + 0.08f * fraction), 1f to Color.Transparent,
                     center = o(innerX, level), radius = pool,
                 ),
                 radius = pool, center = o(innerX, level), blendMode = BlendMode.Screen,
             )
         }
-        // Línea exterior encendida a lo largo del tramo lleno: neón con halo.
-        val lit = segment(0f, level, g.y1)
-        drawPath(lit, glow.copy(alpha = 0.18f), style = Stroke(g.dp(22f), cap = StrokeCap.Round), blendMode = BlendMode.Plus)
-        drawPath(lit, glow.copy(alpha = 0.45f), style = Stroke(g.dp(8f), cap = StrokeCap.Round), blendMode = BlendMode.Plus)
-        // Punta: borde blanco y foco de luz que se derrama fuera de la barra.
+        // Punta: filo blanco cálido y un foco suave.
         val tip = o(g.chevronX(level, g.band * 0.45f), level)
-        val bloom = g.band * 1.6f
+        val bloom = g.band * 1.3f
         drawCircle(
             Brush.radialGradient(
-                0f to Color.White.copy(alpha = 0.6f), 0.2f to hot.copy(alpha = 0.38f), 0.55f to glow.copy(alpha = 0.14f), 1f to Color.Transparent,
+                0f to look.tip.copy(alpha = 0.55f), 0.25f to look.light.copy(alpha = 0.25f), 1f to Color.Transparent,
                 center = tip, radius = bloom,
             ),
             radius = bloom, center = tip, blendMode = BlendMode.Plus,
         )
-        drawLine(Color.White, o(g.chevronX(level, 0f), level), o(g.chevronX(level, g.band * 0.85f), level), g.dp(3f), StrokeCap.Round)
+        drawLine(look.tip, o(g.chevronX(level, 0f), level), o(g.chevronX(level, g.band), level), g.dp(3f), StrokeCap.Round)
     }
-    // Línea exterior brillante e interior gruesa.
+
+    // Marcas de escala grabadas en la franja: largas en cada cifra, cortas a mitad de camino.
+    val ticks = marks + marks.zipWithNext { a, b -> (a + b) / 2 }
+    ticks.forEach { f ->
+        val y = g.y1 - (g.y1 - g.y0) * f
+        val major = f in marks
+        val len = g.band * if (major) 0.42f else 0.22f
+        val a = o(g.chevronX(y, g.dp(3f)), y); val b = o(g.chevronX(y, len), y)
+        drawLine(Color.Black.copy(alpha = 0.45f), a + Offset(0f, g.dp(1.5f)), b + Offset(0f, g.dp(1.5f)), g.dp(2f))
+        drawLine(Color.White.copy(alpha = if (major) 0.85f else 0.5f), a, b, g.dp(if (major) 2f else 1.4f))
+    }
+
+    // Bisel cromado: sombra exterior, cuerpo de plata con reflejos y filo de luz; borde interior de acero.
     val outer = chevron(0f, g.y0, g.y1)
-    drawPath(outer, glow.copy(alpha = 0.3f), style = Stroke(g.dp(9f)))
-    drawPath(outer, glow, style = Stroke(g.dp(2.5f)))
-    drawPath(chevron(g.band, g.y0, g.y1), deep.copy(alpha = 0.5f), style = Stroke(g.dp(2f)))
+    drawPath(outer, Color.Black.copy(alpha = 0.6f), style = Stroke(g.dp(8f)))
+    drawPath(
+        outer,
+        Brush.verticalGradient(
+            0f to Color(0xFFF2F7FC), 0.2f to Color(0xFF7D91A8), 0.42f to Color(0xFFE3ECF5), 0.5f to Color(0xFFFFFFFF),
+            0.62f to Color(0xFF5E6F84), 0.85f to Color(0xFFC3D2E2), 1f to Color(0xFF6A7C92),
+            startY = g.y0, endY = g.y1,
+        ),
+        style = Stroke(g.dp(4f)),
+    )
+    drawPath(outer, look.light.copy(alpha = 0.12f), style = Stroke(g.dp(12f)), blendMode = BlendMode.Plus)
+    val inner = chevron(g.band, g.y0, g.y1)
+    drawPath(inner, Color.Black.copy(alpha = 0.5f), style = Stroke(g.dp(4f)))
+    drawPath(
+        inner,
+        Brush.verticalGradient(listOf(Color(0xFFB8C7D8), Color(0xFF4A5A6E), Color(0xFF9AAAC0)), startY = g.y0, endY = g.y1),
+        style = Stroke(g.dp(1.6f)),
+    )
 }
 
 /** Cifra de escala por fuera del borde, a la altura correspondiente a [fraction]. */
