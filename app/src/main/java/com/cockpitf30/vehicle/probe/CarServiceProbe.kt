@@ -21,7 +21,7 @@ object CarServiceProbe {
     /** Cadenas que delatan cómo se piden los datos del coche. */
     private val INTERESTING = Regex(
         "door|speed|rpm|fuel|oil|mileage|odometer|gear|temp|canbus|car_data|content://|ICar|Canbus|" +
-            "android\\.car\\.(action|extra|intent)|getCar|registerCar|CarInfo|CarData|outside|seatbelt|handbrake|trunk|hood",
+            "android\\.car\\.(action|extra|intent)|getCar|registerCar|CarInfo|CarData|outside|seatbelt|handbrake|trunk|hood|tyre|tire|tpms|pressure",
         RegexOption.IGNORE_CASE,
     )
 

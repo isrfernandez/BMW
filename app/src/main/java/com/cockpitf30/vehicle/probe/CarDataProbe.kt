@@ -26,7 +26,7 @@ object CarDataProbe {
     private val CLIENT_PACKAGES = listOf("com.bmw1.launcher2", "android.car.app.canbus", "android.car.server")
 
     private val INTERESTING = Regex(
-        "door|speed|rpm|temp|fuel|oil|mile|odo|gear|brake|acc|belt|trunk|hood|radar|light|steer|range|consum|trip|tyre|tire|pressure",
+        "door|speed|rpm|temp|fuel|oil|mile|odo|gear|brake|acc|belt|trunk|hood|radar|light|steer|range|consum|trip|tyre|tire|pressure|tpms|rdc",
         RegexOption.IGNORE_CASE,
     )
     private val KNOWN_KEYS = listOf(
