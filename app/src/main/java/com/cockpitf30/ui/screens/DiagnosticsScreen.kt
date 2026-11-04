@@ -76,6 +76,9 @@ fun DiagnosticsScreen() {
     var services by remember { mutableStateOf<List<String>>(emptyList()) }
     var jars by remember { mutableStateOf<List<String>>(emptyList()) }
     var carProbe by remember { mutableStateOf<List<String>>(emptyList()) }
+    var dataProbe by remember { mutableStateOf<List<String>>(emptyList()) }
+    var dexActions by remember { mutableStateOf<List<String>>(emptyList()) }
+    val callbacks by com.cockpitf30.vehicle.probe.CarDataProbe.callbackLog.collectAsStateWithLifecycle()
     var busy by remember { mutableStateOf<String?>(null) }
 
     var mode by remember { mutableStateOf(settings.sourceMode) }
@@ -107,6 +110,7 @@ fun DiagnosticsScreen() {
                 sysApps = SystemProbe.systemApps(context)
                 services = SystemProbe.systemServices()
                 jars = SystemProbe.frameworkJars()
+                dexActions = com.cockpitf30.vehicle.probe.CarServiceProbe.dexActions(context)
             }
             busy = null
         }
@@ -122,7 +126,17 @@ fun DiagnosticsScreen() {
         }
     }
 
-    fun report() = buildReport(context, status, probes, packages, props, input, raw, bytes, broadcasts, sysApps, services, jars, carProbe)
+    fun readCarData() {
+        busy = "Leyendo datos con CarDataManager…"
+        scope.launch {
+            dataProbe = withContext(Dispatchers.IO) {
+                runCatching { com.cockpitf30.vehicle.probe.CarDataProbe.explore(context) }.getOrElse { listOf("Error: $it") }
+            }
+            busy = null
+        }
+    }
+
+    fun report() = buildReport(context, status, probes, packages, props, input, raw, bytes, broadcasts, sysApps, services, jars, carProbe, dataProbe, callbacks)
     val automotive = remember { CarPropertySource.isAvailable(context) }
 
     fun apply() {
@@ -208,7 +222,7 @@ fun DiagnosticsScreen() {
             item {
                 Section("Apps del CAN / MCU en la radio")
                 Info("Si la radio reparte los datos del coche por broadcast, se pueden escuchar sin root.", Cockpit.TextDim)
-                val actions = packages.orEmpty().flatMap { it.actions }.distinct()
+                val actions = (packages.orEmpty().flatMap { it.actions } + dexActions).distinct()
                 ChipRow(
                     listOf(
                         "Buscar apps del coche",
@@ -233,6 +247,17 @@ fun DiagnosticsScreen() {
                     }
                 }
                 ChipRow(listOf("Explorar el servicio del coche (car / car_data)"), -1) { exploreCarService() }
+                ChipRow(listOf("Leer datos (CarDataManager)", "Escuchar avisos del servicio"), -1) {
+                    if (it == 0) readCarData()
+                    else scope.launch {
+                        val r = withContext(Dispatchers.IO) { com.cockpitf30.vehicle.probe.CarDataProbe.startCallbacks(context) }
+                        android.widget.Toast.makeText(context, r.take(120), android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
+                if (dataProbe.isNotEmpty()) {
+                    dataProbe.filter { it.contains(") = ") || it.startsWith("--") || it.startsWith("DataType") }.take(40).forEach { Mono(it) }
+                    Mono("(${dataProbe.size} líneas en el informe)")
+                }
                 if (carProbe.isNotEmpty()) {
                     carProbe.take(40).forEach { Mono(it) }
                     if (carProbe.size > 40) Mono("… y ${carProbe.size - 40} líneas más (en el informe)")
@@ -246,6 +271,9 @@ fun DiagnosticsScreen() {
                     props.take(30).forEach { Mono(it) }
                 }
             }
+            item { Section("Avisos del servicio del coche") }
+            if (callbacks.isEmpty()) item { Info("Ninguno (pulsa «Escuchar avisos del servicio» y abre una puerta)") }
+            items(callbacks.take(60)) { Mono(it) }
             item { Section("Broadcasts recibidos (abre una puerta, arranca…)") }
             if (broadcasts.isEmpty()) item { Info(if (listening > 0) "Ninguno todavía" else "Parado") }
             items(broadcasts) { Mono(it) }
@@ -327,6 +355,8 @@ private fun buildReport(
     services: List<String>,
     jars: List<String>,
     carProbe: List<String>,
+    dataProbe: List<String>,
+    callbacks: List<String>,
 ): String = buildString {
     val dm = context.resources.displayMetrics
     appendLine("Cockpit F30 · informe de diagnóstico · ${java.time.LocalDateTime.now()}")
@@ -364,6 +394,8 @@ private fun buildReport(
         lines.forEach(::appendLine)
     }
     section("Servicio del coche", carProbe.ifEmpty { listOf("(no se exploró: pulsa «Explorar el servicio del coche»)") })
+    section("CarDataManager", dataProbe.ifEmpty { listOf("(no se pulsó «Leer datos»)") })
+    section("Avisos del servicio", callbacks)
     section("Servicios del sistema", services)
     section("Jars del framework", jars)
     section("Apps del sistema", sysApps)

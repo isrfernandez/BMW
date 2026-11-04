@@ -47,6 +47,10 @@ object CarServiceProbe {
         }
     }
 
+    /** Acciones android.car.action.* que aparecen en el código de las apps del fabricante. */
+    fun dexActions(context: Context): List<String> = TARGET_PACKAGES.flatMap { dexStrings(context, it) }
+        .filter { Regex("^android\\.car\\.action[._][A-Za-z0-9_.]+$").matches(it) }.distinct()
+
     private fun binder(name: String): IBinder? = runCatching {
         Class.forName("android.os.ServiceManager").getMethod("getService", String::class.java).invoke(null, name) as IBinder?
     }.getOrNull()
