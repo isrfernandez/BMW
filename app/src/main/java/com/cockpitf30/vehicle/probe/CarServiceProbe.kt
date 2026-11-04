@@ -21,7 +21,7 @@ object CarServiceProbe {
     /** Cadenas que delatan cómo se piden los datos del coche. */
     private val INTERESTING = Regex(
         "door|speed|rpm|fuel|oil|mileage|odometer|gear|temp|canbus|car_data|content://|ICar|Canbus|" +
-            "android\\.car\\.(action|extra|intent)|getCar|registerCar|CarInfo|CarData|outside|seatbelt|handbrake|trunk|hood",
+            "android\\.car\\.(action|extra|intent)|getCar|registerCar|CarInfo|CarData|outside|seatbelt|handbrake|trunk|hood|tyre|tire|tpms|pressure",
         RegexOption.IGNORE_CASE,
     )
 
@@ -46,6 +46,10 @@ object CarServiceProbe {
             hits.take(400).forEach { add("  $it") }
         }
     }
+
+    /** Acciones android.car.action.* que aparecen en el código de las apps del fabricante. */
+    fun dexActions(context: Context): List<String> = TARGET_PACKAGES.flatMap { dexStrings(context, it) }
+        .filter { Regex("^android\\.car\\.action[._][A-Za-z0-9_.]+$").matches(it) }.distinct()
 
     private fun binder(name: String): IBinder? = runCatching {
         Class.forName("android.os.ServiceManager").getMethod("getService", String::class.java).invoke(null, name) as IBinder?
