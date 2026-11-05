@@ -1,6 +1,7 @@
 package com.cockpitf30.vehicle.trip
 
 import android.content.Context
+import android.os.SystemClock
 import com.cockpitf30.nav.GeoPoint
 import com.cockpitf30.nav.RouteTracker
 import com.cockpitf30.system.AppSettings
@@ -34,6 +35,8 @@ data class TripsState(
 object TripComputer {
     private const val TICK_MS = 1_000L
     private const val SAVE_EVERY = 15
+    /** Precisión mínima (m) de una posición del GPS para sumar distancia con ella. */
+    private const val MAX_ACCURACY_M = 30f
 
     private val _state = MutableStateFlow(TripsState())
     val state: StateFlow<TripsState> = _state
@@ -89,7 +92,10 @@ object TripComputer {
             if (demo) _state.value = demoTrips(now) else loadSaved()
         }
         val vs = VehicleRepository.state.value
-        val input = TripInput(now, vs.speedKmh, gpsMeters(), vs.fuelLevel, vs.avgConsumption)
+        val gps = gpsReading()
+        // Sin velocidad del CAN, la del propio GPS; si tampoco la da, la distancia entre posiciones.
+        val speed = vs.speedKmh ?: gps.speedKmh
+        val input = TripInput(now, speed, if (speed == null) gps.meters else 0.0, vs.fuelLevel, vs.avgConsumption)
         val s = _state.value
         val cur = s.current
         val next = when {
@@ -102,13 +108,25 @@ object TripComputer {
         if (!demo && (save || next.current == null && cur != null || cur == null && next.current != null)) persist()
     }
 
-    /** Metros del GPS real desde el tick anterior (la ruta simulada del Demo no cuenta). */
-    private fun gpsMeters(): Double {
+    private class GpsReading(val speedKmh: Int?, val meters: Double)
+
+    /**
+     * Lo que aporta el GPS real en este tick (la ruta simulada del Demo no cuenta): su velocidad
+     * Doppler si la posición es reciente, y los metros desde la posición anterior. Las posiciones
+     * de red o con poca precisión no suman distancia: saltan decenas o cientos de metros de un
+     * segundo a otro y fueron las que dieron una media de 615 km/h.
+     */
+    private fun gpsReading(): GpsReading {
         val r = RouteTracker.state.value
-        val p = r.position?.takeIf { r.live } ?: return 0.0
+        val fix = r.fix?.takeIf { r.live && it.fromGps }
+        val fresh = fix != null && SystemClock.elapsedRealtime() - fix.elapsedMs < 3_000
+        val speed = fix?.speedKmh?.takeIf { fresh }?.roundToInt()
+        val good = fix != null && fresh && (fix.accuracyM ?: 0f) <= MAX_ACCURACY_M
+        val p = r.position?.takeIf { good }
         val prev = lastGps
         lastGps = p
-        return prev?.let { RouteTracker.distance(it, p) }?.takeIf { it < 200 } ?: 0.0
+        val meters = if (p != null && prev != null) RouteTracker.distance(prev, p) else 0.0
+        return GpsReading(speed, meters)
     }
 
     private fun persist() {
