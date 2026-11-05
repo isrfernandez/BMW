@@ -76,6 +76,8 @@ import com.cockpitf30.ui.components.CardTheme
 import com.cockpitf30.ui.components.ClusterStrip
 import com.cockpitf30.ui.components.glassBackground
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import com.cockpitf30.ui.components.glassOverlay
 import com.cockpitf30.ui.components.FocusTile
 import com.cockpitf30.ui.components.InitialFocus
 import com.cockpitf30.ui.theme.Cockpit
@@ -104,7 +106,9 @@ object Reorder {
     var step: ((Int) -> Unit)? = null
 }
 
-private val CARD_WIDTH = 320.dp
+private val CARD_WIDTH = 330.dp
+/** Alto del cuadro de instrumentos: 3/5 de los 720 dp de la pantalla. */
+private val CLUSTER_HEIGHT = 432.dp
 private val CARD_GAP = 16.dp
 
 @Composable
@@ -169,8 +173,8 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
     InitialFocus(firstCard)
 
     Column(Modifier.fillMaxSize().padding(top = 10.dp, bottom = 16.dp)) {
-        // El cuadro (mapa e indicadores) ocupa dos tercios de la altura; las tarjetas, el resto.
-        ClusterStrip(state, status, Modifier.fillMaxWidth().height(480.dp).padding(horizontal = 12.dp))
+        // El cuadro (mapa e indicadores) ocupa tres quintos de la altura (432 de 720 dp); las tarjetas, el resto.
+        ClusterStrip(state, status, Modifier.fillMaxWidth().height(CLUSTER_HEIGHT).padding(horizontal = 12.dp))
         Spacer(Modifier.height(6.dp))
         LazyRow(
             Modifier.weight(1f).fillMaxWidth().onPreviewKeyEvent { e ->
@@ -231,7 +235,12 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                     selected = isMoving,
                     modifier = mod,
                 ) {
-                    Box(Modifier.fillMaxSize().drawBehind { glassBackground(card.theme) }) {
+                    Box(
+                        Modifier.fillMaxSize()
+                            .drawBehind { glassBackground(card.theme) }
+                            // Placa de cristal por encima de la ilustración y del texto.
+                            .drawWithContent { drawContent(); glassOverlay(card.theme.to) },
+                    ) {
                         if (card.id == "weather") {
                             weather.forecast?.let { f ->
                                 val c = wmoCondition(f.code)

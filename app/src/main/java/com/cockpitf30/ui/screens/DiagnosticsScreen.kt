@@ -156,13 +156,16 @@ fun DiagnosticsScreen() {
     InitialFocus(first)
 
     Column(Modifier.fillMaxSize().hexBackground()) {
-        TopBar("Diagnóstico")
+        TopBar("Diagnóstico") {
+            Text("v${installedVersion(context)}", style = MaterialTheme.typography.labelLarge, color = Cockpit.BlueLight)
+        }
         LazyColumn(
             contentPadding = PaddingValues(horizontal = 32.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
                 Section("Estado")
+                Info("Versión instalada: ${installedVersion(context)}", Cockpit.BlueLight)
                 Info("Fuente: ${status.sourceName} · ${if (status.connected) "conectada" else "desconectada"}")
                 Info("Bytes leídos: ${status.bytesReceived} · tramas: ${status.framesReceived} · checksum erróneo: ${status.badChecksums}")
                 status.lastError?.let { Info("Último error: $it", Cockpit.Alert) }
@@ -359,7 +362,7 @@ private fun buildReport(
     callbacks: List<String>,
 ): String = buildString {
     val dm = context.resources.displayMetrics
-    appendLine("Cockpit F30 · informe de diagnóstico · ${java.time.LocalDateTime.now()}")
+    appendLine("Cockpit F30 ${installedVersion(context)} · informe de diagnóstico · ${java.time.LocalDateTime.now()}")
     appendLine("Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT}) · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · ${android.os.Build.DISPLAY}")
     appendLine("Pantalla ${dm.widthPixels}x${dm.heightPixels} ${dm.densityDpi} dpi")
     appendLine()
@@ -440,3 +443,10 @@ private fun saveReport(context: android.content.Context, text: String) {
         android.widget.Toast.LENGTH_LONG,
     ).show()
 }
+
+/** Versión de la app tal como está instalada (nombre y código de versión del paquete). */
+internal fun installedVersion(context: android.content.Context): String = runCatching {
+    val info = context.packageManager.getPackageInfo(context.packageName, 0)
+    val code = if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
+    "${info.versionName} (build $code)"
+}.getOrDefault("desconocida")

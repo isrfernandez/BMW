@@ -15,12 +15,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -44,6 +38,7 @@ import com.cockpitf30.service.VehicleService
 import com.cockpitf30.system.AppSettings
 import com.cockpitf30.system.BatteryOptimization
 import com.cockpitf30.ui.components.DefaultFocus
+import com.cockpitf30.ui.components.SideArt
 import com.cockpitf30.ui.components.SideItem
 import com.cockpitf30.ui.components.Sidebar
 import com.cockpitf30.ui.screens.AppsScreen
@@ -249,12 +244,12 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     val context = LocalContext.current
     val sideItems = listOf(
         // Pulsación larga en Home: atajo a Diagnóstico.
-        SideItem("Home", Icons.Filled.Home, screen == Screen.HOME, onLongClick = { screen = Screen.DIAGNOSTICS }) { screen = Screen.HOME },
-        SideItem("Navegación", Icons.Filled.LocationOn, false) { openMaps(context) },
-        SideItem("Música", Icons.Filled.PlayArrow, false) { openMusic(context) },
-        SideItem("Apps", Icons.Filled.Menu, screen == Screen.APPS) { screen = Screen.APPS },
+        SideItem("Home", SideArt.HOME, screen == Screen.HOME, onLongClick = { screen = Screen.DIAGNOSTICS }) { screen = Screen.HOME },
+        SideItem("Navegación", SideArt.NAV, false) { openMaps(context) },
+        SideItem("Música", SideArt.MUSIC, false) { openMusic(context) },
+        SideItem("Apps", SideArt.APPS, screen == Screen.APPS) { screen = Screen.APPS },
         // Ajustes de la app: fuente de datos, puerto serie, batería.
-        SideItem("Ajustes", Icons.Filled.Settings, screen == Screen.DIAGNOSTICS) { screen = Screen.DIAGNOSTICS },
+        SideItem("Ajustes", SideArt.SETTINGS, screen == Screen.DIAGNOSTICS) { screen = Screen.DIAGNOSTICS },
     )
 
     Row(

@@ -134,7 +134,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     val rpmGlow by remember { derivedStateOf { (rpm * 10).roundToInt() / 10f } }
     // Muchos rótulos se miden en cada fotograma (hay animación continua): caché amplia.
     val measurer = rememberTextMeasurer(cacheSize = 96)
-    val scaleStyle = numeric(30, FontWeight.SemiBold)
+    val scaleStyle = numeric(28, FontWeight.SemiBold)
     val smallStyle = numeric(17, FontWeight.SemiBold)
     val captionStyle = numeric(17, FontWeight.Medium)
     val closedRes = ImageBitmap.imageResource(R.drawable.car_34_closed)
@@ -229,9 +229,10 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             drawFrame(geo, mirrored = false, fraction = speed, look = SpeedMetal, marks = SPEED_FRACTIONS, phase = phase)
             drawFrame(geo, mirrored = true, fraction = rpm, look = RpmMetal, marks = RPM_FRACTIONS, phase = (phase + 0.5f) % 1f)
 
-            SPEED_MARKS.forEach { v -> drawMark(geo, measurer, "$v", speedFraction(v), false, scaleStyle, SpeedLabel) }
+            // El 0 no se rotula (no cabe colgando bajo la última marca); su marca sí se dibuja.
+            SPEED_MARKS.drop(1).forEach { v -> drawMark(geo, measurer, "$v", speedFraction(v), false, scaleStyle, SpeedLabel, speed, SpeedMetal) }
             (1..8).forEach { k ->
-                drawMark(geo, measurer, "$k", k * 1000f / RPM_MAX, true, scaleStyle, if (k * 1000 >= RPM_RED) RpmRed else RpmLabel)
+                drawMark(geo, measurer, "$k", k * 1000f / RPM_MAX, true, scaleStyle, if (k * 1000 >= RPM_RED) RpmRed else RpmLabel, rpm, RpmMetal)
             }
             drawCaption(geo, measurer, "km/h", mirrored = false, captionStyle)
             drawCaption(geo, measurer, "1/min x 1000", mirrored = true, captionStyle)
@@ -330,8 +331,10 @@ private class Geometry(val width: Dp, val height: Dp) {
     val frameTop = 30.dp
     val statusHeight = 50.dp
     val frameBottom = height - statusHeight
-    val scaleWidth = 74.dp
-    val band = 64.dp
+    /** Margen exterior: las cifras van ya dentro de la franja, así que basta un respiro. */
+    val scaleWidth = 18.dp
+    /** Ancho de las barras laterales (antes 64 dp): caben dentro las cifras de la escala. */
+    val band = 100.dp
     val cut = (frameBottom - frameTop) * 0.24f
     val contentInset = scaleWidth + cut + band + 20.dp
     /** Alto del panel central (y de la imagen del coche): ver [drawPanel]. */
@@ -403,9 +406,8 @@ private fun DrawScope.drawPanel(
     val pw = g.w - 2 * (g.xv + inset)
     val bounds = Rect(g.xv + inset, top, g.w - g.xv - inset, bottom)
 
-    // Fondo liso del mismo tono que los bordes de la escena, para que la viñeta no deje corte.
-    drawPath(panel, SceneTop)
     clipPath(panel) {
+        drawFacets(g, pts)
         // Página del mapa, entrando por la derecha.
         if (page > 0f) translate(left = (1f - page) * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawMap(bounds, map, tm, mapText) } }
         if (page < 1f) translate(left = -page * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawCar(g, scene, openness, state, tm, st, il, iw, top, ph, bottom) } }
@@ -414,6 +416,41 @@ private fun DrawScope.drawPanel(
     if (focused) drawPath(panel, Cyan.copy(alpha = 0.25f), style = Stroke(g.dp(8f)), blendMode = BlendMode.Plus)
     drawPath(panel, edge, style = Stroke(g.dp(if (focused) 2f else 1.2f)))
     drawPageDots(g, bottom, page)
+}
+
+/**
+ * Fondo del hexágono en facetas: se unen los vértices con el centro y cada triángulo lleva su
+ * degradado, más claro hacia el borde y con un tono distinto según mire a la luz (arriba a la
+ * izquierda), como una pieza tallada. Las aristas brillan cerca de los vértices.
+ */
+private fun DrawScope.drawFacets(g: GeoPx, pts: List<Offset>) {
+    val c = Offset(g.w / 2, g.ym)
+    val deep = Color(0xFF040B16)
+    val shadow = Color(0xFF0A1A2E)
+    val lit = Color(0xFF2B4E78)
+    val lx = -0.35f; val ly = -0.94f
+    for (i in pts.indices) {
+        val a = pts[i]; val b = pts[(i + 1) % pts.size]
+        val m = Offset((a.x + b.x) / 2, (a.y + b.y) / 2)
+        val nx = m.x - c.x; val ny = m.y - c.y
+        val len = hypot(nx, ny).coerceAtLeast(1f)
+        // Las facetas largas (arriba y abajo) apuntan casi en vertical: se mide en un espacio aplanado.
+        val k = ((nx / len * lx + ny / len * ly * 2.2f).coerceIn(-1f, 1f) + 1f) / 2f
+        val edge = androidx.compose.ui.graphics.lerp(shadow, lit, k)
+        val tri = Path().apply { moveTo(c.x, c.y); lineTo(a.x, a.y); lineTo(b.x, b.y); close() }
+        drawPath(tri, Brush.linearGradient(listOf(deep, androidx.compose.ui.graphics.lerp(deep, edge, 0.55f), edge), start = c, end = m))
+    }
+    // Brillo suave en el centro, para que el coche parezca iluminado desde arriba.
+    drawCircle(
+        Brush.radialGradient(listOf(Color(0xFF3D6EA8).copy(alpha = 0.22f), Color.Transparent), center = c, radius = g.half * 2.2f),
+        radius = g.half * 2.2f, center = c,
+    )
+    // Aristas: del centro a cada vértice, invisibles en el centro y con brillo hacia el vértice.
+    pts.forEach { v ->
+        val brush = Brush.linearGradient(listOf(Color.Transparent, Color(0xFF9CC7FF).copy(alpha = 0.10f), Color(0xFFDDEBFF).copy(alpha = 0.55f)), start = c, end = v)
+        drawLine(brush, c, v, g.dp(1.2f))
+        drawLine(Brush.linearGradient(listOf(Color.Transparent, Cyan.copy(alpha = 0.22f)), start = c, end = v), c, v, g.dp(5f), blendMode = BlendMode.Plus)
+    }
 }
 
 /** Dos marcas abajo en el centro: cuál de las dos vistas del panel se está viendo. */
@@ -439,17 +476,12 @@ private fun DrawScope.drawCar(
     g: GeoPx, scene: CarScene, openness: Float, state: VehicleState, tm: TextMeasurer, st: Overlay,
     il: Float, iw: Float, top: Float, ph: Float, bottom: Float,
 ) {
-    val ir = il + iw
     run {
-        drawRect(SceneTop, Offset(0f, top), Size(size.width, ph))
         val dst = IntOffset(il.roundToInt(), top.roundToInt())
         val dstSize = IntSize(iw.roundToInt(), ph.roundToInt())
         if (openness < 1f) drawImage(scene.closed, dstOffset = dst, dstSize = dstSize, filterQuality = FilterQuality.High)
         if (openness > 0f) drawImage(scene.open, dstOffset = dst, dstSize = dstSize, alpha = openness, filterQuality = FilterQuality.High)
-        // Viñeta: funde los bordes de la imagen con el fondo del panel (la imagen ya trae borde suave).
-        val fade = iw * 0.10f
-        drawRect(Brush.horizontalGradient(listOf(SceneTop, Color.Transparent), startX = il, endX = il + fade), Offset(il - 1f, top), Size(fade + 1f, ph))
-        drawRect(Brush.horizontalGradient(listOf(Color.Transparent, SceneTop), startX = ir - fade, endX = ir), Offset(ir - fade, top), Size(fade + 1f, ph))
+        // La imagen trae el fondo transparente: el coche se posa directamente sobre las facetas.
         drawRect(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.45f), Color.Transparent), startY = top, endY = top + ph * 0.18f), Offset(0f, top), Size(size.width, ph * 0.18f))
         drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.35f)), startY = bottom - ph * 0.15f, endY = bottom), Offset(0f, bottom - ph * 0.15f), Size(size.width, ph * 0.15f))
 
@@ -662,7 +694,7 @@ private fun DrawScope.drawFrame(g: GeoPx, mirrored: Boolean, fraction: Float, lo
     ticks.forEach { f ->
         val y = g.y1 - (g.y1 - g.y0) * f
         val major = f in marks
-        val len = g.band * if (major) 0.42f else 0.22f
+        val len = g.band * if (major) 0.26f else 0.14f
         val a = o(g.chevronX(y, g.dp(3f)), y); val b = o(g.chevronX(y, len), y)
         drawLine(Color.Black.copy(alpha = 0.45f), a + Offset(0f, g.dp(1.5f)), b + Offset(0f, g.dp(1.5f)), g.dp(2f))
         drawLine(Color.White.copy(alpha = if (major) 0.85f else 0.5f), a, b, g.dp(if (major) 2f else 1.4f))
@@ -690,14 +722,30 @@ private fun DrawScope.drawFrame(g: GeoPx, mirrored: Boolean, fraction: Float, lo
     )
 }
 
-/** Cifra de escala por fuera del borde, a la altura correspondiente a [fraction]. */
-private fun DrawScope.drawMark(g: GeoPx, tm: TextMeasurer, text: String, fraction: Float, mirrored: Boolean, style: TextStyle, color: Color) {
-    val y = g.y1 - (g.y1 - g.y0) * fraction
-    val x = g.chevronX(y, 0f)
+private val EngraveLight = Shadow(Color.White.copy(alpha = 0.45f), Offset(0f, 1.5f), 1.5f)
+private val LabelShadow = Shadow(Color.Black.copy(alpha = 0.85f), Offset(0f, 2f), 8f)
+
+/**
+ * Cifra de escala dentro de la franja, junto a su marca, como en el cuadro del iDrive 8. Sobre la
+ * parte ya rellena (por debajo de [level]) la cifra queda grabada en el metal, en oscuro con un
+ * filo de luz; por encima, en su color con sombra.
+ */
+private fun DrawScope.drawMark(
+    g: GeoPx, tm: TextMeasurer, text: String, fraction: Float, mirrored: Boolean, style: TextStyle, color: Color,
+    level: Float, look: MetalLook,
+) {
     val label = tm.measure(text, style)
-    val right = x - g.dp(14f)
-    val left = if (mirrored) g.w - right else right - label.size.width
-    drawText(label, color = color, topLeft = Offset(left, y - label.size.height / 2f))
+    val y = g.y1 - (g.y1 - g.y0) * fraction
+    // La cifra cuelga justo debajo de su marca: así la de arriba del todo cabe en la franja y no
+    // choca con la siguiente.
+    val cy = y + g.dp(2f) + label.size.height / 2f
+    val cx = g.chevronX(cy, g.band * 0.60f)
+    val center = g.mirror(cx, mirrored)
+    val topLeft = Offset(center - label.size.width / 2f, cy - label.size.height / 2f)
+    // Grabada si la cifra (que cuelga bajo su marca) queda dentro de la parte rellena.
+    val engraved = (g.y1 - cy) / (g.y1 - g.y0) <= level
+    if (engraved) drawText(label, color = look.dark.copy(alpha = 0.92f), topLeft = topLeft, shadow = EngraveLight)
+    else drawText(label, color = color, topLeft = topLeft, shadow = LabelShadow)
 }
 
 private fun DrawScope.drawCaption(g: GeoPx, tm: TextMeasurer, text: String, mirrored: Boolean, style: TextStyle) {
