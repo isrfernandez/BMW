@@ -86,9 +86,23 @@ object CarDataProbe {
         }
 
         add("-- Lecturas con CarDataManager (${keys.size} claves)")
-        val instance = instanceOf(cls, context)
+        // El único constructor pide un ICarManagerInterface: primero buscamos la clase del fabricante
+        // que lo implementa; si no, montamos un puente propio hacia ICarService.
+        val bridge = managerInterface(context, loader, pkg, this)
+        val instance = bridge?.let { b ->
+            runCatching { cls.declaredConstructors.first { it.parameterTypes.size == 1 }.apply { isAccessible = true }.newInstance(b) }
+                .onFailure { add("CarDataManager(ICarManagerInterface): ${(it.cause ?: it).javaClass.simpleName}: ${(it.cause ?: it).message}") }
+                .getOrNull()
+        } ?: instanceOf(cls, context)
         if (instance == null) add("No se pudo obtener una instancia")
-        else addAll(readKeys(instance, cls, types, keys.toList().take(80), context))
+        else {
+            addAll(dumpPrefixes(instance, cls))
+            addAll(readKeys(instance, cls, types, keys.toList().take(80), context))
+        }
+        if (bridgeCalls.isNotEmpty()) {
+            add("-- Llamadas del CarDataManager al puente (protocolo)")
+            addAll(bridgeCalls.take(60))
+        }
 
         add("-- content://car_data por tipo")
         types.forEach { t ->
@@ -96,6 +110,111 @@ object CarDataProbe {
                 CarServiceProbe.queryProvider(context, "content://car_data/$seg").filterNot { it.contains(": null") }.forEach(::add)
             }
         }
+    }
+
+
+    private const val MANAGER_INTERFACE = "android.car.base.ICarManagerInterface"
+    private val bridgeCalls = mutableListOf<String>()
+    private val PREFIXES = listOf(
+        "canbus.", "state.", "info.", "data.car_original.", "data.cusp.", "state.wy.", "data.wy.", "state.zhtd.",
+        "callback.", "data.app.", "state.app.", "",
+    )
+
+    /** Consigue un ICarManagerInterface: clase del fabricante si existe; si no, un Proxy hacia ICarService. */
+    private fun managerInterface(context: Context, loader: ClassLoader, pkg: String, out: MutableList<String>): Any? {
+        val icm = runCatching { loader.loadClass(MANAGER_INTERFACE) }.getOrElse { out += "Sin $MANAGER_INTERFACE: $it"; return null }
+        out += "$MANAGER_INTERFACE: " + icm.declaredMethods.sortedBy { it.name }
+            .joinToString { "${it.returnType.simpleName} ${it.name}(${it.parameterTypes.joinToString { p -> p.simpleName }})" }
+
+        // Clases del fabricante que lo implementan o que lo devuelven desde un método estático.
+        val names = CarServiceProbe.dexStrings(context, pkg)
+            .filter { it.startsWith("Landroid/car/") && it.endsWith(";") }
+            .map { it.substring(1, it.length - 1).replace('/', '.') }.distinct().take(1500)
+        val classes = names.mapNotNull { runCatching { Class.forName(it, false, loader) }.getOrNull() }
+        val impls = classes.filter { icm.isAssignableFrom(it) && it != icm && !it.isInterface && !Modifier.isAbstract(it.modifiers) }
+        val factories = classes.flatMap { c ->
+            runCatching { c.declaredMethods.toList() }.getOrDefault(emptyList())
+                .filter { Modifier.isStatic(it.modifiers) && icm.isAssignableFrom(it.returnType) }
+        }
+        impls.forEach { c ->
+            out += "  implementa: ${c.name} · constructores ${c.declaredConstructors.joinToString { "(" + it.parameterTypes.joinToString { p -> p.simpleName } + ")" }}"
+            c.declaredMethods.filter { Regex("regist|callback|listen|client|connect|getInstance|init", RegexOption.IGNORE_CASE).containsMatchIn(it.name) }
+                .forEach { m -> out += "    ${if (Modifier.isStatic(m.modifiers)) "static " else ""}${m.returnType.simpleName} ${m.name}(${m.parameterTypes.joinToString { it.simpleName }})" }
+        }
+        factories.forEach { m -> out += "  fábrica: ${m.declaringClass.name}.${m.name}(${m.parameterTypes.joinToString { it.simpleName }})" }
+
+        fun argsFor(types: Array<Class<*>>): Array<Any?>? = types.map { t ->
+            when {
+                t.isAssignableFrom(Context::class.java) -> context.applicationContext
+                t == String::class.java -> context.packageName
+                t == Bundle::class.java -> Bundle()
+                t == Int::class.javaPrimitiveType -> 0
+                t == Boolean::class.javaPrimitiveType -> false
+                else -> return null
+            }
+        }.toTypedArray()
+
+        for (m in factories) {
+            val args = argsFor(m.parameterTypes) ?: continue
+            runCatching { m.isAccessible = true; m.invoke(null, *args) }.fold(
+                { v -> if (v != null) { out += "  instancia con ${m.declaringClass.simpleName}.${m.name}"; return v } },
+                { e -> out += "  ${m.name}: ${(e.cause ?: e).javaClass.simpleName}: ${(e.cause ?: e).message}" },
+            )
+        }
+        for (c in impls) for (k in c.declaredConstructors) {
+            val args = argsFor(k.parameterTypes) ?: continue
+            runCatching { k.isAccessible = true; k.newInstance(*args) }.fold(
+                { v -> out += "  instancia con new ${c.simpleName}(${k.parameterTypes.joinToString { it.simpleName }})"; return v },
+                { e -> out += "  new ${c.simpleName}: ${(e.cause ?: e).javaClass.simpleName}: ${(e.cause ?: e).message}" },
+            )
+        }
+
+        // Puente propio: cada método del interfaz se reenvía al de ICarService con la misma firma.
+        val service = binder("car") ?: return null
+        val (_, svcLoader) = loaderFor(context, CAR_SERVICE) ?: return null
+        val svcIface = runCatching { Class.forName(CAR_SERVICE, false, loader) }.getOrNull()
+            ?: runCatching { svcLoader.loadClass(CAR_SERVICE) }.getOrNull() ?: return null
+        val api = runCatching {
+            svcIface.classLoader!!.loadClass("$CAR_SERVICE\$Stub").getMethod("asInterface", IBinder::class.java).invoke(null, service)
+        }.getOrNull() ?: return null
+        out += "  usando puente propio ICarManagerInterface → ICarService"
+        bridgeCalls.clear()
+        return Proxy.newProxyInstance(loader, arrayOf(icm)) { _, m, a ->
+            val args = a ?: emptyArray()
+            val target = svcIface.methods.firstOrNull { it.name == m.name && it.parameterTypes.map { p -> p.name } == m.parameterTypes.map { p -> p.name } }
+            val result = when {
+                m.name == "toString" -> "CockpitBridge"
+                m.name == "hashCode" -> 0
+                m.name == "equals" -> false
+                m.name == "asBinder" -> service
+                target != null -> runCatching { target.invoke(api, *args) }.getOrElse { e -> "error ${(e.cause ?: e).message}" }
+                else -> defaultFor(m.returnType)
+            }
+            if (bridgeCalls.size < 200) bridgeCalls += "${m.name}(${args.joinToString { describe(it) }}) → ${describe(result)}"
+            if (result is String && result.startsWith("error ") && m.returnType != String::class.java) defaultFor(m.returnType) else result
+        }
+    }
+
+    /** Vuelca todo lo que el servicio tenga guardado bajo cada prefijo (puertas, presiones, velocidad…). */
+    private fun dumpPrefixes(instance: Any, cls: Class<*>): List<String> {
+        val byPrefix = cls.declaredMethods.firstOrNull { it.name == "getValueByPrefix" } ?: return listOf("sin getValueByPrefix")
+        val out = mutableListOf<String>()
+        for (prefix in PREFIXES) {
+            val items = runCatching { byPrefix.invoke(instance, prefix) as Array<*>? }.getOrElse { e ->
+                out += "getValueByPrefix(\"$prefix\"): ${(e.cause ?: e).javaClass.simpleName}: ${(e.cause ?: e).message}"; null
+            } ?: continue
+            out += "getValueByPrefix(\"$prefix\"): ${items.size} claves"
+            items.take(400).forEach { item -> out += "  " + describeItem(item) }
+            if (prefix.isEmpty() || items.size > 50) break
+        }
+        return out
+    }
+
+    private fun describeItem(item: Any?): String {
+        item ?: return "null"
+        val fields = item.javaClass.declaredFields.filter { !Modifier.isStatic(it.modifiers) }
+            .mapNotNull { f -> runCatching { f.isAccessible = true; "${f.name}=${describe(f.get(item))}" }.getOrNull() }
+        return fields.joinToString(", ").ifEmpty { item.toString() }
     }
 
     private fun staticStrings(c: Class<*>): List<String> = c.declaredFields.filter { Modifier.isStatic(it.modifiers) && it.type == String::class.java }
@@ -197,7 +316,18 @@ object CarDataProbe {
             callbackProxy = proxy
             val api = stub.getMethod("asInterface", IBinder::class.java).invoke(null, service)
             val register = iface.getMethod("registerCallback", Bundle::class.java, callbackIface)
-            val ok = register.invoke(api, Bundle(), proxy)
+            var ok = register.invoke(api, Bundle(), proxy)
+            if (ok != true) {
+                // Segundo intento: el servicio quizá quiere saber quién es el cliente.
+                val me = context.packageName
+                val who = Bundle().apply {
+                    listOf("pkg", "package", "package_name", "packageName", "pkg_name", "app_id", "client", "name", "caller").forEach { putString(it, me) }
+                    putString("APP_ID_$me", me)
+                    putInt("pid", android.os.Process.myPid())
+                    putInt("uid", android.os.Process.myUid())
+                }
+                ok = "$ok; con datos del cliente = ${register.invoke(api, who, proxy)}"
+            }
             val desc = "registerCallback (de $pkg) = $ok · métodos del callback: " +
                 codes.entries.sortedBy { it.key }.joinToString { "${it.key}=${it.value}(${signatures[it.key].orEmpty().joinToString { p -> p.simpleName }})" }
             logCallback(desc)
