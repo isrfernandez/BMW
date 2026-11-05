@@ -106,9 +106,9 @@ object Reorder {
     var step: ((Int) -> Unit)? = null
 }
 
-private val CARD_WIDTH = 330.dp
-/** Alto del cuadro de instrumentos: 3/5 de los 720 dp de la pantalla. */
-private val CLUSTER_HEIGHT = 432.dp
+private val CARD_WIDTH = 300.dp
+/** Alto del cuadro de instrumentos: 3/4 de los 720 dp de la pantalla. */
+private val CLUSTER_HEIGHT = 540.dp
 private val CARD_GAP = 16.dp
 
 @Composable
@@ -172,10 +172,10 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
     val firstCard = remember { FocusRequester() }
     InitialFocus(firstCard)
 
-    Column(Modifier.fillMaxSize().padding(top = 10.dp, bottom = 16.dp)) {
-        // El cuadro (mapa e indicadores) ocupa tres quintos de la altura (432 de 720 dp); las tarjetas, el resto.
+    Column(Modifier.fillMaxSize().padding(top = 6.dp, bottom = 8.dp)) {
+        // El cuadro (mapa e indicadores) ocupa tres cuartos de la altura (540 de 720 dp); las tarjetas, el resto.
         ClusterStrip(state, status, Modifier.fillMaxWidth().height(CLUSTER_HEIGHT).padding(horizontal = 12.dp))
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(2.dp))
         LazyRow(
             Modifier.weight(1f).fillMaxWidth().onPreviewKeyEvent { e ->
                 // En modo mover, el joystick izquierda/derecha también mueve la tarjeta.
@@ -187,7 +187,7 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                 }
             },
             state = listState,
-            contentPadding = PaddingValues(horizontal = 28.dp, vertical = 8.dp),
+            contentPadding = PaddingValues(horizontal = 28.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(CARD_GAP),
         ) {
             itemsIndexed(order, key = { _, id -> id }) { i, id ->
@@ -248,10 +248,14 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                                 // Velo para que el texto se lea sobre la animación.
                                 Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.15f), Color.Black.copy(alpha = 0.55f)))))
                             }
-                            WeatherCardContent(weather, animated = weather.forecast != null)
+                            WeatherCardContent(weather, animated = weather.forecast != null, compact = true)
                         } else {
-                            CardArt(card.theme)
-                            Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp)) {
+                            // Tarjetas bajas: la ilustración se reduce hacia la esquina superior derecha.
+                            Box(Modifier.matchParentSize().graphicsLayer {
+                                scaleX = 0.66f; scaleY = 0.66f
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0f)
+                            }) { CardArt(card.theme) }
+                            Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
                                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = card.bodyAlignment) {
                                     card.body?.invoke(state)
                                 }
@@ -284,17 +288,18 @@ private fun MoveHint(modifier: Modifier = Modifier) {
 private fun TripBody(@Suppress("UNUSED_PARAMETER") state: VehicleState) {
     val trips by TripComputer.state.collectAsStateWithLifecycle()
     val trip = trips.current ?: trips.last
-    Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.Bottom) {
-        Metric(trip?.let { km(it.distanceKm) } ?: "--", "km", 110.dp)
-        Metric(trip?.let { hm(it.durationMillis) } ?: "--", if (trips.current != null) "h · en curso" else "h · último", 128.dp)
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Bottom) {
+        Metric(trip?.let { km(it.distanceKm) } ?: "--", "km", 96.dp)
+        Metric(trip?.let { hm(it.durationMillis) } ?: "--", if (trips.current != null) "h · en curso" else "h · último", 150.dp)
     }
 }
 
 @Composable
 private fun Metric(value: String, unit: String, width: Dp) {
-    Column(Modifier.width(width), horizontalAlignment = Alignment.End) {
-        Text(value, style = MaterialTheme.typography.displaySmall, textAlign = TextAlign.End, maxLines = 1, modifier = Modifier.fillMaxWidth())
-        Text(unit, style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
+    // Cifra y unidad en la misma línea: la tarjeta es baja.
+    Row(Modifier.width(width), verticalAlignment = Alignment.Bottom) {
+        Text(value, style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.End, maxLines = 1, modifier = Modifier.weight(1f))
+        Text(" $unit", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim, maxLines = 1, modifier = Modifier.padding(bottom = 4.dp))
     }
 }
 
