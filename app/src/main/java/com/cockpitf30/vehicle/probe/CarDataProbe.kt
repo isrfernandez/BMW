@@ -115,6 +115,43 @@ object CarDataProbe {
 
     private const val MANAGER_INTERFACE = "android.car.base.ICarManagerInterface"
     private val bridgeCalls = mutableListOf<String>()
+    private val bridgeCount = HashMap<String, Int>()
+    private var requestVariant: Int? = null
+
+    /**
+     * No sabemos qué va en los enteros y en el primer String de ICarService.requestSync. Probamos
+     * combinaciones hasta que una devuelva algo (o rellene el Bundle) y nos quedamos con ella.
+     */
+    private fun forwardRequest(svcIface: Class<*>, api: Any, pkg: String, cmd: String?, bundle: Bundle): Int {
+        val m = svcIface.methods.firstOrNull { it.name == "requestSync" && it.parameterTypes.size == 6 } ?: return 0
+        val variants: List<Array<Any?>> = listOf(
+            arrayOf(pkg, 0, 0, cmd, bundle, 0),
+            arrayOf("APP_ID_$pkg", 0, 0, cmd, bundle, 0),
+            arrayOf(pkg, 0, 0, cmd, bundle, 1),
+            arrayOf(cmd, 0, 0, pkg, bundle, 0),
+            arrayOf(pkg, 1, 0, cmd, bundle, 0),
+            arrayOf(null, 0, 0, cmd, bundle, 0),
+        )
+        val order = requestVariant?.let { listOf(it) } ?: variants.indices.toList()
+        var last = 0
+        for (i in order) {
+            val before = bundle.keySet().toSet()
+            val res = runCatching { m.invoke(api, *variants[i]) as Int }
+            val e = res.exceptionOrNull()
+            if (e != null) {
+                if (bridgeCalls.size < 300) bridgeCalls += "  variante $i: ${(e.cause ?: e).javaClass.simpleName}: ${(e.cause ?: e).message}"
+                continue
+            }
+            val r = res.getOrThrow()
+            last = r
+            if (r != 0 || bundle.keySet() != before) {
+                if (requestVariant == null) bridgeCalls += "  variante elegida $i (resultado $r, Bundle ${BroadcastSniffer.describe(bundle)})"
+                requestVariant = i
+                return r
+            }
+        }
+        return last
+    }
     private val PREFIXES = listOf(
         "canbus.", "state.", "info.", "data.car_original.", "data.cusp.", "state.wy.", "data.wy.", "state.zhtd.",
         "callback.", "data.app.", "state.app.", "",
@@ -161,6 +198,44 @@ object CarDataProbe {
                 { e -> out += "  ${m.name}: ${(e.cause ?: e).javaClass.simpleName}: ${(e.cause ?: e).message}" },
             )
         }
+        // CarBaseManager2 (o una subclase concreta) crea su propio ICarManagerInterface ($1).
+        val baseNames = impls.mapNotNull { it.enclosingClass } + classes.filter { it.simpleName.startsWith("CarBaseManager") }
+        for (base in baseNames.distinct()) {
+            out += "  [${base.name}]${if (Modifier.isAbstract(base.modifiers)) " abstracta" else ""}"
+            base.declaredConstructors.forEach { out += "    constructor(${it.parameterTypes.joinToString { p -> p.simpleName }})" }
+            base.declaredMethods.sortedBy { it.name }.take(80).forEach { m ->
+                out += "    ${if (Modifier.isStatic(m.modifiers)) "static " else ""}${m.returnType.simpleName} ${m.name}(${m.parameterTypes.joinToString { it.simpleName }})"
+            }
+            base.declaredFields.forEach { f -> out += "    campo ${f.type.simpleName} ${f.name}" }
+        }
+        val concreteBases = (baseNames + classes.filter { c -> baseNames.any { b -> b != c && b.isAssignableFrom(c) } })
+            .distinct().filter { !Modifier.isAbstract(it.modifiers) && !it.isInterface }
+        for (base in concreteBases) {
+            val obj = base.declaredMethods.filter { Modifier.isStatic(it.modifiers) && base.isAssignableFrom(it.returnType) }
+                .firstNotNullOfOrNull { m -> argsFor(m.parameterTypes)?.let { a -> runCatching { m.isAccessible = true; m.invoke(null, *a) }.getOrNull() } }
+                ?: base.declaredConstructors.firstNotNullOfOrNull { k ->
+                    argsFor(k.parameterTypes)?.let { a ->
+                        runCatching { k.isAccessible = true; k.newInstance(*a) }
+                            .onFailure { e -> out += "  new ${base.simpleName}(${k.parameterTypes.joinToString { it.simpleName }}): ${(e.cause ?: e).javaClass.simpleName}: ${(e.cause ?: e).message}" }
+                            .getOrNull()
+                    }
+                } ?: continue
+            out += "  instancia de ${base.name}"
+            // ¿Guarda ya un ICarManagerInterface en algún campo?
+            var cur: Class<*>? = obj.javaClass
+            while (cur != null && cur != Any::class.java) {
+                cur.declaredFields.filter { icm.isAssignableFrom(it.type) }.forEach { f ->
+                    runCatching { f.isAccessible = true; f.get(obj) }.getOrNull()?.let { out += "  ICarManagerInterface del campo ${f.name}"; return it }
+                }
+                cur = cur.superclass
+            }
+            // Si no, el $1 se construye con el propio CarBaseManager2.
+            for (c in impls) for (k in c.declaredConstructors) {
+                if (k.parameterTypes.size == 1 && k.parameterTypes[0].isInstance(obj)) {
+                    runCatching { k.isAccessible = true; k.newInstance(obj) }.getOrNull()?.let { out += "  instancia con new ${c.name}(${base.simpleName})"; return it }
+                }
+            }
+        }
         for (c in impls) for (k in c.declaredConstructors) {
             val args = argsFor(k.parameterTypes) ?: continue
             runCatching { k.isAccessible = true; k.newInstance(*args) }.fold(
@@ -179,6 +254,8 @@ object CarDataProbe {
         }.getOrNull() ?: return null
         out += "  usando puente propio ICarManagerInterface → ICarService"
         bridgeCalls.clear()
+        bridgeCount.clear()
+        requestVariant = null
         return Proxy.newProxyInstance(loader, arrayOf(icm)) { _, m, a ->
             val args = a ?: emptyArray()
             val target = svcIface.methods.firstOrNull { it.name == m.name && it.parameterTypes.map { p -> p.name } == m.parameterTypes.map { p -> p.name } }
@@ -188,16 +265,21 @@ object CarDataProbe {
                 m.name == "equals" -> false
                 m.name == "asBinder" -> service
                 target != null -> runCatching { target.invoke(api, *args) }.getOrElse { e -> "error ${(e.cause ?: e).message}" }
+                // requestSync(cmd, Bundle) del cliente → requestSync(String, int, int, String, Bundle, int) del servicio.
+                m.name == "requestSync" && args.size == 2 && args[1] is Bundle -> forwardRequest(svcIface, api, context.packageName, args[0] as String?, args[1] as Bundle)
                 else -> defaultFor(m.returnType)
             }
-            if (bridgeCalls.size < 200) bridgeCalls += "${m.name}(${args.joinToString { describe(it) }}) → ${describe(result)}"
+            val cmd = args.firstOrNull()?.toString() ?: m.name
+            val seen = bridgeCount.merge(cmd, 1, Int::plus) ?: 1
+            if (seen <= 4 && bridgeCalls.size < 300) bridgeCalls += "${m.name}(${args.joinToString { describe(it) }}) → ${describe(result)}"
             if (result is String && result.startsWith("error ") && m.returnType != String::class.java) defaultFor(m.returnType) else result
         }
     }
 
     /** Vuelca todo lo que el servicio tenga guardado bajo cada prefijo (puertas, presiones, velocidad…). */
     private fun dumpPrefixes(instance: Any, cls: Class<*>): List<String> {
-        val byPrefix = cls.declaredMethods.firstOrNull { it.name == "getValueByPrefix" } ?: return listOf("sin getValueByPrefix")
+        val byPrefix = cls.declaredMethods.firstOrNull { it.name == "getValueByPrefix" }?.apply { isAccessible = true }
+            ?: return listOf("sin getValueByPrefix")
         val out = mutableListOf<String>()
         for (prefix in PREFIXES) {
             val items = runCatching { byPrefix.invoke(instance, prefix) as Array<*>? }.getOrElse { e ->
