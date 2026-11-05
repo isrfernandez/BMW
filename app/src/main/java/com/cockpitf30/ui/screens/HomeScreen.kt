@@ -84,6 +84,10 @@ import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.vehicle.VehicleRepository
 import com.cockpitf30.vehicle.VehicleState
 import com.cockpitf30.vehicle.trip.TripComputer
+import com.cockpitf30.fuel.FuelStations
+import com.cockpitf30.ui.theme.numeric
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 
 /** Tarjeta de la parrilla panorámica: un resumen rápido de una función. */
 private class Card(
@@ -121,7 +125,8 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
     val cards = remember {
         listOf(
             Card("music", "Música", "Abrir reproductor", CardTheme.MUSIC, ::openMusic),
-            Card("nav", "Navegación", "Mapas", CardTheme.NAV, ::openMaps),
+            // Antes "Navegación" (repetida en la barra lateral): ahora la gasolinera más cercana.
+            Card("fuel", "Gasolinera", "La más cercana", CardTheme.FUEL, { onOpen(Screen.FUEL) }),
             Card("trip", "Datos de viaje", "Duración, km y consumo", CardTheme.TRIP, { onOpen(Screen.TRIP) }, Alignment.BottomStart) { TripBody(it) },
             Card("weather", "Tiempo", "", CardTheme.WEATHER, { onOpen(Screen.WEATHER) }),
             Card("vehicle", "Vehículo", "Puertas y neumáticos", CardTheme.VEHICLE, { onOpen(Screen.VEHICLE) }),
@@ -129,7 +134,11 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
             Card("diag", "Diagnóstico", "Fuente de datos e iDrive", CardTheme.DIAG, { onOpen(Screen.DIAGNOSTICS) }),
         ).associateBy { it.id }
     }
-    var order by remember { mutableStateOf(CardOrder.merge(settings.cardOrder, cards.keys.toList())) }
+    // Quien tenía guardado el orden con "nav" encuentra la gasolinera en el mismo sitio.
+    var order by remember {
+        mutableStateOf(CardOrder.merge(settings.cardOrder.map { if (it == "nav") "fuel" else it }, cards.keys.toList()))
+    }
+    val fuel = rememberFuelView()
     val moving by Reorder.moving.collectAsStateWithLifecycle()
     var beforeMove by remember { mutableStateOf(order) }
     var focusedId by remember { mutableStateOf<String?>(null) }
@@ -249,6 +258,12 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                                 Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.15f), Color.Black.copy(alpha = 0.55f)))))
                             }
                             WeatherCardContent(weather, animated = weather.forecast != null, compact = true)
+                        } else if (card.id == "fuel") {
+                            Box(Modifier.matchParentSize().graphicsLayer {
+                                scaleX = 0.66f; scaleY = 0.66f
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0f)
+                            }) { CardArt(card.theme) }
+                            FuelCardBody(fuel)
                         } else {
                             // Tarjetas bajas: la ilustración se reduce hacia la esquina superior derecha.
                             Box(Modifier.matchParentSize().graphicsLayer {
@@ -283,6 +298,38 @@ private fun MoveHint(modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * Tarjeta de la gasolinera más cercana: distancia en grande, marca (rótulo) y dirección.
+ * Sin ubicación o sin datos, dice qué falta.
+ */
+@Composable
+private fun FuelCardBody(view: FuelView) {
+    val n = view.near.firstOrNull()
+    Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
+        Text("GASOLINERA MÁS CERCANA", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.BottomStart) {
+            if (n != null) {
+                Text(FuelStations.formatDistance(n.meters), style = numeric(34, FontWeight.Medium), maxLines = 1)
+            }
+        }
+        if (n != null) {
+            Text(n.station.brand, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(place(n.station), style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        } else {
+            Text("Gasolineras", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                when {
+                    view.position == null -> "Esperando ubicación"
+                    view.state.loading -> "Descargando estaciones…"
+                    view.state.error != null -> "Sin datos (${view.state.error})"
+                    else -> "Ninguna cerca"
+                },
+                style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
 /** Kilómetros y duración del viaje en curso (o del último), con ancho fijo para que no salten. */
 @Composable
 private fun TripBody(@Suppress("UNUSED_PARAMETER") state: VehicleState) {
@@ -303,7 +350,7 @@ private fun Metric(value: String, unit: String, width: Dp) {
     }
 }
 
-private const val GOOGLE_MAPS = "com.google.android.apps.maps"
+internal const val GOOGLE_MAPS = "com.google.android.apps.maps"
 
 /**
  * Abre la app Google Maps instalada (no la web) centrada en la posición actual. Sin posición
@@ -341,4 +388,4 @@ internal fun launch(context: Context, intent: Intent) {
     }
 }
 
-enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, WEATHER, PHONE }
+enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, WEATHER, PHONE, FUEL }
