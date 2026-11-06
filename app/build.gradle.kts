@@ -13,8 +13,11 @@ android {
         // Las unidades TopWay/ZQ suelen venir con Android 10–13.
         minSdk = 26
         targetSdk = 34
-        versionCode = 31
-        versionName = "0.9.21"
+        versionCode = 32
+        versionName = "0.9.22"
+        // Vosk trae su librería nativa para cada arquitectura (~9 MB cada una): la radio es ARM y el
+        // emulador del PC x86_64; la de x86 de 32 bits no hace falta.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
     // Misma clave de depuración en el PC y en la nube: así cualquier APK de depuración se
@@ -41,6 +44,11 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    // Las librerías nativas de Vosk van comprimidas en el APK (unos 18 MB menos); Android las
+    // descomprime al instalar.
+    packaging {
+        jniLibs { useLegacyPackaging = true }
+    }
     buildFeatures {
         compose = true
     }
@@ -58,6 +66,9 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // Reconocimiento de voz sin conexión para «Hola BMW» (el modelo en español se descarga aparte).
+    implementation("com.alphacephei:vosk-android:0.3.47")
+    implementation("net.java.dev.jna:jna:5.13.0@aar")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")

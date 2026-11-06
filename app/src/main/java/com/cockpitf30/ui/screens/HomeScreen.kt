@@ -72,6 +72,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cockpitf30.ui.components.CardArt
+import com.cockpitf30.ui.components.AssistantCardBody
+import com.cockpitf30.assistant.VoiceAssistant
 import com.cockpitf30.ui.components.CardTheme
 import com.cockpitf30.ui.components.ClusterStrip
 import com.cockpitf30.ui.components.glassBackground
@@ -124,7 +126,8 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
     val settings = remember { AppSettings(context) }
     val cards = remember {
         listOf(
-            Card("music", "Música", "Abrir reproductor", CardTheme.MUSIC, ::openMusic),
+            // Antes "Música" (ya está en la barra lateral): ahora el asistente de voz «Hola BMW».
+            Card("assistant", "Hola BMW", "Asistente de voz", CardTheme.ASSIST, { VoiceAssistant.tap(it) }),
             // Antes "Navegación" (repetida en la barra lateral): ahora la gasolinera más cercana.
             Card("fuel", "Gasolinera", "La más cercana", CardTheme.FUEL, { onOpen(Screen.FUEL) }),
             Card("trip", "Datos de viaje", "Duración, km y consumo", CardTheme.TRIP, { onOpen(Screen.TRIP) }, Alignment.BottomStart) { TripBody(it) },
@@ -134,9 +137,9 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
             Card("diag", "Diagnóstico", "Fuente de datos e iDrive", CardTheme.DIAG, { onOpen(Screen.DIAGNOSTICS) }),
         ).associateBy { it.id }
     }
-    // Quien tenía guardado el orden con "nav" encuentra la gasolinera en el mismo sitio.
+    // Quien tenía guardado el orden con "nav" o "music" encuentra la gasolinera o el asistente en el mismo sitio.
     var order by remember {
-        mutableStateOf(CardOrder.merge(settings.cardOrder.map { if (it == "nav") "fuel" else it }, cards.keys.toList()))
+        mutableStateOf(CardOrder.merge(settings.cardOrder.map { when (it) { "nav" -> "fuel"; "music" -> "assistant"; else -> it } }, cards.keys.toList()))
     }
     val fuel = rememberFuelView()
     val moving by Reorder.moving.collectAsStateWithLifecycle()
@@ -258,6 +261,12 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                                 Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.15f), Color.Black.copy(alpha = 0.55f)))))
                             }
                             WeatherCardContent(weather, animated = weather.forecast != null, compact = true)
+                        } else if (card.id == "assistant") {
+                            Box(Modifier.matchParentSize().graphicsLayer {
+                                scaleX = 0.66f; scaleY = 0.66f
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0f)
+                            }) { CardArt(card.theme) }
+                            AssistantCardBody()
                         } else if (card.id == "fuel") {
                             Box(Modifier.matchParentSize().graphicsLayer {
                                 scaleX = 0.66f; scaleY = 0.66f

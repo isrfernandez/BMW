@@ -83,7 +83,7 @@ class FuelView(
 )
 
 /** Centro del recorrido de ejemplo del modo Demo (Múnich). */
-private val DEMO_CENTER = GeoPoint(48.1575, 11.5840)
+internal val DEMO_CENTER = GeoPoint(48.1575, 11.5840)
 
 @Composable
 fun rememberFuelView(): FuelView {
