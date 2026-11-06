@@ -88,6 +88,11 @@ fun DiagnosticsScreen() {
     var dexActions by remember { mutableStateOf<List<String>>(emptyList()) }
     val callbacks by com.cockpitf30.vehicle.probe.CarDataProbe.callbackLog.collectAsStateWithLifecycle()
     var busy by remember { mutableStateOf<String?>(null) }
+    val radioValues by com.cockpitf30.vehicle.source.RadioCarData.values.collectAsStateWithLifecycle()
+    val radioChanges by com.cockpitf30.vehicle.source.RadioCarData.changes.collectAsStateWithLifecycle()
+    val vehicle by VehicleRepository.state.collectAsStateWithLifecycle()
+    var canbusProbe by remember { mutableStateOf<List<String>>(emptyList()) }
+    var showAllKeys by remember { mutableStateOf(false) }
 
     var mode by remember { mutableStateOf(settings.sourceMode) }
     var path by remember { mutableStateOf(settings.serialPath) }
@@ -144,7 +149,28 @@ fun DiagnosticsScreen() {
         }
     }
 
+    fun exploreCanbus() {
+        busy = "Explorando CarCanbus…"
+        scope.launch {
+            canbusProbe = withContext(Dispatchers.IO) {
+                runCatching { com.cockpitf30.vehicle.probe.CanbusProbe.explore(context) }.getOrElse { listOf("Error: $it") }
+            }
+            busy = null
+        }
+    }
+
+    fun exportApks() {
+        busy = "Copiando APKs a Descargas…"
+        scope.launch {
+            val r = withContext(Dispatchers.IO) { runCatching { com.cockpitf30.vehicle.probe.CanbusProbe.exportApks(context) }.getOrElse { "Error: ${it.message}" } }
+            busy = r
+            android.widget.Toast.makeText(context, r.take(200), android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
+    // Lo de la radio va al principio: el informe completo pasa de 150 KB y al compartir se recorta.
     fun report() = buildReport(context, status, probes, packages, props, input, raw, bytes, broadcasts, sysApps, services, jars, carProbe, dataProbe, callbacks)
+        .replaceFirst("\n== Puertos", radioReport(radioValues, radioChanges, canbusProbe, vehicle) + "\n== Puertos")
     val automotive = remember { CarPropertySource.isAvailable(context) }
 
     fun apply() {
@@ -190,6 +216,30 @@ fun DiagnosticsScreen() {
                     busy?.let { Info(it, Cockpit.BlueLight) }
                     ChipRow(listOf("Compartir informe", "Guardar informe en Descargas"), -1) {
                         if (it == 0) shareReport(context, report()) else saveReport(context, report())
+                    }
+                }
+            }
+            item {
+                DiagCard("Datos del coche (la propia radio)") {
+                    if (status.sourceName != "Radio (CAN)") Info("La fuente activa es «${status.sourceName}». Elige «Radio CAN» o «Auto» en Fuente de datos para leer el coche.", Cockpit.Alert)
+                    Info("Leído: ${vehicleSummary(vehicle)}")
+                    Info("Claves en la radio: ${radioValues.size}. Abre y cierra cada puerta, el maletero y el capó, arranca y gira el volante: aquí abajo sale qué clave cambia.", Cockpit.TextDim)
+                    ChipRow(
+                        listOf(if (showAllKeys) "Ocultar claves" else "Ver todas las claves (${radioValues.size})", "Explorar CarCanbus", "Guardar APKs del coche en Descargas"),
+                        if (showAllKeys) 0 else -1,
+                    ) {
+                        when (it) {
+                            0 -> showAllKeys = !showAllKeys
+                            1 -> exploreCanbus()
+                            else -> exportApks()
+                        }
+                    }
+                    if (showAllKeys) radioValues.toSortedMap().forEach { (k, v) -> Mono("$k = $v") }
+                    if (radioChanges.isEmpty()) Info("Sin cambios todavía", Cockpit.TextDim)
+                    radioChanges.take(40).forEach { Mono(it) }
+                    if (canbusProbe.isNotEmpty()) {
+                        Info("CarCanbus (${canbusProbe.size} líneas, todo en el informe):", Cockpit.TextDim)
+                        canbusProbe.filter { " = " in it || it.startsWith("--") || "conectado" in it }.take(40).forEach { Mono(it) }
                     }
                 }
             }
@@ -460,6 +510,28 @@ private fun buildReport(
     section("Eventos de entrada", input)
     section("Tramas Raise", raw)
     section("Bytes en crudo", bytes)
+}
+
+private fun vehicleSummary(v: com.cockpitf30.vehicle.VehicleState): String {
+    fun b(x: Boolean?) = when (x) { true -> "abierta"; false -> "cerrada"; null -> "?" }
+    fun p(x: Float?) = x?.let { "%.1f".format(it) } ?: "?"
+    return "velocidad ${v.speedKmh ?: "?"} km/h · rpm ${v.rpm ?: "?"} · exterior ${v.outsideTempC ?: "?"} °C · autonomía ${v.rangeKm ?: "?"} km · " +
+        "puertas: conductor ${b(v.doors.driver)}, acomp. ${b(v.doors.passenger)}, tras. izq. ${b(v.doors.rearLeft)}, tras. dch. ${b(v.doors.rearRight)}, maletero ${b(v.doors.trunk)}, capó ${b(v.doors.hood)} · " +
+        "ruedas ${p(v.tyres.frontLeft)} ${p(v.tyres.frontRight)} ${p(v.tyres.rearLeft)} ${p(v.tyres.rearRight)} bar"
+}
+
+private fun radioReport(values: Map<String, String>, changes: List<String>, canbus: List<String>, vehicle: com.cockpitf30.vehicle.VehicleState): String = buildString {
+    appendLine()
+    appendLine("== Datos del coche (radio)")
+    appendLine(vehicleSummary(vehicle))
+    values.toSortedMap().forEach { (k, v) -> appendLine("$k = $v") }
+    appendLine()
+    appendLine("== Cambios de claves")
+    changes.forEach(::appendLine)
+    appendLine()
+    appendLine("== CarCanbus")
+    if (canbus.isEmpty()) appendLine("(no se pulsó «Explorar CarCanbus»)")
+    canbus.forEach(::appendLine)
 }
 
 private fun shareReport(context: android.content.Context, text: String) {

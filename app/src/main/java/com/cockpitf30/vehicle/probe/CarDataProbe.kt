@@ -41,7 +41,7 @@ object CarDataProbe {
     private var callbackBinder: Binder? = null
     private var callbackProxy: Any? = null
 
-    private fun logCallback(line: String) = _callbackLog.update { (listOf(line) + it).take(150) }
+    fun logCallback(line: String) = _callbackLog.update { (listOf(line) + it).take(150) }
 
     private fun binder(name: String): IBinder? = runCatching {
         Class.forName("android.os.ServiceManager").getMethod("getService", String::class.java).invoke(null, name) as IBinder?
@@ -368,6 +368,41 @@ object CarDataProbe {
 
     // ---------------------------------------------------------------- Callbacks del servicio
 
+    /**
+     * Un ICarCallback (del cargador [loader]) cuyo Binder apunta cada aviso en [callbackLog] y
+     * llama a [onCall]. Devuelve null si el APK no trae la interfaz.
+     */
+    fun sniffingCarCallback(loader: ClassLoader, onCall: () -> Unit = {}): Any? = runCatching {
+        val callbackIface = loader.loadClass(CAR_CALLBACK)
+        val callbackStub = runCatching { loader.loadClass("$CAR_CALLBACK\$Stub") }.getOrNull()
+        val (codes, signatures) = transactions(callbackIface, callbackStub)
+        val binder = SniffBinder(CAR_CALLBACK, codes, signatures, loader) { logCallback(it); onCall() }
+        proxyFor(callbackIface, loader, binder).also { keep += binder; keep += it }
+    }.getOrNull()
+
+    // Referencias fuertes a todo callback entregado a un servicio.
+    private val keep = mutableListOf<Any>()
+
+    /** Código de transacción → método, a partir de los campos TRANSACTION_x del Stub. */
+    internal fun transactions(iface: Class<*>, stub: Class<*>?): Pair<Map<Int, String>, Map<Int, List<Class<*>>>> {
+        val methods = iface.declaredMethods.associateBy { it.name }
+        val codes = stub?.declaredFields.orEmpty().filter { it.name.startsWith("TRANSACTION_") }.mapNotNull { f ->
+            runCatching { f.isAccessible = true; f.getInt(null) to f.name.removePrefix("TRANSACTION_") }.getOrNull()
+        }.toMap()
+        return codes to codes.mapValues { (_, name) -> methods[name]?.parameterTypes?.toList().orEmpty() }
+    }
+
+    internal fun proxyFor(iface: Class<*>, loader: ClassLoader, binder: Binder): Any =
+        Proxy.newProxyInstance(loader, arrayOf(iface)) { _, m, _ ->
+            when (m.name) {
+                "asBinder" -> binder
+                "hashCode" -> binder.hashCode()
+                "equals" -> false
+                "toString" -> "Cockpit${iface.simpleName}"
+                else -> defaultFor(m.returnType)
+            }
+        }
+
     /** Se registra en el servicio "car" con un callback que apunta cada aviso. Devuelve el resultado legible. */
     fun startCallbacks(context: Context): String {
         if (callbackBinder != null) return "Ya registrado"
@@ -378,22 +413,9 @@ object CarDataProbe {
             val stub = loader.loadClass("$CAR_SERVICE\$Stub")
             val callbackIface = loader.loadClass(CAR_CALLBACK)
             val callbackStub = runCatching { loader.loadClass("$CAR_CALLBACK\$Stub") }.getOrNull()
-            // Código de transacción → método, a partir de los campos TRANSACTION_x del Stub.
-            val methods = callbackIface.declaredMethods.associateBy { it.name }
-            val codes = callbackStub?.declaredFields.orEmpty().filter { it.name.startsWith("TRANSACTION_") }.mapNotNull { f ->
-                runCatching { f.isAccessible = true; f.getInt(null) to f.name.removePrefix("TRANSACTION_") }.getOrNull()
-            }.toMap()
-            val signatures = codes.mapValues { (_, name) -> methods[name]?.parameterTypes?.toList().orEmpty() }
+            val (codes, signatures) = transactions(callbackIface, callbackStub)
             val binder = SniffBinder(CAR_CALLBACK, codes, signatures, loader) { logCallback(it) }
-            val proxy = Proxy.newProxyInstance(loader, arrayOf(callbackIface)) { _, m, _ ->
-                when (m.name) {
-                    "asBinder" -> binder
-                    "hashCode" -> binder.hashCode()
-                    "equals" -> false
-                    "toString" -> "CockpitCallback"
-                    else -> defaultFor(m.returnType)
-                }
-            }
+            val proxy = proxyFor(callbackIface, loader, binder)
             callbackBinder = binder
             callbackProxy = proxy
             val api = stub.getMethod("asInterface", IBinder::class.java).invoke(null, service)
@@ -440,7 +462,7 @@ object CarDataProbe {
     }
 
     /** Binder que hace de ICarCallback y decodifica lo que recibe según la firma del método. */
-    private class SniffBinder(
+    internal class SniffBinder(
         private val descriptor: String,
         private val names: Map<Int, String>,
         private val signatures: Map<Int, List<Class<*>>>,
@@ -475,10 +497,32 @@ object CarDataProbe {
             String::class.java -> p.readString() ?: "null"
             ByteArray::class.java -> p.createByteArray()?.let { PortProbe.hex(it, minOf(it.size, 64)) } ?: "null"
             IntArray::class.java -> p.createIntArray()?.joinToString(",", "[", "]") ?: "null"
+            Double::class.javaPrimitiveType -> p.readDouble().toString()
+            FloatArray::class.java -> p.createFloatArray()?.joinToString(",", "[", "]") ?: "null"
+            Array<String>::class.java -> p.createStringArray()?.joinToString(",", "[", "]") ?: "null"
             Bundle::class.java -> if (p.readInt() != 0) {
                 Bundle.CREATOR.createFromParcel(p).apply { classLoader = loader }.let { BroadcastSniffer.describe(it) }
             } else "null"
-            else -> "<${type.simpleName}>"
+            else -> readParcelable(p, type)
+        }
+
+        /** Parcelable propio del fabricante (p. ej. info de puertas): lo crea con su CREATOR y enseña sus campos. */
+        private fun readParcelable(p: Parcel, type: Class<*>): String {
+            if (!android.os.Parcelable::class.java.isAssignableFrom(type)) return "<${type.simpleName}>"
+            if (p.readInt() == 0) return "null"
+            val creator = type.getField("CREATOR").get(null) as android.os.Parcelable.Creator<*>
+            val obj = creator.createFromParcel(p) ?: return "null"
+            val fields = generateSequence<Class<*>>(obj.javaClass) { it.superclass }.takeWhile { it != Any::class.java }
+                .flatMap { it.declaredFields.asSequence() }.filter { !java.lang.reflect.Modifier.isStatic(it.modifiers) }
+                .mapNotNull { f -> runCatching { f.isAccessible = true; "${f.name}=${describeValue(f.get(obj))}" }.getOrNull() }.toList()
+            return "${type.simpleName}{${fields.joinToString(", ")}}"
+        }
+
+        private fun describeValue(v: Any?): String = when (v) {
+            is IntArray -> v.joinToString(",", "[", "]")
+            is ByteArray -> PortProbe.hex(v, minOf(v.size, 64))
+            is Array<*> -> v.joinToString(",", "[", "]")
+            else -> v.toString().take(120)
         }
     }
 }

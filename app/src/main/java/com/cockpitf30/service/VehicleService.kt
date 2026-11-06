@@ -19,6 +19,7 @@ import com.cockpitf30.vehicle.VehicleRepository
 import com.cockpitf30.vehicle.trip.TripComputer
 import com.cockpitf30.vehicle.source.CarPropertySource
 import com.cockpitf30.vehicle.source.DemoSource
+import com.cockpitf30.vehicle.source.RadioCarSource
 import com.cockpitf30.vehicle.source.SerialSource
 import com.cockpitf30.vehicle.source.VehicleDataSource
 import kotlinx.coroutines.CoroutineScope
@@ -76,10 +77,13 @@ class VehicleService : LifecycleService() {
     private fun createSource(settings: AppSettings): VehicleDataSource = when (settings.sourceMode) {
         SourceMode.DEMO -> DemoSource()
         SourceMode.CAR_PROPERTY -> CarPropertySource(this)
+        SourceMode.RADIO -> RadioCarSource(this)
         SourceMode.SERIAL -> SerialSource(settings.serialPath, settings.baudRate)
-        SourceMode.AUTO ->
-            if (CarPropertySource.isAvailable(this)) CarPropertySource(this)
-            else SerialSource(settings.serialPath, settings.baudRate)
+        SourceMode.AUTO -> when {
+            CarPropertySource.isAvailable(this) -> CarPropertySource(this)
+            RadioCarSource.isAvailable(this) -> RadioCarSource(this)
+            else -> SerialSource(settings.serialPath, settings.baudRate)
+        }
     }
 
     private fun buildNotification(): Notification {
