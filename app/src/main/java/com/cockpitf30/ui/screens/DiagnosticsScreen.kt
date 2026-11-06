@@ -384,6 +384,7 @@ fun DiagnosticsScreen() {
                     }
                     Info("Estado: ${voice.phase} · micrófono ${"%.0f".format(voice.level * 100)} %" + (voice.error?.let { " · $it" } ?: ""))
                     Info("Modelo ${com.cockpitf30.assistant.VoiceModel.NAME}: " + if (com.cockpitf30.assistant.VoiceModel.isReady(context)) "instalado" else "no instalado")
+                    voice.lastText?.let { Mono("Último reconocido: «$it»") }
                     voice.heard?.let { Mono("Oído: «$it»") }
                     voice.reply?.let { Mono("Respuesta: $it") }
                     Info("Reconocedor de Google: " + if (android.speech.SpeechRecognizer.isRecognitionAvailable(context)) "disponible" else "no disponible", Cockpit.TextDim)

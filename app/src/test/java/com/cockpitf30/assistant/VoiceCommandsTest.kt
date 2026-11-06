@@ -19,6 +19,20 @@ class VoiceCommandsTest {
     }
 
     @Test
+    fun wakeGrammarPhrasesAreAccepted() {
+        Regex("\"([^\"]+)\"").findAll(VoiceCommands.WAKE_GRAMMAR).map { it.groupValues[1] }.filter { it != "[unk]" }.forEach {
+            assertEquals(it, "", VoiceCommands.afterWakeWord(it))
+        }
+    }
+
+    @Test
+    fun leftoverBrandIsStrippedFromTheCommand() {
+        assertEquals("abre las gasolineras", VoiceCommands.stripWakeWords("uve doble abre las gasolineras"))
+        assertEquals("", VoiceCommands.stripWakeWords("uve doble"))
+        assertEquals("que tiempo hace", VoiceCommands.stripWakeWords("qué tiempo hace"))
+    }
+
+    @Test
     fun noWakeWordWithoutTheBrand() {
         assertNull(VoiceCommands.afterWakeWord("hola qué tal"))
         assertNull(VoiceCommands.afterWakeWord("abre las gasolineras"))

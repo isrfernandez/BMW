@@ -91,6 +91,8 @@ data class AssistantState(
     val error: String? = null,
     /** Quién reconoce la orden en curso: "Vosk" (sin conexión) o "Google". */
     val engine: String? = null,
+    /** Último texto reconocido, también mientras espera «Hola BMW» (para Diagnóstico). */
+    val lastText: String? = null,
 )
 
 /**
@@ -230,7 +232,11 @@ object VoiceAssistant {
         // VOICE_RECOGNITION quita el control automático de ganancia; si la radio no lo tiene, el micro normal.
         val audio = open(MediaRecorder.AudioSource.VOICE_RECOGNITION) ?: open(MediaRecorder.AudioSource.MIC)
             ?: error("no se puede abrir el micrófono")
-        val rec = Recognizer(m, RATE.toFloat())
+        // Dos reconocedores: uno restringido a la frase de activación (mucho más fiable que buscarla en
+        // texto libre, porque el modelo no conoce «BMW») y otro libre para la orden.
+        val wakeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.WAKE_GRAMMAR)
+        val cmdRec = Recognizer(m, RATE.toFloat())
+        var usingCmd = false
         try {
             audio.startRecording()
             if (audio.recordingState != AudioRecord.RECORDSTATE_RECORDING) error("el micrófono está ocupado")
@@ -247,18 +253,28 @@ object VoiceAssistant {
                     val lvl = if (muted) 0f else rms(buf, n)
                     _state.update { it.copy(level = lvl) }
                 }
-                if (resetRecognizer) { resetRecognizer = false; rec.reset(); lastPartial = "" }
+                if (resetRecognizer) { resetRecognizer = false; wakeRec.reset(); cmdRec.reset(); lastPartial = "" }
                 if (muted) continue
+                val wantCmd = _state.value.phase == AssistantPhase.LISTENING
+                if (wantCmd != usingCmd) {
+                    usingCmd = wantCmd
+                    (if (wantCmd) cmdRec else wakeRec).reset()
+                    lastPartial = ""
+                }
+                val rec = if (usingCmd) cmdRec else wakeRec
                 if (rec.acceptWaveForm(buf, n)) {
                     val text = JSONObject(rec.result).optString("text")
                     lastPartial = ""
-                    if (text.isNotBlank()) withContext(Dispatchers.Main) { onFinal(text) }
+                    val clean = text.replace("[unk]", "").trim()
+                    if (text.isNotBlank()) _state.update { it.copy(lastText = text) }
+                    if (clean.isNotBlank()) withContext(Dispatchers.Main) { onFinal(clean) }
                 } else {
                     val partial = JSONObject(rec.partialResult).optString("partial")
                     if (partial != lastPartial) {
                         lastPartial = partial
                         if (listenUntil > 0) listenUntil = maxOf(listenUntil, now + 2_500)
-                        if (partial.isNotBlank()) withContext(Dispatchers.Main) { onPartial(partial) }
+                        val clean = partial.replace("[unk]", "").trim()
+                        if (clean.isNotBlank()) withContext(Dispatchers.Main) { onPartial(clean) }
                     }
                 }
                 if (listenUntil in 1 until now) {
@@ -269,7 +285,8 @@ object VoiceAssistant {
         } finally {
             runCatching { audio.stop() }
             audio.release()
-            rec.close()
+            wakeRec.close()
+            cmdRec.close()
         }
     }
 
@@ -289,7 +306,7 @@ object VoiceAssistant {
                 wake()
                 if (rest.isNotBlank()) _state.update { it.copy(heard = rest) }
             }
-            AssistantPhase.LISTENING -> _state.update { it.copy(heard = VoiceCommands.afterWakeWord(text) ?: text) }
+            AssistantPhase.LISTENING -> _state.update { it.copy(heard = VoiceCommands.stripWakeWords(VoiceCommands.afterWakeWord(text) ?: text).ifBlank { null }) }
             else -> Unit
         }
     }
@@ -301,7 +318,7 @@ object VoiceAssistant {
                 if (rest.isBlank()) wake() else execute(rest)
             }
             AssistantPhase.LISTENING -> {
-                val rest = VoiceCommands.afterWakeWord(text) ?: text
+                val rest = VoiceCommands.stripWakeWords(VoiceCommands.afterWakeWord(text) ?: text)
                 if (rest.isNotBlank()) execute(rest)
             }
             else -> Unit

@@ -50,6 +50,15 @@ object VoiceCommands {
         }
         addAll(listOf("uvedoble", "vedoble"))
     }
+    /**
+     * Frases que acepta el reconocedor de la palabra de activación (gramática de Vosk). "[unk]" recoge
+     * todo lo demás para que cualquier frase no acabe forzada a «hola BMW».
+     */
+    val WAKE_GRAMMAR: String = listOf(
+        "hola be eme uve doble", "hola be eme uve", "hola be eme doble uve", "hola be eme doble ve",
+        "hola be eme", "hola uve doble", "ola be eme uve doble", "oye be eme uve doble", "[unk]",
+    ).joinToString(",", "[", "]") { "\"$it\"" }
+
     private val HELLO = setOf("hola", "ola", "hello", "oye")
 
     /**
@@ -68,6 +77,15 @@ object VoiceCommands {
         }
         return null
     }
+
+    private val BRAND_WORDS = setOf("be", "eme", "me", "uve", "doble", "ve", "bmw", "hola", "ola", "oye")
+
+    /**
+     * Quita del principio los restos de «hola BMW»: la activación salta en cuanto se oye «hola be eme»,
+     * así que el reconocedor de la orden puede empezar oyendo «uve doble …».
+     */
+    fun stripWakeWords(text: String): String =
+        normalize(text).split(' ').dropWhile { it in BRAND_WORDS }.joinToString(" ")
 
     private val QUESTION = setOf("cuanto", "cuanta", "cuantos", "cuantas", "que", "como", "cual", "hay", "dime", "donde", "va", "voy", "tengo", "esta", "estan", "hace")
 
