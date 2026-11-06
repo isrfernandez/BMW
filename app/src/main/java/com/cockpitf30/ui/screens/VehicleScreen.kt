@@ -41,6 +41,7 @@ import com.cockpitf30.ui.components.TopBar
 import com.cockpitf30.ui.components.TriangleBackground
 import com.cockpitf30.ui.components.glassPanel
 import com.cockpitf30.ui.components.PanelTitle
+import com.cockpitf30.ui.components.tyreStatusColor
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -127,7 +128,7 @@ fun VehicleScreen() {
             // Líneas de luz de cada panel a su rueda, con un punto brillante sobre la rueda.
             Canvas(Modifier.fillMaxSize()) {
                 wheels.forEach { (v, pos, isLeft) ->
-                    val c = tyreColor(v)
+                    val c = tyreStatusColor(v)
                     val wy = y(pos.y).toPx()
                     val wx = (if (isLeft) x(BODY_LEFT) + 6.dp else x(BODY_RIGHT) - 6.dp).toPx()
                     val cx = (if (isLeft) leftChipX + chipW else rightChipX).toPx()
@@ -176,17 +177,10 @@ fun VehicleScreen() {
     }
 }
 
-/** Presión razonable en un 320d: en verde entre 1,9 y 3,2 bar, en rojo fuera de ese margen. */
-private fun tyreColor(v: Float?) = when {
-    v == null -> Cockpit.TextDim
-    v < 1.9f || v > 3.2f -> Cockpit.Alert
-    else -> Cockpit.Ok
-}
-
 /** Panel de una rueda: rótulo, presión grande y un punto de estado del lado de la rueda. */
 @Composable
 private fun Tyre(label: String, v: Float?, modifier: Modifier, align: Alignment.Horizontal) {
-    val c = tyreColor(v)
+    val c = tyreStatusColor(v)
     Column(
         modifier.glassPanel(tint = c).padding(horizontal = 20.dp, vertical = 12.dp),
         horizontalAlignment = align,

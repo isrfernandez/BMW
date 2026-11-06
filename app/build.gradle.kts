@@ -13,8 +13,8 @@ android {
         // Las unidades TopWay/ZQ suelen venir con Android 10–13.
         minSdk = 26
         targetSdk = 34
-        versionCode = 26
-        versionName = "0.9.16"
+        versionCode = 27
+        versionName = "0.9.17"
     }
 
     // Misma clave de depuración en el PC y en la nube: así cualquier APK de depuración se

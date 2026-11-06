@@ -105,3 +105,10 @@ fun PanelTitle(text: String, modifier: Modifier = Modifier, accent: Color = Cock
         trailing()
     }
 }
+
+/** Presión razonable en un 320d: verde entre 1,9 y 3,2 bar, rojo fuera de ese margen, gris sin dato. */
+fun tyreStatusColor(v: Float?): Color = when {
+    v == null -> Cockpit.TextDim
+    v < 1.9f || v > 3.2f -> Cockpit.Alert
+    else -> Cockpit.Ok
+}

@@ -139,6 +139,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     val captionStyle = numeric(17, FontWeight.Medium)
     val closedRes = ImageBitmap.imageResource(R.drawable.car_34_closed)
     val openRes = ImageBitmap.imageResource(R.drawable.car_34_open)
+    val trianglesRes = ImageBitmap.imageResource(R.drawable.bg_triangles)
     // Presiones y autonomía en grande para leerlas de un vistazo conduciendo.
     val overlay = Overlay(
         value = numeric(38, FontWeight.SemiBold),
@@ -218,7 +219,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         // en cada fotograma con filtro bilineal la dejaba borrosa y con dientes.
         val carHeightPx = with(LocalDensity.current) { g.carHeight.roundToPx() }
         val scene = remember(closedRes, openRes, carHeightPx) {
-            CarScene(closedRes.scaledToHeight(carHeightPx), openRes.scaledToHeight(carHeightPx))
+            CarScene(closedRes.scaledToHeight(carHeightPx), openRes.scaledToHeight(carHeightPx), trianglesRes)
         }
         Canvas(Modifier.fillMaxSize()) {
             tileVersion // se vuelve a dibujar cuando llega una tesela
@@ -384,7 +385,7 @@ private class Overlay(val value: TextStyle, val unit: TextStyle, val caption: Te
  * puertas, maletero y capó abiertos.
  */
 /** Vista 3/4 del coche: cerrado y con puertas, capó y maletero abiertos (mismo encuadre). */
-private class CarScene(val closed: ImageBitmap, val open: ImageBitmap)
+private class CarScene(val closed: ImageBitmap, val open: ImageBitmap, val triangles: ImageBitmap)
 
 private fun DrawScope.drawPanel(
     g: GeoPx, scene: CarScene, openness: Float, state: VehicleState, tm: TextMeasurer, st: Overlay,
@@ -407,7 +408,7 @@ private fun DrawScope.drawPanel(
     val bounds = Rect(g.xv + inset, top, g.w - g.xv - inset, bottom)
 
     clipPath(panel) {
-        drawFacets(g, pts)
+        drawFacets(g, pts, scene.triangles, bounds)
         // Página del mapa, entrando por la derecha.
         if (page > 0f) translate(left = (1f - page) * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawMap(bounds, map, tm, mapText) } }
         if (page < 1f) translate(left = -page * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawCar(g, scene, openness, state, tm, st, il, iw, top, ph, bottom) } }
@@ -423,28 +424,20 @@ private fun DrawScope.drawPanel(
  * degradado, más claro hacia el borde y con un tono distinto según mire a la luz (arriba a la
  * izquierda), como una pieza tallada. Las aristas brillan cerca de los vértices.
  */
-private fun DrawScope.drawFacets(g: GeoPx, pts: List<Offset>) {
+private fun DrawScope.drawFacets(g: GeoPx, pts: List<Offset>, triangles: ImageBitmap, bounds: Rect) {
     val c = Offset(g.w / 2, g.ym)
-    val deep = Color(0xFF040B16)
-    val shadow = Color(0xFF0A1A2E)
-    val lit = Color(0xFF2B4E78)
-    val lx = -0.35f; val ly = -0.94f
-    for (i in pts.indices) {
-        val a = pts[i]; val b = pts[(i + 1) % pts.size]
-        val m = Offset((a.x + b.x) / 2, (a.y + b.y) / 2)
-        val nx = m.x - c.x; val ny = m.y - c.y
-        val len = hypot(nx, ny).coerceAtLeast(1f)
-        // Las facetas largas (arriba y abajo) apuntan casi en vertical: se mide en un espacio aplanado.
-        val k = ((nx / len * lx + ny / len * ly * 2.2f).coerceIn(-1f, 1f) + 1f) / 2f
-        val edge = androidx.compose.ui.graphics.lerp(shadow, lit, k)
-        val tri = Path().apply { moveTo(c.x, c.y); lineTo(a.x, a.y); lineTo(b.x, b.y); close() }
-        drawPath(tri, Brush.linearGradient(listOf(deep, androidx.compose.ui.graphics.lerp(deep, edge, 0.55f), edge), start = c, end = m))
-    }
-    // Brillo suave en el centro, para que el coche parezca iluminado desde arriba.
-    drawCircle(
-        Brush.radialGradient(listOf(Color(0xFF3D6EA8).copy(alpha = 0.22f), Color.Transparent), center = c, radius = g.half * 2.2f),
-        radius = g.half * 2.2f, center = c,
+    // Mismo fondo de triángulos que las pantallas secundarias, recortado para cubrir el panel.
+    val scale = maxOf(bounds.width / triangles.width, bounds.height / triangles.height)
+    val sw = (bounds.width / scale).roundToInt()
+    val sh = (bounds.height / scale).roundToInt()
+    drawImage(
+        triangles,
+        srcOffset = IntOffset((triangles.width - sw) / 2, (triangles.height - sh) / 2), srcSize = IntSize(sw, sh),
+        dstOffset = IntOffset(bounds.left.roundToInt(), bounds.top.roundToInt()), dstSize = IntSize(bounds.width.roundToInt(), bounds.height.roundToInt()),
+        filterQuality = FilterQuality.High,
     )
+    // Velo hacia los bordes del hexágono para que el coche y los marcadores destaquen.
+    drawRect(Brush.radialGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.45f)), center = c, radius = bounds.width * 0.55f), bounds.topLeft, bounds.size)
     // Aristas: del centro a cada vértice, invisibles en el centro y con brillo hacia el vértice.
     pts.forEach { v ->
         val brush = Brush.linearGradient(listOf(Color.Transparent, Color(0xFF9CC7FF).copy(alpha = 0.10f), Color(0xFFDDEBFF).copy(alpha = 0.55f)), start = c, end = v)
@@ -512,45 +505,80 @@ private fun DrawScope.drawCar(
         // rótulos van a la izquierda y la línea llega al costado derecho del coche. Coordenadas medidas sobre car_34_closed (790x564).
         val t = state.tyres
         fun bar(v: Float?) = v?.let { "%.1f".format(it) } ?: "--"
-        marker(tm, st, "DEL. IZQ.", bar(t.frontLeft), " bar", at(0.456f, 0.78f), at(0.58f, 0.82f), alignRight = false)
-        marker(tm, st, "TRAS. IZQ.", bar(t.rearLeft), " bar", at(0.787f, 0.475f), at(0.92f, 0.52f), alignRight = false)
-        marker(tm, st, "DEL. DER.", bar(t.frontRight), " bar", at(0.19f, 0.585f), at(0.05f, 0.62f), alignRight = true, hidden = true)
-        marker(tm, st, "TRAS. DER.", bar(t.rearRight), " bar", at(0.52f, 0.27f), at(0.05f, 0.30f), alignRight = true, hidden = true)
+        marker(tm, st, "DEL. IZQ.", bar(t.frontLeft), " bar", at(0.456f, 0.78f), at(0.58f, 0.82f), alignRight = false, status = tyreStatusColor(t.frontLeft))
+        marker(tm, st, "TRAS. IZQ.", bar(t.rearLeft), " bar", at(0.787f, 0.475f), at(0.92f, 0.52f), alignRight = false, status = tyreStatusColor(t.rearLeft))
+        marker(tm, st, "DEL. DER.", bar(t.frontRight), " bar", at(0.19f, 0.585f), at(0.05f, 0.62f), alignRight = true, hidden = true, status = tyreStatusColor(t.frontRight))
+        marker(tm, st, "TRAS. DER.", bar(t.rearRight), " bar", at(0.52f, 0.27f), at(0.05f, 0.30f), alignRight = true, hidden = true, status = tyreStatusColor(t.rearRight))
         // Autonomía arriba a la derecha, sin línea.
         marker(tm, st, "AUTONOMÍA", state.rangeKm?.toString() ?: "--", " km", null, at(0.90f, 0.17f), alignRight = false)
     }
 }
 
-private val MarkerShadow = Shadow(Color.Black.copy(alpha = 0.9f), Offset(0f, 2f), 10f)
-
 /**
- * Marcador sin fondo: rótulo pequeño y valor en Saira con sombra para que se lean sobre la escena.
- * Con [wheel], un punto en la rueda (hueco si queda oculta) y una línea fina hasta el texto.
+ * Marcador de cristal, igual que los de la pantalla Vehículo: panel ahumado con borde biselado del
+ * color de estado, punto de estado, rótulo y valor en Saira. Con [wheel], una línea de luz hasta la
+ * rueda con un punto brillante encima (solo el aro si la rueda queda oculta).
  */
 private fun DrawScope.marker(
     tm: TextMeasurer, st: Overlay, caption: String, value: String, unit: String,
-    wheel: Offset?, label: Offset, alignRight: Boolean, hidden: Boolean = false,
+    wheel: Offset?, label: Offset, alignRight: Boolean, hidden: Boolean = false, status: Color = Cockpit.BlueLight,
 ) {
     val c = tm.measure(caption, st.caption)
     val v = tm.measure(value, st.value)
     val u = tm.measure(unit, st.unit)
     val gap = 8.dp.toPx()
-    if (wheel != null) {
-        val line = Color.White.copy(alpha = if (hidden) 0.35f else 0.55f)
-        drawLine(line, wheel, label, 1.2.dp.toPx(), StrokeCap.Round)
-        drawCircle(Cyan.copy(alpha = 0.35f), 7.dp.toPx(), wheel, blendMode = BlendMode.Plus)
-        if (hidden) drawCircle(Cyan, 3.5.dp.toPx(), wheel, style = Stroke(1.5.dp.toPx()))
-        else drawCircle(Color.White, 3.5.dp.toPx(), wheel)
-    }
-    val width = maxOf(c.size.width, v.size.width + u.size.width)
-    val h = c.size.height + v.size.height
+    val padX = 16.dp.toPx()
+    val padY = 9.dp.toPx()
+    val dot = 12.dp.toPx()
+    val width = maxOf(c.size.width + dot + 6.dp.toPx(), (v.size.width + u.size.width).toFloat()) + padX * 2
+    val h = c.size.height + v.size.height + padY * 2
     val x = if (alignRight) label.x - gap - width else label.x + gap
     val y = label.y - h / 2f
-    fun right(w: Int) = if (alignRight) x + width - w else x
-    drawText(c, color = Color.White.copy(alpha = 0.7f), topLeft = Offset(right(c.size.width), y), shadow = MarkerShadow)
-    val vx = if (alignRight) x + width - v.size.width - u.size.width else x
-    drawText(v, color = Color.White, topLeft = Offset(vx, y + c.size.height), shadow = MarkerShadow)
-    drawText(u, color = Color.White.copy(alpha = 0.7f), topLeft = Offset(vx + v.size.width, y + h - u.size.height - 3.dp.toPx()), shadow = MarkerShadow)
+    if (wheel != null) {
+        val edge = Offset(if (alignRight) x + width else x, label.y)
+        drawLine(Brush.linearGradient(listOf(status.copy(alpha = 0.85f), status.copy(alpha = 0.2f)), start = wheel, end = edge), wheel, edge, 1.5.dp.toPx())
+        drawCircle(status.copy(alpha = if (hidden) 0.12f else 0.25f), 14.dp.toPx(), wheel)
+        drawCircle(status.copy(alpha = if (hidden) 0.4f else 0.6f), 8.dp.toPx(), wheel, style = Stroke(1.5.dp.toPx()))
+        if (!hidden) drawCircle(Color.White, 3.dp.toPx(), wheel)
+    }
+    // Panel de cristal.
+    val r = CornerRadius(16.dp.toPx())
+    val tl = Offset(x, y)
+    val sz = Size(width, h)
+    drawRoundRect(Color(0xFF050B14).copy(alpha = 0.55f), tl, sz, r)
+    drawRoundRect(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.10f), Color.White.copy(alpha = 0.02f), status.copy(alpha = 0.05f)), startY = y, endY = y + h), tl, sz, r)
+    val sw = 1.2.dp.toPx()
+    drawRoundRect(
+        Brush.linearGradient(
+            0f to Color.White.copy(alpha = 0.42f), 0.3f to Color.White.copy(alpha = 0.10f),
+            0.75f to Color.White.copy(alpha = 0.04f), 1f to status.copy(alpha = 0.5f),
+            start = tl, end = Offset(x + width, y + h),
+        ),
+        Offset(x + sw / 2, y + sw / 2), Size(width - sw, h - sw), r, style = Stroke(sw),
+    )
+    drawLine(
+        Brush.horizontalGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.45f), Color.Transparent), startX = x, endX = x + width),
+        Offset(x + r.x, y + sw * 1.6f), Offset(x + width - r.x, y + sw * 1.6f), 1.dp.toPx(),
+    )
+    // Contenido: rótulo con punto de estado del lado de la rueda y valor grande.
+    val inner = width - padX * 2
+    val cy = y + padY
+    val dotX: Float
+    val capX: Float
+    if (alignRight) {
+        dotX = x + width - padX - dot / 2
+        capX = x + width - padX - dot - 6.dp.toPx() - c.size.width
+    } else {
+        dotX = x + padX + dot / 2
+        capX = x + padX + dot + 6.dp.toPx()
+    }
+    val dotC = Offset(dotX, cy + c.size.height / 2f)
+    drawCircle(status.copy(alpha = 0.3f), dot / 2, dotC)
+    drawCircle(status, dot / 4, dotC)
+    drawText(c, color = Color.White.copy(alpha = 0.7f), topLeft = Offset(capX, cy))
+    val vx = if (alignRight) x + padX + inner - v.size.width - u.size.width else x + padX
+    drawText(v, color = Color.White, topLeft = Offset(vx, cy + c.size.height))
+    drawText(u, color = Color.White.copy(alpha = 0.7f), topLeft = Offset(vx + v.size.width, cy + c.size.height + v.size.height - u.size.height - 6.dp.toPx()))
 }
 
 /**
