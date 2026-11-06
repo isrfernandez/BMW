@@ -167,7 +167,7 @@ fun BoxScope.AssistantOverlay() {
         exit = fadeOut() + slideOutVertically { it / 2 },
     ) {
         Row(
-            Modifier.width(820.dp).glassPanel(28.dp, CardTheme.ASSIST.to, smoke = 0.72f).padding(horizontal = 22.dp, vertical = 14.dp),
+            Modifier.width(820.dp).glassPanel(28.dp, CardTheme.ASSIST.to, smoke = 0.94f).padding(horizontal = 22.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(20.dp),
         ) {
