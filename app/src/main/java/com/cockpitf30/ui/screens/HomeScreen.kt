@@ -75,7 +75,6 @@ import com.cockpitf30.ui.components.CardArt
 import com.cockpitf30.ui.components.CardTheme
 import com.cockpitf30.ui.components.ClusterStrip
 import com.cockpitf30.ui.components.glassBackground
-import com.cockpitf30.ui.components.TriangleBackground
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import com.cockpitf30.ui.components.glassOverlay
@@ -182,7 +181,6 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
     val firstCard = remember { FocusRequester() }
     InitialFocus(firstCard)
 
-    TriangleBackground(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().padding(top = 6.dp, bottom = 8.dp)) {
         // El cuadro (mapa e indicadores) ocupa tres cuartos de la altura (540 de 720 dp); las tarjetas, el resto.
         ClusterStrip(state, status, Modifier.fillMaxWidth().height(CLUSTER_HEIGHT).padding(horizontal = 12.dp))
@@ -286,7 +284,6 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
             }
         }
     }
-}
 }
 
 /** Indicación del modo mover sobre la tarjeta. */

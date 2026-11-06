@@ -64,7 +64,7 @@ import androidx.core.content.ContextCompat
 import com.cockpitf30.ui.components.FocusTile
 import com.cockpitf30.ui.components.InitialFocus
 import com.cockpitf30.ui.components.TopBar
-import com.cockpitf30.ui.components.hexBackground
+import com.cockpitf30.ui.components.TriangleBackground
 import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.ui.theme.numeric
 import kotlinx.coroutines.Dispatchers
@@ -155,7 +155,8 @@ fun PhoneScreen() {
     InitialFocus(first)
 
     pending?.let { CallingOverlay(it, countdown) { pending = null } }
-    Column(Modifier.fillMaxSize().hexBackground()) {
+    TriangleBackground(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize()) {
         TopBar("Teléfono")
         Row(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(40.dp)) {
             // Número y teclado
@@ -232,6 +233,7 @@ fun PhoneScreen() {
                 }
             }
         }
+    }
     }
 }
 

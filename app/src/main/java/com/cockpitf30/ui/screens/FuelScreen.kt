@@ -67,7 +67,7 @@ import com.cockpitf30.ui.components.StationMark
 import com.cockpitf30.ui.components.TopBar
 import com.cockpitf30.ui.components.drawStationMap
 import com.cockpitf30.ui.components.fitView
-import com.cockpitf30.ui.components.hexBackground
+import com.cockpitf30.ui.components.TriangleBackground
 import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.ui.theme.numeric
 import java.util.Locale
@@ -118,7 +118,8 @@ fun FuelScreen() {
     val go = remember { FocusRequester() }
     InitialFocus(go)
 
-    Column(Modifier.fillMaxSize().hexBackground()) {
+    TriangleBackground(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize()) {
         TopBar("Gasolineras") {
             Text(statusText(view), style = MaterialTheme.typography.bodyMedium, color = if (view.demo) Cockpit.Alert else Cockpit.TextDim)
         }
@@ -136,6 +137,7 @@ fun FuelScreen() {
             }
             StationList(view.near, selected?.station?.id, Modifier.width(600.dp).fillMaxHeight()) { selectedId = it.station.id }
         }
+    }
     }
 }
 
