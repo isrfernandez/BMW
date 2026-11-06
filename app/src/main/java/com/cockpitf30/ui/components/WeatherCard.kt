@@ -37,10 +37,37 @@ fun dayLabel(date: LocalDate, today: LocalDate = LocalDate.now()): String =
  * descripción, localidad y los próximos 3 días. Sin datos muestra "--".
  */
 @Composable
-fun WeatherCardContent(state: WeatherState, modifier: Modifier = Modifier, animated: Boolean = false) {
+fun WeatherCardContent(state: WeatherState, modifier: Modifier = Modifier, animated: Boolean = false, compact: Boolean = false) {
     val f = state.forecast
     val condition = f?.let { wmoCondition(it.code) }
     val today = f?.days?.firstOrNull()
+    if (compact) {
+        // Versión baja para la fila del Inicio: temperatura y estado a la izquierda, lugar y próximos días a la derecha.
+        Row(modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
+            Column(Modifier.width(120.dp)) {
+                Spacer(Modifier.weight(1f))
+                Text(f?.let { "${it.tempC}°" } ?: "--°", style = numeric(44, FontWeight.Medium), color = Cockpit.Text)
+                Text(condition?.text ?: "Sin datos", style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                Text(state.placeName ?: "Elige localidad", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(today?.let { "${it.minC}~${it.maxC}°" } ?: "--~--°", style = numeric(16), color = Cockpit.TextDim)
+                Spacer(Modifier.weight(1f))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    val next = f?.days?.drop(1)?.take(3).orEmpty()
+                    (0 until 3).forEach { i ->
+                        val d = next.getOrNull(i)
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(d?.let { dayLabel(it.date) } ?: "--", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
+                            WeatherIcon(d?.let { wmoCondition(it.code).kind } ?: WeatherKind.CLOUDY, true, Modifier.size(28.dp))
+                            Text(d?.let { "${it.minC}/${it.maxC}°" } ?: "--/--", style = numeric(14, FontWeight.Medium), maxLines = 1, softWrap = false)
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
     Row(modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp)) {
         Column(Modifier.width(150.dp)) {
             // Con la escena animada detrás, el icono ya lo dibuja ella; aquí solo se reserva el sitio.

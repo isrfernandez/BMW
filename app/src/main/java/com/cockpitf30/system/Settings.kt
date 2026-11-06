@@ -6,6 +6,7 @@ import com.cockpitf30.weather.Place
 
 enum class SourceMode(val label: String) {
     AUTO("Auto"),
+    RADIO("Radio CAN"),
     SERIAL("Serie"),
     CAR_PROPERTY("CarProperty"),
     DEMO("Demo"),
@@ -16,7 +17,16 @@ class AppSettings(context: Context) {
     private val prefs = context.getSharedPreferences("cockpit", Context.MODE_PRIVATE)
 
     var sourceMode: SourceMode
-        get() = runCatching { SourceMode.valueOf(prefs.getString(KEY_SOURCE, null)!!) }.getOrDefault(SourceMode.AUTO)
+        get() {
+            // 0.9.20: el puerto serie no se puede abrir en esta radio; quien lo tenía elegido pasa a Auto
+            // (que ahora usa los datos de la propia radio). Solo una vez.
+            if (!prefs.getBoolean(KEY_MIGRATED_RADIO, false)) {
+                val e = prefs.edit().putBoolean(KEY_MIGRATED_RADIO, true)
+                if (prefs.getString(KEY_SOURCE, null) == SourceMode.SERIAL.name) e.putString(KEY_SOURCE, SourceMode.AUTO.name)
+                e.apply()
+            }
+            return runCatching { SourceMode.valueOf(prefs.getString(KEY_SOURCE, null)!!) }.getOrDefault(SourceMode.AUTO)
+        }
         set(value) = prefs.edit().putString(KEY_SOURCE, value.name).apply()
 
     var serialPath: String
@@ -124,6 +134,7 @@ class AppSettings(context: Context) {
         const val KEY_W_TIME = "weather_cache_time"
         const val KEY_ASKED_LOCATION = "asked_location"
         const val KEY_SOURCE = "source"
+        const val KEY_MIGRATED_RADIO = "migrated_radio_0920"
         const val KEY_PATH = "serial_path"
         const val KEY_BAUD = "baud"
         const val KEY_ASKED_BATTERY = "asked_battery"

@@ -15,12 +15,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -44,6 +38,7 @@ import com.cockpitf30.service.VehicleService
 import com.cockpitf30.system.AppSettings
 import com.cockpitf30.system.BatteryOptimization
 import com.cockpitf30.ui.components.DefaultFocus
+import com.cockpitf30.ui.components.SideArt
 import com.cockpitf30.ui.components.SideItem
 import com.cockpitf30.ui.components.Sidebar
 import com.cockpitf30.ui.screens.AppsScreen
@@ -55,6 +50,8 @@ import com.cockpitf30.ui.screens.TripScreen
 import com.cockpitf30.ui.screens.Reorder
 import com.cockpitf30.ui.screens.WeatherScreen
 import com.cockpitf30.ui.screens.PhoneScreen
+import com.cockpitf30.ui.screens.FuelScreen
+import com.cockpitf30.fuel.FuelRepository
 import com.cockpitf30.weather.WeatherRepository
 import com.cockpitf30.nav.RouteTracker
 import android.Manifest
@@ -226,6 +223,14 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
             delay(30 * 60 * 1000L)
         }
     }
+    // Gasolineras: el listado del Ministerio se descarga como mucho cada 12 h; si falla (p. ej. sin
+    // conexión al arrancar), se reintenta a los 10 minutos.
+    LaunchedEffect(Unit) {
+        while (true) {
+            FuelRepository.refresh(ctx)
+            delay(if (FuelRepository.state.value.error != null) 10 * 60 * 1000L else 60 * 60 * 1000L)
+        }
+    }
     BackHandler(enabled = screen != Screen.HOME) { screen = Screen.HOME }
 
     // Puerta, capó o maletero abierto: se abre la pantalla Vehículo (vista cenital con cada puerta).
@@ -249,12 +254,12 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     val context = LocalContext.current
     val sideItems = listOf(
         // Pulsación larga en Home: atajo a Diagnóstico.
-        SideItem("Home", Icons.Filled.Home, screen == Screen.HOME, onLongClick = { screen = Screen.DIAGNOSTICS }) { screen = Screen.HOME },
-        SideItem("Navegación", Icons.Filled.LocationOn, false) { openMaps(context) },
-        SideItem("Música", Icons.Filled.PlayArrow, false) { openMusic(context) },
-        SideItem("Apps", Icons.Filled.Menu, screen == Screen.APPS) { screen = Screen.APPS },
+        SideItem("Home", SideArt.HOME, screen == Screen.HOME, onLongClick = { screen = Screen.DIAGNOSTICS }) { screen = Screen.HOME },
+        SideItem("Navegación", SideArt.NAV, false) { openMaps(context) },
+        SideItem("Música", SideArt.MUSIC, false) { openMusic(context) },
+        SideItem("Apps", SideArt.APPS, screen == Screen.APPS) { screen = Screen.APPS },
         // Ajustes de la app: fuente de datos, puerto serie, batería.
-        SideItem("Ajustes", Icons.Filled.Settings, screen == Screen.DIAGNOSTICS) { screen = Screen.DIAGNOSTICS },
+        SideItem("Ajustes", SideArt.SETTINGS, screen == Screen.DIAGNOSTICS) { screen = Screen.DIAGNOSTICS },
     )
 
     Row(
@@ -278,6 +283,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 Screen.DIAGNOSTICS -> DiagnosticsScreen()
                 Screen.WEATHER -> WeatherScreen()
                 Screen.PHONE -> PhoneScreen()
+                Screen.FUEL -> FuelScreen()
             }
         }
     }

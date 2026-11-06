@@ -43,7 +43,15 @@ import com.cockpitf30.system.SourceMode
 import com.cockpitf30.ui.components.FocusTile
 import com.cockpitf30.ui.components.InitialFocus
 import com.cockpitf30.ui.components.TopBar
-import com.cockpitf30.ui.components.hexBackground
+import com.cockpitf30.ui.components.TriangleBackground
+import com.cockpitf30.ui.components.glassPanel
+import com.cockpitf30.ui.components.PanelTitle
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import com.cockpitf30.ui.theme.numeric
 import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.vehicle.VehicleRepository
 import com.cockpitf30.vehicle.source.CarPropertySource
@@ -80,6 +88,11 @@ fun DiagnosticsScreen() {
     var dexActions by remember { mutableStateOf<List<String>>(emptyList()) }
     val callbacks by com.cockpitf30.vehicle.probe.CarDataProbe.callbackLog.collectAsStateWithLifecycle()
     var busy by remember { mutableStateOf<String?>(null) }
+    val radioValues by com.cockpitf30.vehicle.source.RadioCarData.values.collectAsStateWithLifecycle()
+    val radioChanges by com.cockpitf30.vehicle.source.RadioCarData.changes.collectAsStateWithLifecycle()
+    val vehicle by VehicleRepository.state.collectAsStateWithLifecycle()
+    var canbusProbe by remember { mutableStateOf<List<String>>(emptyList()) }
+    var showAllKeys by remember { mutableStateOf(false) }
 
     var mode by remember { mutableStateOf(settings.sourceMode) }
     var path by remember { mutableStateOf(settings.serialPath) }
@@ -136,7 +149,28 @@ fun DiagnosticsScreen() {
         }
     }
 
+    fun exploreCanbus() {
+        busy = "Explorando CarCanbus…"
+        scope.launch {
+            canbusProbe = withContext(Dispatchers.IO) {
+                runCatching { com.cockpitf30.vehicle.probe.CanbusProbe.explore(context) }.getOrElse { listOf("Error: $it") }
+            }
+            busy = null
+        }
+    }
+
+    fun exportApks() {
+        busy = "Copiando APKs a Descargas…"
+        scope.launch {
+            val r = withContext(Dispatchers.IO) { runCatching { com.cockpitf30.vehicle.probe.CanbusProbe.exportApks(context) }.getOrElse { "Error: ${it.message}" } }
+            busy = r
+            android.widget.Toast.makeText(context, r.take(200), android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
+    // Lo de la radio va al principio: el informe completo pasa de 150 KB y al compartir se recorta.
     fun report() = buildReport(context, status, probes, packages, props, input, raw, bytes, broadcasts, sysApps, services, jars, carProbe, dataProbe, callbacks)
+        .replaceFirst("\n== Puertos", radioReport(radioValues, radioChanges, canbusProbe, vehicle) + "\n== Puertos")
     val automotive = remember { CarPropertySource.isAvailable(context) }
 
     fun apply() {
@@ -155,173 +189,246 @@ fun DiagnosticsScreen() {
     val first = remember { FocusRequester() }
     InitialFocus(first)
 
-    Column(Modifier.fillMaxSize().hexBackground()) {
-        TopBar("Diagnóstico")
+    TriangleBackground(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize()) {
+        TopBar("Diagnóstico") {
+            Text("v${installedVersion(context)}", style = MaterialTheme.typography.labelLarge, color = Cockpit.BlueLight)
+        }
         LazyColumn(
-            contentPadding = PaddingValues(horizontal = 32.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(start = 32.dp, end = 32.dp, top = 4.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item {
-                Section("Estado")
-                Info("Fuente: ${status.sourceName} · ${if (status.connected) "conectada" else "desconectada"}")
-                Info("Bytes leídos: ${status.bytesReceived} · tramas: ${status.framesReceived} · checksum erróneo: ${status.badChecksums}")
-                status.lastError?.let { Info("Último error: $it", Cockpit.Alert) }
-                Info("Android Automotive (CarPropertyManager): ${if (automotive) "sí" else "no"}")
-                busy?.let { Info(it, Cockpit.BlueLight) }
-                ChipRow(listOf("Compartir informe", "Guardar informe en Descargas"), -1) {
-                    if (it == 0) shareReport(context, report()) else saveReport(context, report())
+                Row(Modifier.fillMaxWidth().height(110.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    DiagStat("Versión", installedVersion(context), Cockpit.BlueLight)
+                    DiagStat("Fuente", status.sourceName, if (status.connected) Cockpit.Ok else Cockpit.Alert)
+                    DiagStat("Tramas", "${status.framesReceived}", Color(0xFF7FD3FF))
+                    DiagStat("Bytes leídos", "${status.bytesReceived}", Color(0xFFFFB74D))
                 }
             }
             item {
-                Section("Ruleta iDrive: enseñar botones")
-                Info(
-                    if (learning != null) "Pulsa ahora en el iDrive el botón para «${learning!!.label}»… (toca de nuevo para cancelar)"
-                    else "Toca una función y luego pulsa en el iDrive el botón que quieras para ella.",
-                    if (learning != null) Cockpit.BlueLight else Cockpit.Text,
-                )
-                ChipRow(KnobFunction.entries.map { it.label }, KnobFunction.entries.indexOf(learning)) {
-                    val f = KnobFunction.entries[it]
-                    IDriveInput.startLearning(if (learning == f) null else f)
-                }
-                if (learned.isEmpty()) Info("Sin teclas aprendidas: se usan DPAD, ENTER, TAB y la ruleta estándar.", Cockpit.TextDim)
-                else {
-                    learned.forEach { (from, to) ->
-                        Info("${KeyEvent.keyCodeToString(from)} ($from) → ${KnobFunction.ofKeyCode(to)?.label ?: KeyEvent.keyCodeToString(to)}")
-                    }
-                    ChipRow(listOf("Borrar teclas aprendidas"), -1) {
-                        IDriveInput.learned = emptyMap()
-                        settings.knobKeys = emptyMap()
-                        learned = emptyMap()
+                DiagCard("Estado") {
+                    Info("Versión instalada: ${installedVersion(context)}", Cockpit.BlueLight)
+                    Info("Fuente: ${status.sourceName} · ${if (status.connected) "conectada" else "desconectada"}")
+                    Info("Bytes leídos: ${status.bytesReceived} · tramas: ${status.framesReceived} · checksum erróneo: ${status.badChecksums}")
+                    status.lastError?.let { Info("Último error: $it", Cockpit.Alert) }
+                    Info("Android Automotive (CarPropertyManager): ${if (automotive) "sí" else "no"}")
+                    busy?.let { Info(it, Cockpit.BlueLight) }
+                    ChipRow(listOf("Compartir informe", "Guardar informe en Descargas"), -1) {
+                        if (it == 0) shareReport(context, report()) else saveReport(context, report())
                     }
                 }
             }
             item {
-                Section("Fuente de datos")
-                ChipRow(SourceMode.entries.map { it.label }, SourceMode.entries.indexOf(mode), Modifier.focusRequester(first)) {
-                    mode = SourceMode.entries[it]
-                    apply()
+                DiagCard("Datos del coche (la propia radio)") {
+                    if (status.sourceName != "Radio (CAN)") Info("La fuente activa es «${status.sourceName}». Elige «Radio CAN» o «Auto» en Fuente de datos para leer el coche.", Cockpit.Alert)
+                    Info("Leído: ${vehicleSummary(vehicle)}")
+                    Info("Claves en la radio: ${radioValues.size}. Abre y cierra cada puerta, el maletero y el capó, arranca y gira el volante: aquí abajo sale qué clave cambia.", Cockpit.TextDim)
+                    ChipRow(
+                        listOf(if (showAllKeys) "Ocultar claves" else "Ver todas las claves (${radioValues.size})", "Explorar CarCanbus", "Guardar APKs del coche en Descargas"),
+                        if (showAllKeys) 0 else -1,
+                    ) {
+                        when (it) {
+                            0 -> showAllKeys = !showAllKeys
+                            1 -> exploreCanbus()
+                            else -> exportApks()
+                        }
+                    }
+                    if (showAllKeys) radioValues.toSortedMap().forEach { (k, v) -> Mono("$k = $v") }
+                    if (radioChanges.isEmpty()) Info("Sin cambios todavía", Cockpit.TextDim)
+                    radioChanges.take(40).forEach { Mono(it) }
+                    if (canbusProbe.isNotEmpty()) {
+                        Info("CarCanbus (${canbusProbe.size} líneas, todo en el informe):", Cockpit.TextDim)
+                        canbusProbe.filter { " = " in it || it.startsWith("--") || "conectado" in it }.take(40).forEach { Mono(it) }
+                    }
                 }
             }
             item {
-                Section("Puerto serie")
-                if (ports.isEmpty()) Info("No se encontró ningún /dev/ttyMT* ni /dev/ttyS* (/dev ${if (PortProbe.devListable()) "listable" else "no listable"})")
-                ChipRow(
-                    ports.map { "${it.name} ${if (it.canRead()) "r" else "-"}${if (it.canWrite()) "w" else "-"}" },
-                    ports.indexOfFirst { it.absolutePath == path },
-                ) {
-                    path = ports[it].absolutePath
-                    apply()
+                DiagCard("Ruleta iDrive: enseñar botones") {
+                    Info(
+                        if (learning != null) "Pulsa ahora en el iDrive el botón para «${learning!!.label}»… (toca de nuevo para cancelar)"
+                        else "Toca una función y luego pulsa en el iDrive el botón que quieras para ella.",
+                        if (learning != null) Cockpit.BlueLight else Cockpit.Text,
+                    )
+                    ChipRow(KnobFunction.entries.map { it.label }, KnobFunction.entries.indexOf(learning)) {
+                        val f = KnobFunction.entries[it]
+                        IDriveInput.startLearning(if (learning == f) null else f)
+                    }
+                    if (learned.isEmpty()) Info("Sin teclas aprendidas: se usan DPAD, ENTER, TAB y la ruleta estándar.", Cockpit.TextDim)
+                    else {
+                        learned.forEach { (from, to) ->
+                            Info("${KeyEvent.keyCodeToString(from)} ($from) → ${KnobFunction.ofKeyCode(to)?.label ?: KeyEvent.keyCodeToString(to)}")
+                        }
+                        ChipRow(listOf("Borrar teclas aprendidas"), -1) {
+                            IDriveInput.learned = emptyMap()
+                            settings.knobKeys = emptyMap()
+                            learned = emptyMap()
+                        }
+                    }
                 }
-                ChipRow(BAUDS.map { "$it" }, BAUDS.indexOf(baud)) {
-                    baud = BAUDS[it]
-                    apply()
-                }
-                ChipRow(listOf("Probar todos los puertos (2 s cada uno)"), -1) { probePorts() }
-                probes?.forEach { Mono(it) }
             }
             item {
-                Section("Apps del CAN / MCU en la radio")
-                Info("Si la radio reparte los datos del coche por broadcast, se pueden escuchar sin root.", Cockpit.TextDim)
-                val actions = (packages.orEmpty().flatMap { it.actions } + dexActions).distinct()
-                ChipRow(
-                    listOf(
-                        "Buscar apps del coche",
-                        if (listening > 0) "Dejar de escuchar ($listening acciones)" else "Escuchar sus broadcasts (${actions.size})",
-                    ),
-                    if (listening > 0) 1 else -1,
-                ) {
-                    when {
-                        it == 0 -> scanSystem()
-                        listening > 0 -> BroadcastSniffer.stop(context)
-                        else -> BroadcastSniffer.start(context, actions)
+                DiagCard("Fuente de datos") {
+                    ChipRow(SourceMode.entries.map { it.label }, SourceMode.entries.indexOf(mode), Modifier.focusRequester(first)) {
+                        mode = SourceMode.entries[it]
+                        apply()
                     }
-                }
-                packages?.let { list ->
-                    if (list.isEmpty()) Info("No se encontró ninguna app candidata.")
-                    list.forEach { p ->
-                        Info("${p.label} · ${p.packageName}${if (p.system) " · sistema" else ""}")
-                        Mono("  servicios ${p.services.size}, receptores ${p.receivers.size}, acciones ${p.actions.size}")
-                        if (p.providers.isNotEmpty()) Mono("  providers: ${p.providers.joinToString()}")
-                        p.actions.take(8).forEach { a -> Mono("  · $a") }
-                        if (p.actions.size > 8) Mono("  … y ${p.actions.size - 8} más (en el informe)")
-                    }
-                }
-                ChipRow(listOf("Explorar el servicio del coche (car / car_data)"), -1) { exploreCarService() }
-                ChipRow(listOf("Leer datos (CarDataManager)", "Escuchar avisos del servicio"), -1) {
-                    if (it == 0) readCarData()
-                    else scope.launch {
-                        val r = withContext(Dispatchers.IO) { com.cockpitf30.vehicle.probe.CarDataProbe.startCallbacks(context) }
-                        android.widget.Toast.makeText(context, r.take(120), android.widget.Toast.LENGTH_LONG).show()
-                    }
-                }
-                if (dataProbe.isNotEmpty()) {
-                    dataProbe.filter { it.contains(") = ") || it.startsWith("--") || it.startsWith("DataType") }.take(40).forEach { Mono(it) }
-                    Mono("(${dataProbe.size} líneas en el informe)")
-                }
-                if (carProbe.isNotEmpty()) {
-                    carProbe.take(40).forEach { Mono(it) }
-                    if (carProbe.size > 40) Mono("… y ${carProbe.size - 40} líneas más (en el informe)")
-                }
-                if (sysApps.isNotEmpty() || services.isNotEmpty()) {
-                    Info("Apps del sistema: ${sysApps.size} · servicios del sistema: ${services.size} · jars del framework: ${jars.size} (todo en el informe)", Cockpit.TextDim)
-                    (services + jars).filter(SystemProbe::interesting).take(20).forEach { Mono(it) }
-                }
-                if (props.isNotEmpty()) {
-                    Info("Propiedades del sistema relacionadas:", Cockpit.TextDim)
-                    props.take(30).forEach { Mono(it) }
                 }
             }
-            item { Section("Avisos del servicio del coche") }
-            if (callbacks.isEmpty()) item { Info("Ninguno (pulsa «Escuchar avisos del servicio» y abre una puerta)") }
-            items(callbacks.take(60)) { Mono(it) }
-            item { Section("Broadcasts recibidos (abre una puerta, arranca…)") }
-            if (broadcasts.isEmpty()) item { Info(if (listening > 0) "Ninguno todavía" else "Parado") }
-            items(broadcasts) { Mono(it) }
+            item {
+                DiagCard("Puerto serie") {
+                    if (ports.isEmpty()) Info("No se encontró ningún /dev/ttyMT* ni /dev/ttyS* (/dev ${if (PortProbe.devListable()) "listable" else "no listable"})")
+                    ChipRow(
+                        ports.map { "${it.name} ${if (it.canRead()) "r" else "-"}${if (it.canWrite()) "w" else "-"}" },
+                        ports.indexOfFirst { it.absolutePath == path },
+                    ) {
+                        path = ports[it].absolutePath
+                        apply()
+                    }
+                    ChipRow(BAUDS.map { "$it" }, BAUDS.indexOf(baud)) {
+                        baud = BAUDS[it]
+                        apply()
+                    }
+                    ChipRow(listOf("Probar todos los puertos (2 s cada uno)"), -1) { probePorts() }
+                    probes?.forEach { Mono(it) }
+                }
+            }
+            item {
+                DiagCard("Apps del CAN / MCU en la radio") {
+                    Info("Si la radio reparte los datos del coche por broadcast, se pueden escuchar sin root.", Cockpit.TextDim)
+                    val actions = (packages.orEmpty().flatMap { it.actions } + dexActions).distinct()
+                    ChipRow(
+                        listOf(
+                            "Buscar apps del coche",
+                            if (listening > 0) "Dejar de escuchar ($listening acciones)" else "Escuchar sus broadcasts (${actions.size})",
+                        ),
+                        if (listening > 0) 1 else -1,
+                    ) {
+                        when {
+                            it == 0 -> scanSystem()
+                            listening > 0 -> BroadcastSniffer.stop(context)
+                            else -> BroadcastSniffer.start(context, actions)
+                        }
+                    }
+                    packages?.let { list ->
+                        if (list.isEmpty()) Info("No se encontró ninguna app candidata.")
+                        list.forEach { p ->
+                            Info("${p.label} · ${p.packageName}${if (p.system) " · sistema" else ""}")
+                            Mono("  servicios ${p.services.size}, receptores ${p.receivers.size}, acciones ${p.actions.size}")
+                            if (p.providers.isNotEmpty()) Mono("  providers: ${p.providers.joinToString()}")
+                            p.actions.take(8).forEach { a -> Mono("  · $a") }
+                            if (p.actions.size > 8) Mono("  … y ${p.actions.size - 8} más (en el informe)")
+                        }
+                    }
+                    ChipRow(listOf("Explorar el servicio del coche (car / car_data)"), -1) { exploreCarService() }
+                    ChipRow(listOf("Leer datos (CarDataManager)", "Escuchar avisos del servicio"), -1) {
+                        if (it == 0) readCarData()
+                        else scope.launch {
+                            val r = withContext(Dispatchers.IO) { com.cockpitf30.vehicle.probe.CarDataProbe.startCallbacks(context) }
+                            android.widget.Toast.makeText(context, r.take(120), android.widget.Toast.LENGTH_LONG).show()
+                        }
+                    }
+                    if (dataProbe.isNotEmpty()) {
+                        dataProbe.filter { it.contains(") = ") || it.startsWith("--") || it.startsWith("DataType") }.take(40).forEach { Mono(it) }
+                        Mono("(${dataProbe.size} líneas en el informe)")
+                    }
+                    if (carProbe.isNotEmpty()) {
+                        carProbe.take(40).forEach { Mono(it) }
+                        if (carProbe.size > 40) Mono("… y ${carProbe.size - 40} líneas más (en el informe)")
+                    }
+                    if (sysApps.isNotEmpty() || services.isNotEmpty()) {
+                        Info("Apps del sistema: ${sysApps.size} · servicios del sistema: ${services.size} · jars del framework: ${jars.size} (todo en el informe)", Cockpit.TextDim)
+                        (services + jars).filter(SystemProbe::interesting).take(20).forEach { Mono(it) }
+                    }
+                    if (props.isNotEmpty()) {
+                        Info("Propiedades del sistema relacionadas:", Cockpit.TextDim)
+                        props.take(30).forEach { Mono(it) }
+                    }
+                }
+            }
+            item {
+                DiagCard("Avisos del servicio del coche") {
+                    if (callbacks.isEmpty()) Info("Ninguno (pulsa «Escuchar avisos del servicio» y abre una puerta)")
+                    callbacks.take(60).forEach { Mono(it) }
+                }
+            }
+            item {
+                DiagCard("Broadcasts recibidos (abre una puerta, arranca…)") {
+                    if (broadcasts.isEmpty()) Info(if (listening > 0) "Ninguno todavía" else "Parado")
+                    broadcasts.forEach { Mono(it) }
+                }
+            }
             item {
                 // Para ajustar la interfaz a radios con otra densidad o tamaño de letra.
                 val dm = context.resources.displayMetrics
                 val cfg = context.resources.configuration
-                Section("Pantalla")
-                Info("${dm.widthPixels} x ${dm.heightPixels} px · ${dm.densityDpi} dpi · densidad ${"%.2f".format(dm.density)} · letra x${"%.2f".format(cfg.fontScale)}")
-                Info("Escala aplicada: ${"%.3f".format(appliedDesignDensity)} (lienzo ${DESIGN_WIDTH_DP.toInt()}x${DESIGN_HEIGHT_DP.toInt()})")
-                Info("Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT}) · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
-            }
-            item {
-                Section("Batería")
-                ChipRow(
-                    listOf(if (batteryOk) "Excluida de la optimización ✓" else "Pedir exclusión de optimización"),
-                    if (batteryOk) 0 else -1,
-                ) {
-                    BatteryOptimization.request(context)
+                DiagCard("Pantalla") {
+                    Info("${dm.widthPixels} x ${dm.heightPixels} px · ${dm.densityDpi} dpi · densidad ${"%.2f".format(dm.density)} · letra x${"%.2f".format(cfg.fontScale)}")
+                    Info("Escala aplicada: ${"%.3f".format(appliedDesignDensity)} (lienzo ${DESIGN_WIDTH_DP.toInt()}x${DESIGN_HEIGHT_DP.toInt()})")
+                    Info("Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT}) · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
                 }
             }
-            item { Section("Tramas recibidas (más reciente arriba)") }
-            if (raw.isEmpty()) item { Info("Ninguna todavía") }
-            items(raw) { Mono(it) }
-            item { Section("Bytes en crudo del puerto (aunque no sean tramas Raise)") }
-            if (bytes.isEmpty()) item { Info("Ninguno todavía") }
-            items(bytes) { Mono(it) }
-            item { Section("Eventos de entrada (gira el iDrive y pulsa botones)") }
-            if (input.isEmpty()) item { Info("Ninguno todavía") }
-            items(input) { Mono(it) }
+            item {
+                DiagCard("Batería") {
+                    ChipRow(
+                        listOf(if (batteryOk) "Excluida de la optimización ✓" else "Pedir exclusión de optimización"),
+                        if (batteryOk) 0 else -1,
+                    ) {
+                        BatteryOptimization.request(context)
+                    }
+                }
+            }
+            item {
+                DiagCard("Tramas recibidas (más reciente arriba)") {
+                    if (raw.isEmpty()) Info("Ninguna todavía")
+                    raw.forEach { Mono(it) }
+                }
+            }
+            item {
+                DiagCard("Bytes en crudo del puerto (aunque no sean tramas Raise)") {
+                    if (bytes.isEmpty()) Info("Ninguno todavía")
+                    bytes.forEach { Mono(it) }
+                }
+            }
+            item {
+                DiagCard("Eventos de entrada (gira el iDrive y pulsa botones)") {
+                    if (input.isEmpty()) Info("Ninguno todavía")
+                    input.forEach { Mono(it) }
+                }
+            }
         }
+    }
     }
 }
 
 private val BAUDS = listOf(19200, 38400, 57600, 115200)
 
+/** Cifra destacada de la cabecera de Diagnóstico. */
 @Composable
-private fun Section(title: String) {
-    Text(
-        title.uppercase(),
-        style = MaterialTheme.typography.labelLarge,
-        color = Cockpit.BlueLight,
-        modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
-    )
+private fun androidx.compose.foundation.layout.RowScope.DiagStat(label: String, value: String, accent: Color) {
+    Column(
+        Modifier.weight(1f).fillMaxHeight().glassPanel(16.dp, accent).padding(horizontal = 22.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        PanelTitle(label, accent = accent)
+        Text(value, style = numeric(36, FontWeight.Medium), color = Cockpit.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** Bloque de cristal con su rótulo: cada sección de Diagnóstico va en uno. */
+@Composable
+private fun DiagCard(title: String, content: @Composable () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().glassPanel(16.dp).padding(horizontal = 24.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        PanelTitle(title, Modifier.padding(bottom = 6.dp))
+        content()
+    }
 }
 
 @Composable
-private fun Info(text: String, color: androidx.compose.ui.graphics.Color = Cockpit.Text) {
+private fun Info(text: String, color: Color = Cockpit.Text) {
     Text(text, style = MaterialTheme.typography.bodyLarge, color = color)
 }
 
@@ -359,7 +466,7 @@ private fun buildReport(
     callbacks: List<String>,
 ): String = buildString {
     val dm = context.resources.displayMetrics
-    appendLine("Cockpit F30 · informe de diagnóstico · ${java.time.LocalDateTime.now()}")
+    appendLine("Cockpit F30 ${installedVersion(context)} · informe de diagnóstico · ${java.time.LocalDateTime.now()}")
     appendLine("Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT}) · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · ${android.os.Build.DISPLAY}")
     appendLine("Pantalla ${dm.widthPixels}x${dm.heightPixels} ${dm.densityDpi} dpi")
     appendLine()
@@ -405,6 +512,28 @@ private fun buildReport(
     section("Bytes en crudo", bytes)
 }
 
+private fun vehicleSummary(v: com.cockpitf30.vehicle.VehicleState): String {
+    fun b(x: Boolean?) = when (x) { true -> "abierta"; false -> "cerrada"; null -> "?" }
+    fun p(x: Float?) = x?.let { "%.1f".format(it) } ?: "?"
+    return "velocidad ${v.speedKmh ?: "?"} km/h · rpm ${v.rpm ?: "?"} · exterior ${v.outsideTempC ?: "?"} °C · autonomía ${v.rangeKm ?: "?"} km · " +
+        "puertas: conductor ${b(v.doors.driver)}, acomp. ${b(v.doors.passenger)}, tras. izq. ${b(v.doors.rearLeft)}, tras. dch. ${b(v.doors.rearRight)}, maletero ${b(v.doors.trunk)}, capó ${b(v.doors.hood)} · " +
+        "ruedas ${p(v.tyres.frontLeft)} ${p(v.tyres.frontRight)} ${p(v.tyres.rearLeft)} ${p(v.tyres.rearRight)} bar"
+}
+
+private fun radioReport(values: Map<String, String>, changes: List<String>, canbus: List<String>, vehicle: com.cockpitf30.vehicle.VehicleState): String = buildString {
+    appendLine()
+    appendLine("== Datos del coche (radio)")
+    appendLine(vehicleSummary(vehicle))
+    values.toSortedMap().forEach { (k, v) -> appendLine("$k = $v") }
+    appendLine()
+    appendLine("== Cambios de claves")
+    changes.forEach(::appendLine)
+    appendLine()
+    appendLine("== CarCanbus")
+    if (canbus.isEmpty()) appendLine("(no se pulsó «Explorar CarCanbus»)")
+    canbus.forEach(::appendLine)
+}
+
 private fun shareReport(context: android.content.Context, text: String) {
     val send = android.content.Intent(android.content.Intent.ACTION_SEND)
         .setType("text/plain")
@@ -440,3 +569,10 @@ private fun saveReport(context: android.content.Context, text: String) {
         android.widget.Toast.LENGTH_LONG,
     ).show()
 }
+
+/** Versión de la app tal como está instalada (nombre y código de versión del paquete). */
+internal fun installedVersion(context: android.content.Context): String = runCatching {
+    val info = context.packageManager.getPackageInfo(context.packageName, 0)
+    val code = if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
+    "${info.versionName} (build $code)"
+}.getOrDefault("desconocida")
