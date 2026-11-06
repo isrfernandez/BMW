@@ -68,7 +68,14 @@ import com.cockpitf30.system.AppLayout
 import com.cockpitf30.system.AppSettings
 import com.cockpitf30.system.LayoutEntry
 import com.cockpitf30.ui.components.FocusTile
-import com.cockpitf30.ui.components.HexBackground
+import com.cockpitf30.ui.components.TriangleBackground
+import com.cockpitf30.ui.components.glassPanel
+import com.cockpitf30.ui.components.glassOverlay
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Offset
 import com.cockpitf30.ui.components.InitialFocus
 import com.cockpitf30.ui.components.TopBar
 import com.cockpitf30.ui.theme.Cockpit
@@ -164,7 +171,7 @@ fun AppsScreen() {
     val first = remember { FocusRequester() }
     InitialFocus(first)
 
-    HexBackground(Modifier.fillMaxSize()) {
+    TriangleBackground(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             TopBar("Apps") {
                 Text("Mantén pulsada una app para ordenar o agrupar", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
@@ -206,7 +213,7 @@ fun AppsScreen() {
     if (openGroup != null && group == null) openGroup = null
     if (group != null) {
         Dialog(onDismissRequest = { if (moving == null) openGroup = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            HexBackground(Modifier.width(1500.dp).heightIn(max = 620.dp).background(Cockpit.Surface.copy(alpha = 0.6f), RoundedCornerShape(20.dp)).padding(28.dp)) {
+            TriangleBackground(Modifier.width(1500.dp).heightIn(max = 620.dp).clip(RoundedCornerShape(20.dp)).glassPanel(20.dp).padding(28.dp), dim = 0.5f) {
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(group.name, style = MaterialTheme.typography.headlineSmall.copy(fontSize = 34.sp), modifier = Modifier.weight(1f))
@@ -304,9 +311,21 @@ private fun EntryTile(
         onClick = onClick, onLongClick = onLongClick, selected = isMoving,
         modifier = modifier.graphicsLayer { rotationZ = wobble; scaleX = if (isMoving) 1.06f else 1f; scaleY = scaleX },
     ) {
-        Column(Modifier.fillMaxSize().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceEvenly) {
+        Column(
+            Modifier.fillMaxSize()
+                // Halo azul detrás del icono y placa de cristal por encima, como las tarjetas del Inicio.
+                .drawBehind {
+                    drawCircle(
+                        Brush.radialGradient(listOf(Cockpit.BlueLight.copy(alpha = 0.22f), Color.Transparent), Offset(size.width / 2, size.height * 0.40f), size.width * 0.42f),
+                        size.width * 0.42f, Offset(size.width / 2, size.height * 0.40f),
+                    )
+                }
+                .drawWithContent { drawContent(); glassOverlay(Cockpit.BlueLight, shade = 0.25f) }
+                .padding(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceEvenly,
+        ) {
             when (entry) {
-                is LayoutEntry.App -> apps[entry.key]?.let { Image(it.icon, null, Modifier.size(68.dp)) }
+                is LayoutEntry.App -> apps[entry.key]?.let { Image(it.icon, null, Modifier.size(72.dp)) }
                 is LayoutEntry.Group -> Column(
                     Modifier.background(Cockpit.Glass, RoundedCornerShape(14.dp)).padding(6.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),

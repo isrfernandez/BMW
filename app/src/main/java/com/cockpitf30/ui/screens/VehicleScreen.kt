@@ -38,13 +38,24 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cockpitf30.R
 import com.cockpitf30.ui.components.TopBar
+import com.cockpitf30.ui.components.TriangleBackground
+import com.cockpitf30.ui.components.glassPanel
+import com.cockpitf30.ui.components.PanelTitle
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.ui.theme.numeric
 import com.cockpitf30.vehicle.Doors
 import com.cockpitf30.vehicle.VehicleRepository
 import com.cockpitf30.vehicle.VehicleState
 
-/** Proporciones de la escena car_top_scene (576x906, morro arriba). */
+/** Proporciones de la escena car_top_cutout (576x906, morro arriba). */
 private const val SCENE_ASPECT = 576f / 906f
 private const val BODY_LEFT = 0.255f
 private const val BODY_RIGHT = 0.715f
@@ -54,15 +65,17 @@ private const val REAR_AXLE = 0.71f
 private const val LAYER_PAD = 48f / 576f
 
 /**
- * Escena del coche visto desde arriba (morro arriba) con fondo de hexágonos, centrada y fundida
- * con el fondo. Alrededor, la presión de cada rueda a la altura de su eje, autonomía y puertas;
- * lo abierto se muestra abierto y velado en rojo sobre la imagen. Sin datos se muestra "--".
+ * Coche visto desde arriba (morro arriba), recortado sobre el fondo de triángulos y centrado en su
+ * malla. A los lados, la presión de cada rueda en paneles de cristal unidos a su rueda con una
+ * línea de luz; más hacia fuera, autonomía con nivel de depósito, temperatura exterior, puertas y
+ * aceite. Lo abierto se muestra abierto y velado en rojo sobre la imagen. Sin datos se muestra "--".
  */
 @Composable
 fun VehicleScreen() {
     val state by VehicleRepository.state.collectAsStateWithLifecycle()
     val status by VehicleRepository.status.collectAsStateWithLifecycle()
 
+    TriangleBackground(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         TopBar("Vehículo") {
             Text(
@@ -71,25 +84,36 @@ fun VehicleScreen() {
                 color = if (status.connected) Cockpit.TextDim else Cockpit.Alert,
             )
         }
-        BoxWithConstraints(Modifier.fillMaxSize().padding(bottom = 12.dp)) {
+        BoxWithConstraints(Modifier.fillMaxSize().padding(bottom = 16.dp)) {
             val h = maxHeight
             val w = h * SCENE_ASPECT
             val left = (maxWidth - w) / 2
             fun x(f: Float) = left + w * f
             fun y(f: Float) = h * f
 
-            Image(
-                painterResource(R.drawable.car_top_scene), null,
-                Modifier.offset(x = left).size(w, h)
-                    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
-                    .drawWithContent {
-                    drawContent()
-                    vignette()
-                },
+            val t = state.tyres
+            val chipW = 230.dp
+            val chipH = 112.dp
+            val gap = 120.dp
+            val leftChipX = x(BODY_LEFT) - gap - chipW
+            val rightChipX = x(BODY_RIGHT) + gap
+            val wheels = listOf(
+                Triple(t.frontLeft, Offset(0f, FRONT_AXLE), true),
+                Triple(t.rearLeft, Offset(0f, REAR_AXLE), true),
+                Triple(t.frontRight, Offset(1f, FRONT_AXLE), false),
+                Triple(t.rearRight, Offset(1f, REAR_AXLE), false),
             )
 
-            // Capó, maletero y puertas abiertos: imágenes veladas en rojo encima de la escena,
-            // fuera de la viñeta para que las puertas no se pierdan por los lados.
+            // Reflejo de suelo bajo el coche, en la malla del fondo.
+            Canvas(Modifier.offset(x = left - w * 0.3f).size(w * 1.6f, h)) {
+                drawOval(
+                    Brush.radialGradient(listOf(Cockpit.BlueLight.copy(alpha = 0.22f), Color.Transparent), Offset(size.width / 2, size.height / 2), size.width / 2),
+                    Offset(0f, size.height * 0.08f), Size(size.width, size.height * 0.84f),
+                )
+            }
+            Image(painterResource(R.drawable.car_top_cutout), null, Modifier.offset(x = left).size(w, h))
+
+            // Capó, maletero y puertas abiertos: imágenes veladas en rojo encima del coche.
             Box(Modifier.offset(x = left - w * LAYER_PAD).size(w * (1 + 2 * LAYER_PAD), h)) {
                 val d = state.doors
                 OpenLayer(d.hood, R.drawable.car_top_hood)
@@ -100,23 +124,132 @@ fun VehicleScreen() {
                 OpenLayer(d.rearRight, R.drawable.car_top_door_rr)
             }
 
-            val t = state.tyres
-            val chip = 220.dp
-            Info("Del. izq.", bar(t.frontLeft), "bar", Modifier.offset(x(BODY_LEFT) - chip - 100.dp, y(FRONT_AXLE) - 40.dp).width(chip), Alignment.End)
-            Info("Tras. izq.", bar(t.rearLeft), "bar", Modifier.offset(x(BODY_LEFT) - chip - 100.dp, y(REAR_AXLE) - 40.dp).width(chip), Alignment.End)
-            Info("Del. der.", bar(t.frontRight), "bar", Modifier.offset(x(BODY_RIGHT) + 100.dp, y(FRONT_AXLE) - 40.dp).width(chip), Alignment.Start)
-            Info("Tras. der.", bar(t.rearRight), "bar", Modifier.offset(x(BODY_RIGHT) + 100.dp, y(REAR_AXLE) - 40.dp).width(chip), Alignment.Start)
-
-            // Autonomía y puertas, más hacia fuera y a media altura.
-            val side = 300.dp
-            Info("Autonomía", state.rangeKm?.let { "$it" } ?: "--", "km", Modifier.offset(left - side - 170.dp, y(0.45f) - 40.dp).width(side), Alignment.End)
-            Column(Modifier.offset(left + w + 170.dp, y(0.45f) - 40.dp).width(side)) {
-                Info("Puertas", doorsText(state), null, Modifier, Alignment.Start, doorsColor(state))
-                openItems(state.doors).forEach {
-                    Text(it, style = MaterialTheme.typography.labelLarge, color = Cockpit.Alert, modifier = Modifier.padding(top = 6.dp))
+            // Líneas de luz de cada panel a su rueda, con un punto brillante sobre la rueda.
+            Canvas(Modifier.fillMaxSize()) {
+                wheels.forEach { (v, pos, isLeft) ->
+                    val c = tyreColor(v)
+                    val wy = y(pos.y).toPx()
+                    val wx = (if (isLeft) x(BODY_LEFT) + 6.dp else x(BODY_RIGHT) - 6.dp).toPx()
+                    val cx = (if (isLeft) leftChipX + chipW else rightChipX).toPx()
+                    val elbow = (if (isLeft) leftChipX + chipW + 36.dp else rightChipX - 36.dp).toPx()
+                    val start = Offset(cx, wy)
+                    drawLine(Brush.horizontalGradient(listOf(c.copy(alpha = 0.15f), c.copy(alpha = 0.8f)), startX = cx, endX = wx), start, Offset(wx, wy), 1.5.dp.toPx())
+                    drawCircle(c.copy(alpha = 0.6f), 3.dp.toPx(), Offset(elbow, wy))
+                    drawCircle(c.copy(alpha = 0.25f), 16.dp.toPx(), Offset(wx, wy))
+                    drawCircle(c.copy(alpha = 0.5f), 9.dp.toPx(), Offset(wx, wy), style = Stroke(1.5.dp.toPx()))
+                    drawCircle(Color.White, 3.5.dp.toPx(), Offset(wx, wy))
                 }
             }
+
+            Tyre("Delantera izq.", t.frontLeft, Modifier.offset(leftChipX, y(FRONT_AXLE) - chipH / 2).size(chipW, chipH), Alignment.End)
+            Tyre("Trasera izq.", t.rearLeft, Modifier.offset(leftChipX, y(REAR_AXLE) - chipH / 2).size(chipW, chipH), Alignment.End)
+            Tyre("Delantera der.", t.frontRight, Modifier.offset(rightChipX, y(FRONT_AXLE) - chipH / 2).size(chipW, chipH), Alignment.Start)
+            Tyre("Trasera der.", t.rearRight, Modifier.offset(rightChipX, y(REAR_AXLE) - chipH / 2).size(chipW, chipH), Alignment.Start)
+
+            // Columnas exteriores: autonomía y exterior a la izquierda, puertas y aceite a la derecha.
+            val side = 330.dp
+            val outer = 56.dp
+            Column(
+                Modifier.offset(x = outer).width(side).fillMaxHeight().padding(vertical = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+            ) {
+                Panel("Autonomía", state.rangeKm?.let { "$it" } ?: "--", "km", Cockpit.BlueLight) {
+                    FuelBar(state.fuelLevel)
+                }
+                Panel("Exterior", state.outsideTempC?.let { "%.0f".format(it) } ?: "--", "°C", Color(0xFF7FD3FF))
+            }
+            Column(
+                Modifier.offset(x = maxWidth - outer - side).width(side).fillMaxHeight().padding(vertical = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+            ) {
+                Panel("Puertas", doorsText(state), null, doorsColor(state), valueColor = doorsColor(state)) {
+                    val open = openItems(state.doors)
+                    if (open.isEmpty()) {
+                        Text(if (state.doors.driver == null) "Sin datos del CAN" else "Capó y maletero cerrados", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
+                    }
+                    open.forEach { Text(it, style = MaterialTheme.typography.labelLarge, color = Cockpit.Alert, modifier = Modifier.padding(top = 4.dp)) }
+                }
+                Panel("Aceite", state.oilTempC?.let { "$it" } ?: "--", "°C", Color(0xFFFFB74D))
+            }
         }
+    }
+    }
+}
+
+/** Presión razonable en un 320d: en verde entre 1,9 y 3,2 bar, en rojo fuera de ese margen. */
+private fun tyreColor(v: Float?) = when {
+    v == null -> Cockpit.TextDim
+    v < 1.9f || v > 3.2f -> Cockpit.Alert
+    else -> Cockpit.Ok
+}
+
+/** Panel de una rueda: rótulo, presión grande y un punto de estado del lado de la rueda. */
+@Composable
+private fun Tyre(label: String, v: Float?, modifier: Modifier, align: Alignment.Horizontal) {
+    val c = tyreColor(v)
+    Column(
+        modifier.glassPanel(tint = c).padding(horizontal = 20.dp, vertical = 12.dp),
+        horizontalAlignment = align,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (align == Alignment.Start) StatusDot(c)
+            Text(label.uppercase(), style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim, modifier = Modifier.padding(horizontal = 8.dp))
+            if (align == Alignment.End) StatusDot(c)
+        }
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(bar(v), style = numeric(52, FontWeight.Medium), color = Cockpit.Text)
+            Text(" bar", style = numeric(20), color = Cockpit.TextDim, modifier = Modifier.padding(bottom = 9.dp))
+        }
+    }
+}
+
+@Composable
+private fun StatusDot(c: Color) {
+    Canvas(Modifier.size(12.dp)) {
+        drawCircle(c.copy(alpha = 0.3f), size.minDimension / 2)
+        drawCircle(c, size.minDimension / 4)
+    }
+}
+
+/** Panel de dato grande con acento de color y contenido extra opcional debajo. */
+@Composable
+private fun Panel(
+    label: String, value: String, unit: String?, accent: Color,
+    valueColor: Color = Cockpit.Text,
+    extra: @Composable () -> Unit = {},
+) {
+    Column(Modifier.fillMaxWidth().glassPanel(tint = accent).padding(horizontal = 24.dp, vertical = 18.dp)) {
+        PanelTitle(label, accent = accent)
+        Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(top = 4.dp)) {
+            Text(value, style = numeric(48, FontWeight.Medium), color = valueColor, maxLines = 1)
+            if (unit != null) Text(" $unit", style = numeric(20), color = Cockpit.TextDim, modifier = Modifier.padding(bottom = 8.dp))
+        }
+        extra()
+    }
+}
+
+/** Nivel del depósito en una barra segmentada; ámbar por debajo de un cuarto. */
+@Composable
+private fun FuelBar(level: Float?) {
+    Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Canvas(Modifier.weight(1f).height(10.dp)) {
+            val n = 12
+            val gap = 4.dp.toPx()
+            val segW = (size.width - gap * (n - 1)) / n
+            val lit = level?.let { (it.coerceIn(0f, 1f) * n + 0.5f).toInt() } ?: 0
+            val low = (level ?: 1f) < 0.25f
+            for (i in 0 until n) {
+                val on = i < lit
+                val col = when {
+                    !on -> Color.White.copy(alpha = 0.10f)
+                    low -> Color(0xFFFFB300)
+                    else -> lerp(Cockpit.Blue, Cockpit.BlueLight, i / (n - 1f))
+                }
+                drawRoundRect(col, Offset(i * (segW + gap), 0f), Size(segW, size.height), CornerRadius(2.dp.toPx()))
+            }
+        }
+        Text(level?.let { " ${(it * 100).toInt()} %" } ?: " --", style = numeric(18), color = Cockpit.TextDim, modifier = Modifier.padding(start = 8.dp))
     }
 }
 
@@ -141,34 +274,6 @@ private fun openItems(d: Doors) = buildList {
     if (d.rearRight == true) add("PUERTA TRAS. DER.")
     if (d.hood == true) add("CAPÓ ABIERTO")
     if (d.trunk == true) add("MALETERO ABIERTO")
-}
-
-/** Rótulo pequeño y valor grande en Saira, en un recuadro translúcido. */
-@Composable
-private fun Info(
-    label: String, value: String, unit: String?, modifier: Modifier, align: Alignment.Horizontal,
-    valueColor: Color = Cockpit.Text,
-) {
-    Column(modifier, horizontalAlignment = align) {
-        Column(
-            Modifier.background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(10.dp)).padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalAlignment = align,
-        ) {
-            Text(label.uppercase(), style = MaterialTheme.typography.labelLarge, color = Cockpit.TextDim)
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(value, style = numeric(40, FontWeight.Medium), color = valueColor)
-                if (unit != null) Text(" $unit", style = numeric(20), color = Cockpit.TextDim, modifier = Modifier.padding(bottom = 6.dp))
-            }
-        }
-    }
-}
-
-/** Funde los bordes de la escena con el fondo de la app, haciéndolos transparentes. */
-private fun DrawScope.vignette() {
-    val fx = 0.22f
-    val fy = 0.12f
-    drawRect(Brush.horizontalGradient(0f to Color.Transparent, fx to Color.Black, 1f - fx to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
-    drawRect(Brush.verticalGradient(0f to Color.Transparent, fy to Color.Black, 1f - fy to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
 }
 
 /** Una pieza abierta (puerta, capó o maletero) que aparece y desaparece con un fundido. */
