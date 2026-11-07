@@ -36,6 +36,14 @@ object Cockpit {
     val Glass = Color.White.copy(alpha = 0.05f)
     val GlassBorder = Color.White.copy(alpha = 0.08f)
 
+    /** Cobre metalizado y azul acero suave: acentos del menú lateral y de los marcadores. */
+    val CopperDark = Color(0xFF4A2412)
+    val Copper = Color(0xFFC0764A)
+    val CopperLight = Color(0xFFF2BC96)
+    val SteelBlueDark = Color(0xFF16263A)
+    val SteelBlue = Color(0xFF6D90B5)
+    val SteelBlueLight = Color(0xFFC3D7EC)
+
     val MLight = Color(0xFF0066B1)
     val MDark = Color(0xFF1C2D6B)
     val MRed = Color(0xFFE10600)

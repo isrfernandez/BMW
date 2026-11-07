@@ -92,13 +92,13 @@ import kotlin.math.abs
 import kotlin.math.hypot
 
 private val Cyan = Color(0xFF29B6F6)
-/** Cifras de la escala: champán en la velocidad, plata azulada en las rpm, rojo en la zona roja. */
-private val SpeedLabel = Color(0xFFF6E7CC)
-private val RpmLabel = Color(0xFFDCE8F6)
+/** Cifras de la escala: blanco con un punto de azul hielo; rojo en la zona roja de las rpm. */
+private val SpeedLabel = Color(0xFFF4F8FC)
+private val RpmLabel = Color(0xFFF4F8FC)
 private val RpmRed = Color(0xFFFF4A3D)
 /** Halo de las cifras grandes, del color de su marcador. */
-private val SpeedGlow = Color(0xFFFFB45E)
-private val RpmGlow = Color(0xFF5DA8FF)
+private val SpeedGlow = Color(0xFFE59A78)
+private val RpmGlow = Color(0xFF9DBAD4)
 /** Fondo del panel, del mismo azul marino que la escena del coche para que se funda. */
 private val SceneTop = Color(0xFF091A2D)
 
@@ -579,11 +579,11 @@ private fun DrawScope.marker(
  */
 private class MetalLook(val dark: Color, val mid: Color, val bright: Color, val tip: Color, val light: Color)
 
-/** Velocidad en oro/champán; rpm en acero azulado. */
-private val SpeedMetal = MetalLook(Color(0xFF4A2E12), Color(0xFFC8954E), Color(0xFFFFE3B3), Color(0xFFFFF6E6), Color(0xFFFFB45E))
-private val RpmMetal = MetalLook(Color(0xFF14273F), Color(0xFF6E9CCB), Color(0xFFD9EBFF), Color(0xFFF2F8FF), Color(0xFF5DA8FF))
-/** Acero de la franja vacía y del bisel. */
-private val SteelMetal = MetalLook(Color(0xFF0E141D), Color(0xFF2C3B4E), Color(0xFF6E86A1), Color.White, Color(0xFF9FB8D3))
+/** Relleno de velocidad y rpm en cobre rosado metalizado, como en el cuadro del iDrive 8.5. */
+private val SpeedMetal = MetalLook(Color(0xFF4E2418), Color(0xFFC07A5C), Color(0xFFF5C8AE), Color(0xFFFFF0E4), Color(0xFFE59A78))
+private val RpmMetal = SpeedMetal
+/** Franja vacía en azul hielo metalizado suave. */
+private val SteelMetal = MetalLook(Color(0xFF1F3549), Color(0xFF6489AE), Color(0xFFC0D8EE), Color.White, Color(0xFFA9C8E4))
 
 /**
  * Perfil de brillo a lo ancho de la franja (0 = borde exterior, 1 = interior), como una pieza de
@@ -648,9 +648,9 @@ private fun DrawScope.drawFrame(g: GeoPx, mirrored: Boolean, fraction: Float, lo
 
     // Franja vacía: acero oscuro con reflejo claro arriba (la luz viene de arriba, como en el iDrive).
     val full = band(g.y0, g.y1)
-    drawPath(full, Color(0xFF0C1219))
+    drawPath(full, Color(0xFF111A24))
     clipPath(full) {
-        metal(SteelMetal, 0.65f)
+        metal(SteelMetal, 0.72f)
         drawRect(
             Brush.verticalGradient(
                 0f to Color.White.copy(alpha = 0.16f), 0.35f to Color.Transparent, 0.75f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.35f),
@@ -723,11 +723,13 @@ private fun DrawScope.drawFrame(g: GeoPx, mirrored: Boolean, fraction: Float, lo
     // Bisel cromado: sombra exterior, cuerpo de plata con reflejos y filo de luz; borde interior de acero.
     val outer = chevron(0f, g.y0, g.y1)
     drawPath(outer, Color.Black.copy(alpha = 0.6f), style = Stroke(g.dp(8f)))
+    // Cromo con un punto de azul hielo, como el bisel de la franja.
+    fun chrome(c: Color, k: Float = 0.25f) = androidx.compose.ui.graphics.lerp(c, SteelMetal.light, k)
     drawPath(
         outer,
         Brush.verticalGradient(
-            0f to Color(0xFFF2F7FC), 0.2f to Color(0xFF7D91A8), 0.42f to Color(0xFFE3ECF5), 0.5f to Color(0xFFFFFFFF),
-            0.62f to Color(0xFF5E6F84), 0.85f to Color(0xFFC3D2E2), 1f to Color(0xFF6A7C92),
+            0f to chrome(Color(0xFFF2F7FC), 0.25f), 0.2f to chrome(Color(0xFF7D91A8)), 0.42f to chrome(Color(0xFFE3ECF5), 0.25f), 0.5f to Color(0xFFFFFFFF),
+            0.62f to chrome(Color(0xFF5E6F84)), 0.85f to chrome(Color(0xFFC3D2E2), 0.3f), 1f to chrome(Color(0xFF6A7C92)),
             startY = g.y0, endY = g.y1,
         ),
         style = Stroke(g.dp(4f)),
@@ -737,7 +739,7 @@ private fun DrawScope.drawFrame(g: GeoPx, mirrored: Boolean, fraction: Float, lo
     drawPath(inner, Color.Black.copy(alpha = 0.5f), style = Stroke(g.dp(4f)))
     drawPath(
         inner,
-        Brush.verticalGradient(listOf(Color(0xFFB8C7D8), Color(0xFF4A5A6E), Color(0xFF9AAAC0)), startY = g.y0, endY = g.y1),
+        Brush.verticalGradient(listOf(chrome(Color(0xFFB8C7D8)), chrome(Color(0xFF4A5A6E)), chrome(Color(0xFF9AAAC0))), startY = g.y0, endY = g.y1),
         style = Stroke(g.dp(1.6f)),
     )
 }
@@ -818,15 +820,15 @@ private fun TabValue(value: String, caption: String, modifier: Modifier = Modifi
         Text(
             caption,
             style = numeric(20, FontWeight.Medium),
-            color = Cockpit.BlueLight,
+            color = glow,
             modifier = Modifier.padding(horizontal = 24.dp),
         )
     }
 }
 
 /**
- * Línea inferior: franjas M y hora, surtidor y autonomía a la izquierda; segmentos azules en el
- * centro (coche en rojo si hay una puerta abierta); estado y temperatura exterior a la derecha.
+ * Línea inferior: franjas M y hora, surtidor y autonomía a la izquierda; en el centro solo el
+ * coche en rojo si hay una puerta abierta; estado y temperatura exterior a la derecha.
  */
 @Composable
 private fun StatusLine(state: VehicleState, status: SourceStatus, modifier: Modifier = Modifier) {
@@ -840,11 +842,7 @@ private fun StatusLine(state: VehicleState, status: SourceStatus, modifier: Modi
         Text(state.rangeKm?.let { "$it" } ?: "--", style = numeric(28, FontWeight.SemiBold), color = Cockpit.Text)
         Text(" km", style = numeric(18), color = Cockpit.TextDim)
         Spacer(Modifier.weight(1f))
-        if (state.doors.anyOpen) {
-            CarIcon(state, Modifier.size(width = 60.dp, height = 26.dp))
-            Spacer(Modifier.width(16.dp))
-        }
-        Segments(Modifier.size(width = 240.dp, height = 22.dp))
+        if (state.doors.anyOpen) CarIcon(state, Modifier.size(width = 60.dp, height = 26.dp))
         Spacer(Modifier.weight(1f))
         Text(
             if (status.connected) "READY" else "SIN DATOS",
@@ -858,24 +856,6 @@ private fun StatusLine(state: VehicleState, status: SourceStatus, modifier: Modi
             color = Cockpit.Text,
         )
         Text(" °C", style = numeric(18), color = Cockpit.TextDim)
-    }
-}
-
-/** Segmentos azules decorativos del centro de la línea de estado. */
-@Composable
-private fun Segments(modifier: Modifier = Modifier) {
-    Canvas(modifier) {
-        val n = 4
-        val gap = 6.dp.toPx()
-        val sw = (size.width - gap * (n - 1)) / n
-        val s = size.height * 0.5f
-        for (i in 0 until n) {
-            val x = i * (sw + gap)
-            val p = Path().apply {
-                moveTo(x + s, 0f); lineTo(x + sw, 0f); lineTo(x + sw - s, size.height); lineTo(x, size.height); close()
-            }
-            drawPath(p, Brush.verticalGradient(listOf(Cockpit.Blue.copy(alpha = 0.9f), Cockpit.MDark)))
-        }
     }
 }
 

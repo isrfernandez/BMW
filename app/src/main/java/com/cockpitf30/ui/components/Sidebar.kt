@@ -45,13 +45,17 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
-/** Ilustración de fondo de cada botón del menú lateral y su color de acento. */
-enum class SideArt(val accent: Color) {
-    HOME(Color(0xFF4FA3FF)),
-    NAV(Color(0xFF29D3B0)),
-    MUSIC(Color(0xFFE05BFF)),
-    APPS(Color(0xFF7C8CFF)),
-    SETTINGS(Color(0xFFFFB45E)),
+/**
+ * Ilustración de fondo de cada botón del menú lateral y su color de acento. Todo el menú va en
+ * cobre metalizado y azul acero: los acentos alternan entre los dos y [second] es el metal que
+ * acompaña a cada uno.
+ */
+enum class SideArt(val accent: Color, val second: Color) {
+    HOME(Cockpit.SteelBlue, Cockpit.Copper),
+    NAV(Cockpit.Copper, Cockpit.SteelBlue),
+    MUSIC(Cockpit.SteelBlue, Cockpit.Copper),
+    APPS(Cockpit.Copper, Cockpit.SteelBlue),
+    SETTINGS(Cockpit.SteelBlue, Cockpit.Copper),
 }
 
 class SideItem(
@@ -91,6 +95,7 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
                     Modifier.fillMaxSize().drawWithContent {
                         drawContent()
                         glassOverlay(item.art.accent, shade = 0.65f)
+                        metalBevel(lit)
                     },
                 ) {
                     SideArtwork(item.art, lit, Modifier.matchParentSize())
@@ -136,7 +141,7 @@ private fun SideArtwork(art: SideArt, lit: Boolean, modifier: Modifier = Modifie
             Canvas(Modifier.matchParentSize()) {
                 when (art) {
                     SideArt.NAV -> navArt(art.accent, dim)
-                    SideArt.MUSIC -> musicArt(art.accent, dim)
+                    SideArt.MUSIC -> musicArt(art.accent, art.second, dim)
                     SideArt.APPS -> appsArt(dim)
                     SideArt.SETTINGS -> settingsArt(art.accent, dim)
                     SideArt.HOME -> Unit
@@ -146,12 +151,55 @@ private fun SideArtwork(art: SideArt, lit: Boolean, modifier: Modifier = Modifie
     }
 }
 
-/** Fondo común: azul noche con un halo del color de la función arriba a la derecha. */
+/**
+ * Fondo común: placa de metal cepillado entre azul acero oscuro y cobre, con un reflejo diagonal
+ * y un halo del color de la función arriba a la derecha.
+ */
 private fun DrawScope.backdrop(art: SideArt, dim: Float) {
-    drawRect(Brush.verticalGradient(listOf(Color(0xFF0E1A2C), Color(0xFF060A12))))
+    val w = size.width; val h = size.height
+    drawRect(Brush.verticalGradient(listOf(Color(0xFF1A2A3E), Color(0xFF0A111B), Color(0xFF07090E))))
+    // Viso cobre abajo a la izquierda y azul acero arriba a la derecha.
+    drawRect(
+        Brush.linearGradient(
+            0f to Cockpit.Copper.copy(alpha = 0.34f * dim), 0.45f to Color.Transparent,
+            0.6f to Color.Transparent, 1f to Cockpit.SteelBlue.copy(alpha = 0.30f * dim),
+            start = Offset(0f, h), end = Offset(w, 0f),
+        ),
+    )
+    // Cepillado: finas líneas horizontales claras y oscuras alternas.
+    val step = 2.dp.toPx()
+    var y = 0f; var i = 0
+    while (y < h) {
+        val a = 0.025f + 0.02f * sin(i * 2.3f).let { it * it }
+        drawLine((if (i % 2 == 0) Color.White else Color.Black).copy(alpha = a), Offset(0f, y), Offset(w, y), 1f)
+        y += step; i++
+    }
+    // Reflejo metálico en banda diagonal.
+    drawRect(
+        Brush.linearGradient(
+            0.30f to Color.Transparent, 0.42f to art.second.copy(alpha = 0.16f * dim), 0.47f to Color.White.copy(alpha = 0.10f * dim),
+            0.52f to art.accent.copy(alpha = 0.12f * dim), 0.64f to Color.Transparent,
+            start = Offset(0f, 0f), end = Offset(w, h),
+        ),
+    )
     drawCircle(
-        Brush.radialGradient(listOf(art.accent.copy(alpha = 0.42f * dim), Color.Transparent), Offset(size.width * 0.78f, size.height * 0.22f), size.width * 0.9f),
-        size.width * 0.9f, Offset(size.width * 0.78f, size.height * 0.22f),
+        Brush.radialGradient(listOf(art.accent.copy(alpha = 0.40f * dim), Color.Transparent), Offset(w * 0.78f, h * 0.22f), w * 0.9f),
+        w * 0.9f, Offset(w * 0.78f, h * 0.22f),
+    )
+}
+
+/** Bisel de metal: filo de cobre arriba a la izquierda que pasa a azul acero abajo a la derecha. */
+private fun DrawScope.metalBevel(lit: Boolean) {
+    val stroke = 1.6.dp.toPx()
+    val a = if (lit) 1f else 0.7f
+    drawRoundRect(
+        Brush.linearGradient(
+            0f to Cockpit.CopperLight.copy(alpha = 0.85f * a), 0.3f to Cockpit.Copper.copy(alpha = 0.45f * a),
+            0.55f to Color.White.copy(alpha = 0.12f * a), 0.8f to Cockpit.SteelBlue.copy(alpha = 0.5f * a),
+            1f to Cockpit.SteelBlueLight.copy(alpha = 0.8f * a),
+            start = Offset(0f, 0f), end = Offset(size.width, size.height),
+        ),
+        Offset(stroke / 2, stroke / 2), Size(size.width - stroke, size.height - stroke), CornerRadius(12.dp.toPx()), style = Stroke(stroke),
     )
 }
 
@@ -185,14 +233,14 @@ private fun DrawScope.navArt(accent: Color, dim: Float) {
 }
 
 /** Disco de vinilo asomando por la derecha y un ecualizador. */
-private fun DrawScope.musicArt(accent: Color, dim: Float) {
+private fun DrawScope.musicArt(accent: Color, second: Color, dim: Float) {
     val w = size.width; val h = size.height
     val c = Offset(w * 0.86f, h * 0.36f)
     val r = h * 0.48f
     drawCircle(Brush.radialGradient(listOf(Color(0xFF1A1424), Color(0xFF07050B)), c, r), r, c, alpha = dim)
     for (k in 1..7) drawCircle(Color.White.copy(alpha = 0.05f * dim), r * (0.35f + k * 0.09f), c, style = Stroke(1.dp.toPx()))
     drawArc(Color.White.copy(alpha = 0.25f * dim), 200f, 50f, false, Offset(c.x - r * 0.85f, c.y - r * 0.85f), Size(r * 1.7f, r * 1.7f), style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
-    drawCircle(Brush.linearGradient(listOf(accent, Color(0xFFFF4FB8)), Offset(c.x - r * 0.3f, c.y - r * 0.3f), Offset(c.x + r * 0.3f, c.y + r * 0.3f)), r * 0.3f, c, alpha = dim)
+    drawCircle(Brush.linearGradient(listOf(Cockpit.CopperLight, second, Cockpit.CopperDark), Offset(c.x - r * 0.3f, c.y - r * 0.3f), Offset(c.x + r * 0.3f, c.y + r * 0.3f)), r * 0.3f, c, alpha = dim)
     drawCircle(Color(0xFF07050B), r * 0.05f, c)
     val n = 9
     val gap = 3.dp.toPx()
@@ -202,7 +250,7 @@ private fun DrawScope.musicArt(accent: Color, dim: Float) {
         val bh = h * 0.42f * k
         val top = h * 0.70f - bh
         drawRoundRect(
-            Brush.verticalGradient(listOf(Color(0xFFFF8FD8).copy(alpha = 0.9f * dim), accent.copy(alpha = 0.15f * dim)), startY = top, endY = h * 0.70f),
+            Brush.verticalGradient(listOf(Cockpit.SteelBlueLight.copy(alpha = 0.9f * dim), accent.copy(alpha = 0.15f * dim)), startY = top, endY = h * 0.70f),
             Offset(w * 0.08f + i * (bw + gap), top), Size(bw, bh), CornerRadius(bw / 2),
         )
     }
@@ -211,11 +259,8 @@ private fun DrawScope.musicArt(accent: Color, dim: Float) {
 /** Rejilla de aplicaciones: placas de colores en ligera perspectiva. */
 private fun DrawScope.appsArt(dim: Float) {
     val w = size.width; val h = size.height
-    val colors = listOf(
-        Color(0xFF4FA3FF), Color(0xFF29D3B0), Color(0xFFE05BFF),
-        Color(0xFFFFB45E), Color(0xFF7C8CFF), Color(0xFF7CF29C),
-        Color(0xFFFF6B6B), Color(0xFF7FD3FF), Color(0xFFFFD54F),
-    )
+    // Placas alternas de cobre y azul acero, como piezas de metal.
+    val colors = List(9) { if (it % 2 == 0) Cockpit.Copper else Cockpit.SteelBlue }
     val s = w * 0.2f
     val gap = w * 0.06f
     rotate(-12f, Offset(w * 0.62f, h * 0.38f)) {
@@ -244,7 +289,7 @@ private fun DrawScope.settingsArt(accent: Color, dim: Float) {
         }
         close()
     }
-    drawPath(gear, Brush.linearGradient(listOf(Color(0xFFE9F0F8), Color(0xFF5E6F84), Color(0xFFB9C7D6), Color(0xFF2C3B4E)), Offset(c.x - ro, c.y - ro), Offset(c.x + ro, c.y + ro)), alpha = 0.85f * dim)
+    drawPath(gear, Brush.linearGradient(listOf(Cockpit.CopperLight, Cockpit.CopperDark, Cockpit.Copper, Color(0xFF2A160C)), Offset(c.x - ro, c.y - ro), Offset(c.x + ro, c.y + ro)), alpha = 0.85f * dim)
     drawCircle(Color(0xFF0B1220), ro * 0.38f, c)
     drawCircle(accent.copy(alpha = 0.8f * dim), ro * 0.38f, c, style = Stroke(2.dp.toPx()))
     listOf(0.30f to 0.62f, 0.48f to 0.35f, 0.66f to 0.78f).forEach { (fy, fx) ->
