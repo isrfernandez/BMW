@@ -369,6 +369,28 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                // Asistente «Hola BMW»: activar, voz en alto y estado del micrófono y del modelo.
+                val voice by com.cockpitf30.assistant.VoiceAssistant.state.collectAsStateWithLifecycle()
+                var voiceOn by remember { mutableStateOf(settings.assistantEnabled) }
+                var voiceTalks by remember { mutableStateOf(settings.assistantSpeaks) }
+                DiagCard("Asistente de voz «Hola BMW»") {
+                    ChipRow(listOf("Activado", "Desactivado"), if (voiceOn) 0 else 1) {
+                        voiceOn = it == 0
+                        com.cockpitf30.assistant.VoiceAssistant.setEnabled(context, voiceOn)
+                    }
+                    ChipRow(listOf("Responde en voz alta", "Solo en pantalla"), if (voiceTalks) 0 else 1) {
+                        voiceTalks = it == 0
+                        settings.assistantSpeaks = voiceTalks
+                    }
+                    Info("Estado: ${voice.phase} · micrófono ${"%.0f".format(voice.level * 100)} %" + (voice.error?.let { " · $it" } ?: ""))
+                    Info("Modelo ${com.cockpitf30.assistant.VoiceModel.NAME}: " + if (com.cockpitf30.assistant.VoiceModel.isReady(context)) "instalado" else "no instalado")
+                    voice.lastText?.let { Mono("Último reconocido: «$it»") }
+                    voice.heard?.let { Mono("Oído: «$it»") }
+                    voice.reply?.let { Mono("Respuesta: $it") }
+                    Info("Reconocedor de Google: " + if (android.speech.SpeechRecognizer.isRecognitionAvailable(context)) "disponible" else "no disponible", Cockpit.TextDim)
+                }
+            }
+            item {
                 DiagCard("Batería") {
                     ChipRow(
                         listOf(if (batteryOk) "Excluida de la optimización ✓" else "Pedir exclusión de optimización"),

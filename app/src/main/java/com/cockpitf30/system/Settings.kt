@@ -43,6 +43,20 @@ class AppSettings(context: Context) {
         get() = IDriveInput.decode(prefs.getString(KEY_KNOB_KEYS, null))
         set(value) = prefs.edit().putString(KEY_KNOB_KEYS, IDriveInput.encode(value)).apply()
 
+    /** Asistente de voz: escuchar «Hola BMW» mientras la app está en pantalla. */
+    var assistantEnabled: Boolean
+        get() = prefs.getBoolean(KEY_ASSISTANT, true)
+        set(value) = prefs.edit().putBoolean(KEY_ASSISTANT, value).apply()
+
+    /** Responder también en voz alta (si la radio tiene motor de voz). */
+    var assistantSpeaks: Boolean
+        get() = prefs.getBoolean(KEY_ASSISTANT_TTS, true)
+        set(value) = prefs.edit().putBoolean(KEY_ASSISTANT_TTS, value).apply()
+
+    var askedMicrophone: Boolean
+        get() = prefs.getBoolean(KEY_ASKED_MIC, false)
+        set(value) = prefs.edit().putBoolean(KEY_ASKED_MIC, value).apply()
+
     var askedBatteryExemption: Boolean
         get() = prefs.getBoolean(KEY_ASKED_BATTERY, false)
         set(value) = prefs.edit().putBoolean(KEY_ASKED_BATTERY, value).apply()
@@ -117,6 +131,9 @@ class AppSettings(context: Context) {
         set(value) = prefs.edit().putFloat(KEY_TANK, value).apply()
 
     private companion object {
+        const val KEY_ASSISTANT = "assistant_enabled"
+        const val KEY_ASSISTANT_TTS = "assistant_tts"
+        const val KEY_ASKED_MIC = "asked_microphone"
         const val KEY_TRIP_CURRENT = "trip_current"
         const val KEY_TRIP_LAST = "trip_last"
         const val KEY_TANK = "tank_liters"

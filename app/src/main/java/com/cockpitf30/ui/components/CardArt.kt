@@ -43,6 +43,7 @@ enum class CardTheme(val from: Color, val to: Color) {
     PHONE(Color(0xFF1DB954), Color(0xFF7CF29C)),
     DIAG(Color(0xFFFF8F00), Color(0xFFFFD54F)),
     FUEL(Color(0xFFE8473B), Color(0xFFFFA36B)),
+    ASSIST(Color(0xFF3D5AFE), Color(0xFF3FE0FF)),
 }
 
 /**
@@ -102,6 +103,7 @@ fun BoxScope.CardArt(theme: CardTheme) {
                 Canvas(Modifier.size(56.dp)) { fuelPump(theme) }
             }
         }
+        CardTheme.ASSIST -> AssistantArt(theme)
         CardTheme.WEATHER -> Unit
     }
 }

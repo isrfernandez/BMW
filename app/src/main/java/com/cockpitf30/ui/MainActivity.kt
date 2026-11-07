@@ -12,7 +12,13 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import android.content.pm.PackageManager
+import androidx.compose.runtime.DisposableEffect
+import androidx.core.content.ContextCompat
+import com.cockpitf30.assistant.VoiceAssistant
+import com.cockpitf30.ui.components.AssistantOverlay
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -138,6 +144,17 @@ class MainActivity : ComponentActivity() {
         return true
     }
 
+    // El asistente solo escucha con la app en pantalla: al salir suelta el micrófono.
+    override fun onStart() {
+        super.onStart()
+        VoiceAssistant.resume(this)
+    }
+
+    override fun onStop() {
+        VoiceAssistant.pause()
+        super.onStop()
+    }
+
     private var swallowKey: Int? = null
     private var swallowCenter = false
 
@@ -209,15 +226,34 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         RouteTracker.start(ctx)
         scope.launch { WeatherRepository.refresh(ctx) }
+        VoiceAssistant.resume(ctx)
+    }
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        VoiceAssistant.resume(ctx)
+    }
+    DisposableEffect(Unit) {
+        VoiceAssistant.permissionRequester = { micPermission.launch(Manifest.permission.RECORD_AUDIO) }
+        onDispose { VoiceAssistant.permissionRequester = null }
     }
     LaunchedEffect(Unit) {
         val settings = AppSettings(ctx)
         WeatherRepository.loadCache(ctx)
         RouteTracker.start(ctx)
-        if (!settings.askedLocation && settings.weatherPlace == null && !WeatherRepository.hasLocationPermission(ctx)) {
-            settings.askedLocation = true
-            locationPermission.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION))
+        // Ubicación (tiempo, gasolineras) y micrófono (asistente) se piden una vez, en el mismo diálogo.
+        val ask = buildList {
+            if (!settings.askedLocation && settings.weatherPlace == null && !WeatherRepository.hasLocationPermission(ctx)) {
+                settings.askedLocation = true
+                add(Manifest.permission.ACCESS_COARSE_LOCATION)
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+            if (!settings.askedMicrophone && settings.assistantEnabled &&
+                ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+            ) {
+                settings.askedMicrophone = true
+                add(Manifest.permission.RECORD_AUDIO)
+            }
         }
+        if (ask.isNotEmpty()) locationPermission.launch(ask.toTypedArray())
         while (true) {
             WeatherRepository.refresh(ctx)
             delay(30 * 60 * 1000L)
@@ -232,6 +268,13 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
         }
     }
     BackHandler(enabled = screen != Screen.HOME) { screen = Screen.HOME }
+
+    // Las órdenes de voz abren pantallas como los botones.
+    DisposableEffect(Unit) {
+        val nav: (Screen) -> Unit = { screen = it }
+        VoiceAssistant.navigator = nav
+        onDispose { if (VoiceAssistant.navigator === nav) VoiceAssistant.navigator = null }
+    }
 
     // Puerta, capó o maletero abierto: se abre la pantalla Vehículo (vista cenital con cada puerta).
     // Al cerrarse todo se vuelve al Inicio, que ya abre en el mapa. En Diagnóstico no se interrumpe.
@@ -269,9 +312,10 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
             .background(Brush.radialGradient(listOf(Cockpit.Blue.copy(alpha = 0.10f), Cockpit.Background), radius = 1600f)),
     ) {
         Sidebar(sideItems)
+        Box(Modifier.weight(1f).fillMaxHeight()) {
         AnimatedContent(
             screen,
-            modifier = Modifier.weight(1f).fillMaxHeight(),
+            modifier = Modifier.fillMaxSize(),
             transitionSpec = { fadeIn() togetherWith fadeOut() },
             label = "screen",
         ) { current ->
@@ -285,6 +329,8 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 Screen.PHONE -> PhoneScreen()
                 Screen.FUEL -> FuelScreen()
             }
+        }
+            AssistantOverlay()
         }
     }
 }
