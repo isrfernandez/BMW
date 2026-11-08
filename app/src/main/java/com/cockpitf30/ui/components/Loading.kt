@@ -97,7 +97,7 @@ object Startup {
  * (imágenes y lista de apps), con un tope de [maxMs] para no quedarse nunca colgada.
  */
 @Composable
-fun StartupSplash(minMs: Long = 2000, maxMs: Long = 6000) {
+fun StartupSplash(minMs: Long = 3000, maxMs: Long = 7000) {
     val ready by Startup.ready.collectAsState()
     var elapsed by remember { mutableIntStateOf(0) } // 0 = antes de minMs, 1 = pasado, 2 = tope
     LaunchedEffect(Unit) { delay(minMs); elapsed = 1; delay(maxMs - minMs); elapsed = 2 }
@@ -117,12 +117,13 @@ fun StartupSplash(minMs: Long = 2000, maxMs: Long = 6000) {
                 drawImage(scene, dstSize = IntSize(size.width.toInt(), size.height.toInt()))
                 // El haz solo ilumina las letras: se pinta dentro de su silueta en una capa
                 // aparte que se suma (Plus) a la imagen.
-                val k = size.height / SPLASH_H
-                val left = (SPLASH_W - SPLASH_H) / 2f * size.width / SPLASH_W + TEXT_X * k
-                val top = TEXT_Y * k
-                // La silueta está recortada de la imagen de 1024 px; aquí la imagen mide 720.
-                val w = mask.width * k * 720f / 1024f
-                val h = mask.height * k * 720f / 1024f
+                // La silueta está recortada de splash_scene en su tamaño real (1920×720).
+                val kx = size.width / SPLASH_W
+                val ky = size.height / SPLASH_H
+                val left = TEXT_X * kx
+                val top = TEXT_Y * ky
+                val w = mask.width * kx
+                val h = mask.height * ky
                 val layer = androidx.compose.ui.geometry.Rect(left, top, left + w, top + h)
                 val canvas = drawContext.canvas
                 canvas.saveLayer(layer, androidx.compose.ui.graphics.Paint().apply { blendMode = androidx.compose.ui.graphics.BlendMode.Plus })
@@ -144,12 +145,12 @@ fun StartupSplash(minMs: Long = 2000, maxMs: Long = 6000) {
     }
 }
 
-// Medidas de splash_scene (1920×720, con la imagen cuadrada de 720 en el centro) y del recorte
-// de las letras en la imagen original de 1024, ya escaladas a 720.
+// splash_scene es la imagen 21:9 del usuario ajustada a 1920×720; splash_text_mask, el recorte
+// de sus letras, empieza en (654, 554) de esa imagen.
 private const val SPLASH_W = 1920f
 private const val SPLASH_H = 720f
-private const val TEXT_X = 150f * 720f / 1024f
-private const val TEXT_Y = 790f * 720f / 1024f
+private const val TEXT_X = 654f
+private const val TEXT_Y = 554f
 
 /**
  * «COCKPIT F30»: COCKPIT fino y muy espaciado en plata, F30 en cobre pulido, con un filo de luz
