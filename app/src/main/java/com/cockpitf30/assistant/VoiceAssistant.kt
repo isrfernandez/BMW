@@ -597,16 +597,53 @@ object VoiceAssistant {
 
     // ---------------------------------------------------------------- voz
 
+    /** Estado del motor de voz de la radio, para Diagnóstico. */
+    enum class TtsStatus(val text: String) {
+        STARTING("arrancando"),
+        NO_ENGINE("la radio no tiene motor de voz: instala «Servicios de voz de Google» desde Play Store"),
+        NO_SPANISH("el motor de voz no tiene el español: descarga la voz española"),
+        READY("listo"),
+    }
+
+    private val _tts = MutableStateFlow(TtsStatus.STARTING)
+    val ttsStatus: StateFlow<TtsStatus> = _tts.asStateFlow()
+    /** Motor de voz en uso (paquete) y último error al hablar, para Diagnóstico. */
+    @Volatile var ttsEngine: String? = null; private set
+    @Volatile var ttsLastError: String? = null; private set
+
+    /** Paquete de «Servicios de voz de Google» (voces naturales sin conexión, también de hombre). */
+    const val GOOGLE_TTS = "com.google.android.tts"
+
     private fun initTts() {
-        if (tts != null) return
-        tts = TextToSpeech(app) { status ->
-            val t = tts ?: return@TextToSpeech
-            if (status != TextToSpeech.SUCCESS) return@TextToSpeech
+        // Si no estaba listo (p. ej. se acaba de instalar el motor o la voz española), se vuelve a probar.
+        if (tts != null && (ttsReady || _tts.value == TtsStatus.STARTING)) return
+        tts?.let { runCatching { it.shutdown() } }
+        tts = null
+        ttsReady = false
+        val engines = runCatching { TextToSpeech(app, null).let { t -> t.engines.also { t.shutdown() } } }.getOrNull().orEmpty()
+        // Sin ningún motor, TextToSpeech no llama nunca al init o falla: se avisa en Diagnóstico.
+        _tts.value = if (engines.isEmpty()) TtsStatus.NO_ENGINE else TtsStatus.STARTING
+        if (engines.isEmpty()) Log.w(TAG, "No hay motor de voz")
+        // Si está el de Google, ese (voces naturales); si no, el que tenga la radio por defecto.
+        val engine = engines.firstOrNull { it.name == GOOGLE_TTS }?.name
+        val listener = TextToSpeech.OnInitListener { status ->
+            val t = tts ?: return@OnInitListener
+            ttsEngine = runCatching { t.defaultEngine }.getOrNull()
+            if (status != TextToSpeech.SUCCESS) {
+                _tts.value = TtsStatus.NO_ENGINE
+                return@OnInitListener
+            }
+            if (engine != null) ttsEngine = engine
             val r = t.setLanguage(Locale("es", "ES"))
             ttsReady = r != TextToSpeech.LANG_MISSING_DATA && r != TextToSpeech.LANG_NOT_SUPPORTED
+            _tts.value = if (ttsReady) TtsStatus.READY else TtsStatus.NO_SPANISH
             applyVoice()
             t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {}
+                override fun onStart(utteranceId: String?) { ttsLastError = null }
+                override fun onError(utteranceId: String?, errorCode: Int) {
+                    ttsLastError = "error $errorCode al hablar"
+                    @Suppress("DEPRECATION") onError(utteranceId)
+                }
                 override fun onDone(utteranceId: String?) {
                     if (utteranceId?.startsWith(ROBOT_ID) == true) scope.launch { playRobot(utteranceId) }
                     else scope.launch { doneSpeaking() }
@@ -615,6 +652,31 @@ object VoiceAssistant {
                 override fun onError(utteranceId: String?) { scope.launch { if (utteranceId?.startsWith(ROBOT_ID) == true) robotFailed(utteranceId) else doneSpeaking() } }
             })
         }
+        tts = if (engine != null) TextToSpeech(app, listener, engine) else TextToSpeech(app, listener)
+    }
+
+    private fun isInstalled(pkg: String) = runCatching { app.packageManager.getPackageInfo(pkg, 0); true }.getOrDefault(false)
+
+    /** Diagnóstico: abre Play Store en «Servicios de voz de Google». */
+    fun installVoiceEngine(context: Context) {
+        val market = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$GOOGLE_TTS"))
+        val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=$GOOGLE_TTS"))
+        launch(context, if (market.resolveActivity(context.packageManager) != null) market else web)
+    }
+
+    /** Diagnóstico: pide al motor que descargue la voz española. */
+    fun installSpanishVoice(context: Context) {
+        val i = Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA)
+        ttsEngine?.let { i.setPackage(it) }
+        launch(context, if (i.resolveActivity(context.packageManager) != null) i else Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA))
+    }
+
+    /** Diagnóstico: volver a arrancar el motor de voz (tras instalar algo). */
+    fun restartTts(context: Context) {
+        app = context.applicationContext
+        ttsReady = false
+        _tts.value = TtsStatus.NO_ENGINE // para que initTts no espere al arranque anterior
+        initTts()
     }
 
     private const val ROBOT_ID = "robot-"
@@ -704,6 +766,10 @@ object VoiceAssistant {
                 unmuteJob = scope.launch { delay(2_000L + text.length * 90L); doneSpeaking() }
             }
         } else {
+            if (settings().assistantSpeaks) {
+                ttsLastError = "no habla: motor de voz ${_tts.value.text}"
+                initTts() // por si ya se ha instalado
+            }
             unmuteJob = scope.launch { delay(1_200); doneSpeaking() }
         }
     }

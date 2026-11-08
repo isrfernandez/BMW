@@ -491,6 +491,20 @@ fun DiagnosticsScreen() {
                             }
                         }
                     }
+                    val ttsStatus by assistant.ttsStatus.collectAsStateWithLifecycle()
+                    Info("Motor de voz: ${ttsStatus.text}" + (assistant.ttsEngine?.let { " · $it" } ?: "") + (assistant.ttsLastError?.let { " · $it" } ?: ""),
+                        if (ttsStatus == com.cockpitf30.assistant.VoiceAssistant.TtsStatus.READY) Cockpit.TextDim else Cockpit.Alert)
+                    when (ttsStatus) {
+                        com.cockpitf30.assistant.VoiceAssistant.TtsStatus.NO_ENGINE ->
+                            ChipRow(listOf("Instalar «Servicios de voz de Google»", "Volver a probar"), -1) {
+                                if (it == 0) assistant.installVoiceEngine(context) else assistant.restartTts(context)
+                            }
+                        com.cockpitf30.assistant.VoiceAssistant.TtsStatus.NO_SPANISH ->
+                            ChipRow(listOf("Descargar voz española", "Volver a probar"), -1) {
+                                if (it == 0) assistant.installSpanishVoice(context) else assistant.restartTts(context)
+                            }
+                        else -> Unit
+                    }
                     Info("Voz en uso: ${assistant.currentVoice() ?: "—"} · ${voices.size} voces en español", Cockpit.TextDim)
                     Info("Estado: ${voice.phase} · micrófono ${"%.0f".format(voice.level * 100)} %" + (voice.error?.let { " · $it" } ?: ""))
                     Info("Modelo ${com.cockpitf30.assistant.VoiceModel.NAME}: " + if (com.cockpitf30.assistant.VoiceModel.isReady(context)) "instalado" else "no instalado")
