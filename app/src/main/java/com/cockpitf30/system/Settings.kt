@@ -130,7 +130,13 @@ class AppSettings(context: Context) {
         get() = prefs.getFloat(KEY_TANK, 57f)
         set(value) = prefs.edit().putFloat(KEY_TANK, value).apply()
 
+    /** Pedir a la caja CAN la velocidad y las rpm cada 500 ms (lo mismo que hace la app de la radio). */
+    var canAskSpeed: Boolean
+        get() = prefs.getBoolean(KEY_CAN_ASK_SPEED, true)
+        set(value) = prefs.edit().putBoolean(KEY_CAN_ASK_SPEED, value).apply()
+
     private companion object {
+        const val KEY_CAN_ASK_SPEED = "can_ask_speed"
         const val KEY_ASSISTANT = "assistant_enabled"
         const val KEY_ASSISTANT_TTS = "assistant_tts"
         const val KEY_ASKED_MIC = "asked_microphone"

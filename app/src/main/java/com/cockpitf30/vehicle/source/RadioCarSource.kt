@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Bundle
 import androidx.core.content.ContextCompat
+import com.cockpitf30.system.AppSettings
 import com.cockpitf30.vehicle.VehicleRepository
 import com.cockpitf30.vehicle.probe.BroadcastSniffer
 import com.cockpitf30.vehicle.probe.CarDataProbe
@@ -18,6 +19,7 @@ import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,6 +35,10 @@ import kotlinx.coroutines.withTimeoutOrNull
  * almacén del servicio del coche (android.car.server). Lo leemos con la librería cliente del
  * fabricante (CarBaseManager2 / CarDataManager), que va dentro del lanzador BMW de serie y que
  * en el informe de la 0.9.19 por fin devolvió datos (freno de mano, ACC, volante…).
+ *
+ * Las tramas de la caja CAN llegan en el aviso "callback.pt.canbus_cmd" y se decodifican con
+ * [CanBoxFrames] (puertas, freno de mano, combustible, velocidad, rpm, autonomía). La velocidad y
+ * las rpm solo las manda si se le preguntan: igual que la app de la radio, cada 500 ms (ver [CanBoxFrames.query]).
  *
  * Además: se suscribe a los avisos del servicio y escucha los broadcasts CANBUS_SPEED,
  * CANBUS_RPM y OUT_TEMP. Todo lo que cambie se apunta en [RadioCarData] para verlo en
@@ -53,9 +59,12 @@ class RadioCarSource(private val context: Context) : VehicleDataSource {
             VehicleRepository.updateStatus { it.copy(connected = true, lastError = null) }
             RadioCarData.note("Conectado (${car.origin})")
             listenBroadcasts()
+            CanBoxData.onFrame = { wake.trySend(Unit) }
             runCatching { car.subscribe(context) { wake.trySend(Unit) } }
                 .onSuccess { RadioCarData.note("Avisos: $it") }
                 .onFailure { RadioCarData.note("Avisos: ${(it.cause ?: it).message}") }
+            launch { askSpeed(car) }
+            val settings = AppSettings(context)
             var errors = 0
             while (isActive) {
                 val values = runCatching { car.readAll() }.getOrElse { e ->
@@ -64,9 +73,16 @@ class RadioCarSource(private val context: Context) : VehicleDataSource {
                     null
                 }
                 if (values != null) {
-                    val all = values + RadioCarData.broadcastValues()
+                    // Las claves "can.*" van al final: mandan sobre las del almacén si coinciden.
+                    val can = CanBoxData.values()
+                    val all = values + RadioCarData.broadcastValues() + can
                     RadioCarData.publish(all)
-                    VehicleRepository.updateState { CarKeyMapper.apply(it, all) }
+                    val tank = settings.tankLiters
+                    VehicleRepository.updateState { st ->
+                        val mapped = CarKeyMapper.apply(st, all)
+                        val liters = CarKeyMapper.toNumber(can["can.fuel_liters"])
+                        if (liters != null && liters > 0 && tank > 0) mapped.copy(fuelLevel = (liters / tank).toFloat().coerceIn(0f, 1f)) else mapped
+                    }
                     VehicleRepository.updateStatus { it.copy(framesReceived = it.framesReceived + 1) }
                 }
                 // Un aviso del servicio o un broadcast adelantan la siguiente lectura.
@@ -75,7 +91,25 @@ class RadioCarSource(private val context: Context) : VehicleDataSource {
         }
     }
 
+    /** Pide a la caja la trama 0x16 (velocidad y rpm) cada 500 ms, como el cuentarrevoluciones de la radio. */
+    private suspend fun askSpeed(car: VendorCar) {
+        val settings = AppSettings(context)
+        val frame = CanBoxFrames.query(CanBoxFrames.TYPE_DYNAMIC)
+        var reported = false
+        while (true) {
+            delay(QUERY_MS)
+            if (!settings.canAskSpeed || !CanBoxData.baseSeen) continue
+            val result = runCatching { car.sendCanbus(frame) }
+            if (!reported) {
+                reported = true
+                RadioCarData.note("Pido velocidad/rpm a la caja (${frame.joinToString(" ") { "%02X".format(it) }}): " +
+                    result.fold({ "enviado" }, { "error ${(it.cause ?: it).message}" }))
+            }
+        }
+    }
+
     override fun stop() {
+        CanBoxData.onFrame = null
         receiver?.let { r -> runCatching { context.unregisterReceiver(r) } }
         receiver = null
     }
@@ -95,6 +129,7 @@ class RadioCarSource(private val context: Context) : VehicleDataSource {
 
     companion object {
         private const val POLL_MS = 300L
+        private const val QUERY_MS = 500L
         private val BROADCASTS = listOf(
             "android.car.action.CANBUS_SPEED", "android.car.action.CANBUS_RPM", "android.car.action.OUT_TEMP",
             "android.car.action.OBD_STATE", "android.car.action.BRAKE_STATE",
@@ -201,7 +236,7 @@ class VendorCar private constructor(
      * Los cambios llegan como "callback.dm.data_changed" con {key, bundle}.
      */
     fun subscribe(context: Context, onChange: () -> Unit): String {
-        val iCb = runCatching { CarDataProbe.sniffingCarCallback(loader) { onChange() } }
+        val iCb = runCatching { CarDataProbe.sniffingCarCallback(loader, CanBoxData::handle) { onChange() } }
             .getOrElse { return "no se pudo crear el callback: ${(it.cause ?: it).javaClass.simpleName}: ${(it.cause ?: it).message}" }
             ?: return "el APK no trae ICarCallback"
         val cbType = loader.loadClass("android.car.server.ICarCallback")
@@ -216,6 +251,16 @@ class VendorCar private constructor(
         if (ok == true) callback = iCb
         return "registerCallback(package_name, key_filter ${SUBSCRIBE.size} claves, version 2) = $ok"
     }
+
+    /** Manda una trama a la caja CAN igual que CarCanbus: requestOneway("request.pt.canbus_cmd", {arg_byte_array}). */
+    fun sendCanbus(frame: ByteArray) {
+        val m = sendMethod ?: generateSequence<Class<*>>(base.javaClass) { it.superclass }
+            .firstNotNullOf { c -> runCatching { c.getDeclaredMethod("requestOneway", String::class.java, Bundle::class.java) }.getOrNull() }
+            .apply { isAccessible = true }.also { sendMethod = it }
+        m.invoke(base, "request.pt.canbus_cmd", Bundle().apply { putByteArray("arg_byte_array", frame) })
+    }
+
+    private var sendMethod: Method? = null
 
     companion object {
         val CLIENT_PACKAGES = listOf("com.bmw1.launcher2", "android.car.app.canbus")

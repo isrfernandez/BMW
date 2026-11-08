@@ -93,6 +93,7 @@ fun DiagnosticsScreen() {
     val vehicle by VehicleRepository.state.collectAsStateWithLifecycle()
     var canbusProbe by remember { mutableStateOf<List<String>>(emptyList()) }
     var showAllKeys by remember { mutableStateOf(false) }
+    var askSpeed by remember { mutableStateOf(settings.canAskSpeed) }
     var testRunning by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
 
@@ -273,6 +274,16 @@ fun DiagnosticsScreen() {
                 DiagCard("Datos del coche (la propia radio)") {
                     if (status.sourceName != "Radio (CAN)") Info("La fuente activa es «${status.sourceName}». Elige «Radio CAN» o «Auto» en Fuente de datos para leer el coche.", Cockpit.Alert)
                     Info("Leído: ${vehicleSummary(vehicle)}")
+                    val frames = com.cockpitf30.vehicle.source.CanBoxData.summary()
+                    if (frames.isEmpty()) Info("Caja CAN: todavía no ha llegado ninguna trama", Cockpit.TextDim)
+                    else {
+                        Info("Caja CAN: ${canBoxSummary(radioValues)}")
+                        frames.forEach { Mono(it) }
+                    }
+                    ChipRow(listOf("Pedir velocidad y rpm a la caja: ${if (askSpeed) "sí" else "no"}"), if (askSpeed) 0 else -1) {
+                        askSpeed = !askSpeed
+                        settings.canAskSpeed = askSpeed
+                    }
                     Info("Claves en la radio: ${radioValues.size}. Abre y cierra cada puerta, el maletero y el capó, arranca y gira el volante: aquí abajo sale qué clave cambia.", Cockpit.TextDim)
                     ChipRow(
                         listOf(if (showAllKeys) "Ocultar claves" else "Ver todas las claves (${radioValues.size})", "Explorar CarCanbus"),
@@ -593,10 +604,24 @@ private fun vehicleSummary(v: com.cockpitf30.vehicle.VehicleState): String {
         "ruedas ${p(v.tyres.frontLeft)} ${p(v.tyres.frontRight)} ${p(v.tyres.rearLeft)} ${p(v.tyres.rearRight)} bar"
 }
 
+/** Lo que dice la caja CAN y no cabe en VehicleState: freno de mano, cinturones, litros, kilometraje. */
+private fun canBoxSummary(values: Map<String, String>): String {
+    fun yes(k: String, si: String, no: String) = when (values[k]) { "true" -> si; "false" -> no; else -> "?" }
+    return "ACC ${yes("can.acc", "sí", "no")} · freno de mano ${yes("can.handbrake", "puesto", "quitado")} · " +
+        "cierre ${yes("can.central_lock", "cerrado", "abierto")} · cinturón conductor ${yes("can.belt_driver", "puesto", "sin poner")} · " +
+        "combustible ${values["can.fuel_liters"] ?: "?"} · km ${values["can.mileage"] ?: "?"} · autonomía ${values["can.fuel_range"] ?: "?"} · " +
+        "exterior ${values["can.exterior_temp_raw"] ?: "?"} · velocidad ${values["can.speed"] ?: "?"} · rpm ${values["can.rpm"] ?: "?"}"
+}
+
 private fun radioReport(values: Map<String, String>, changes: List<String>, canbus: List<String>, vehicle: com.cockpitf30.vehicle.VehicleState): String = buildString {
     appendLine()
     appendLine("== Datos del coche (radio)")
     appendLine(vehicleSummary(vehicle))
+    appendLine()
+    appendLine("== Caja CAN (tramas callback.pt.canbus_cmd)")
+    appendLine(canBoxSummary(values))
+    com.cockpitf30.vehicle.source.CanBoxData.summary().forEach(::appendLine)
+    appendLine()
     values.toSortedMap().forEach { (k, v) -> appendLine("$k = $v") }
     appendLine()
     appendLine("== Cambios de claves")

@@ -15,9 +15,9 @@ import kotlin.math.roundToInt
  * "tpms"/"tire" + rueda). Las claves que no se reconocen se ven en Diagnóstico → «Datos del coche».
  */
 object CarKeyMapper {
-    private val SPEED_KEYS = listOf("canbus.car_speed", "bc.canbus_speed", "state.wy.car_speed", "state.zhtd.car_speed", "canbus.info.speed", "canbus.state.speed")
-    private val RPM_KEYS = listOf("canbus.rotate_speed", "bc.canbus_rpm", "canbus.info.rpm", "canbus.state.rpm")
-    private val OUT_TEMP_KEYS = listOf("bc.out_temp", "state.wy.car_outtemp", "state.zhtd.car_outtemp")
+    private val SPEED_KEYS = listOf("can.speed", "canbus.car_speed", "bc.canbus_speed", "state.wy.car_speed", "state.zhtd.car_speed", "canbus.info.speed", "canbus.state.speed")
+    private val RPM_KEYS = listOf("can.rpm", "canbus.rotate_speed", "bc.canbus_rpm", "canbus.info.rpm", "canbus.state.rpm")
+    private val OUT_TEMP_KEYS = listOf("can.out_temp", "bc.out_temp", "state.wy.car_outtemp", "state.zhtd.car_outtemp")
 
     fun apply(state: VehicleState, values: Map<String, Any?>): VehicleState {
         var s = state
@@ -27,7 +27,7 @@ object CarKeyMapper {
             ?.let { s = s.copy(rpm = it.roundToInt().coerceIn(0, 9000)) }
         number(values, OUT_TEMP_KEYS) { "outtemp" in it || "out_temp" in it || "outside_temp" in it }
             ?.let { s = s.copy(outsideTempC = (if (abs(it) > 70) it / 10 else it).toFloat()) }
-        number(values, emptyList()) { ("fuel_range" in it || "fuelrange" in it || it.endsWith(".range") || "endurance" in it) }
+        number(values, listOf("can.fuel_range")) { ("fuel_range" in it || "fuelrange" in it || it.endsWith(".range") || "endurance" in it) }
             ?.let { s = s.copy(rangeKm = it.roundToInt()) }
         number(values, emptyList()) { "fuel_percent" in it || "fuel_level" in it || "oil_percent" in it }
             ?.let { s = s.copy(fuelLevel = (if (it > 1.0) it / 100 else it).toFloat().coerceIn(0f, 1f)) }
