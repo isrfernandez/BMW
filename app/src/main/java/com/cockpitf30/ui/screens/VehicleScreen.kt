@@ -32,7 +32,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -112,7 +111,7 @@ fun VehicleScreen() {
                     Offset(0f, size.height * 0.08f), Size(size.width, size.height * 0.84f),
                 )
             }
-            Image(painterResource(R.drawable.car_top_cutout), null, Modifier.offset(x = left).size(w, h))
+            Image(com.cockpitf30.ui.components.cachedPainter(R.drawable.car_top_cutout), null, Modifier.offset(x = left).size(w, h))
 
             // Capó, maletero y puertas abiertos: imágenes veladas en rojo encima del coche.
             Box(Modifier.offset(x = left - w * LAYER_PAD).size(w * (1 + 2 * LAYER_PAD), h)) {
@@ -275,6 +274,6 @@ private fun openItems(d: Doors) = buildList {
 private fun OpenLayer(open: Boolean?, @DrawableRes res: Int) {
     val alpha by animateFloatAsState(if (open == true) 1f else 0f, tween(350), label = "puerta")
     if (alpha > 0f) {
-        Image(painterResource(res), null, Modifier.fillMaxSize().alpha(alpha), contentScale = ContentScale.FillBounds)
+        Image(com.cockpitf30.ui.components.cachedPainter(res), null, Modifier.fillMaxSize().alpha(alpha), contentScale = ContentScale.FillBounds)
     }
 }

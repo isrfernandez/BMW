@@ -38,7 +38,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  * Las tramas de la caja CAN llegan en el aviso "callback.pt.canbus_cmd" y se decodifican con
  * [CanBoxFrames] (puertas, freno de mano, combustible, velocidad, rpm, autonomía). La velocidad y
- * las rpm solo las manda si se le preguntan: igual que la app de la radio, cada 500 ms (ver [CanBoxFrames.query]).
+ * las rpm solo las manda si se le preguntan: igual que la app de la radio, cada 100 ms; ella lo hace cada 500 ms (ver [CanBoxFrames.query]).
  *
  * Además: se suscribe a los avisos del servicio y escucha los broadcasts CANBUS_SPEED,
  * CANBUS_RPM y OUT_TEMP. Todo lo que cambie se apunta en [RadioCarData] para verlo en
@@ -66,17 +66,24 @@ class RadioCarSource(private val context: Context) : VehicleDataSource {
             launch { askSpeed(car) }
             val settings = AppSettings(context)
             var errors = 0
+            var values: Map<String, Any?>? = null
+            var lastRead = 0L
+            var lastPublish = 0L
             while (isActive) {
-                val values = runCatching { car.readAll() }.getOrElse { e ->
+                // Las tramas de la caja llegan cada 100 ms: con ellas basta mezclar lo último leído del
+                // almacén; releerlo entero (reflexión sobre cientos de claves) solo cada POLL_MS.
+                val now = System.currentTimeMillis()
+                if (values == null || now - lastRead >= POLL_MS) values = runCatching { car.readAll() }.getOrElse { e ->
                     if (errors++ < 3) RadioCarData.note("Lectura: ${(e.cause ?: e).javaClass.simpleName}: ${(e.cause ?: e).message}")
                     VehicleRepository.updateStatus { it.copy(lastError = "Lectura: ${(e.cause ?: e).message}") }
                     null
-                }
+                }.also { lastRead = now }
                 if (values != null) {
                     // Las claves "can.*" van al final: mandan sobre las del almacén si coinciden.
                     val can = CanBoxData.values()
                     val all = values + RadioCarData.broadcastValues() + can
-                    RadioCarData.publish(all)
+                    // La lista de Diagnóstico no necesita 10 refrescos por segundo.
+                    if (now - lastPublish >= POLL_MS) { RadioCarData.publish(all); lastPublish = now }
                     val tank = settings.tankLiters
                     VehicleRepository.updateState { st ->
                         val mapped = CarKeyMapper.apply(st, all)
@@ -91,7 +98,11 @@ class RadioCarSource(private val context: Context) : VehicleDataSource {
         }
     }
 
-    /** Pide a la caja la trama 0x16 (velocidad y rpm) cada 500 ms, como el cuentarrevoluciones de la radio. */
+    /**
+     * Pide a la caja la trama 0x16 (velocidad y rpm) cada [QUERY_MS]. La app de la radio lo hace
+     * cada 500 ms y se nota el retraso; a 100 ms la aguja va al ritmo del motor. Es una trama de
+     * solo 6 bytes.
+     */
     private suspend fun askSpeed(car: VendorCar) {
         val settings = AppSettings(context)
         val frame = CanBoxFrames.query(CanBoxFrames.TYPE_DYNAMIC)
@@ -129,7 +140,7 @@ class RadioCarSource(private val context: Context) : VehicleDataSource {
 
     companion object {
         private const val POLL_MS = 300L
-        private const val QUERY_MS = 500L
+        private const val QUERY_MS = 100L
         private val BROADCASTS = listOf(
             "android.car.action.CANBUS_SPEED", "android.car.action.CANBUS_RPM", "android.car.action.OUT_TEMP",
             "android.car.action.OBD_STATE", "android.car.action.BRAKE_STATE",

@@ -80,7 +80,7 @@ import com.cockpitf30.ui.components.InitialFocus
 import com.cockpitf30.ui.components.TopBar
 import com.cockpitf30.ui.theme.Cockpit
 
-private class AppInfo(val key: String, val label: String, val pkg: String, val activity: String, val icon: ImageBitmap)
+private typealias AppInfo = com.cockpitf30.system.AppEntry
 
 /** Elemento sobre el que se abrió el menú de pulsación larga; [groupId] si está dentro de un grupo abierto. */
 private data class MenuTarget(val id: String, val groupId: String?)
@@ -94,19 +94,25 @@ private data class MenuTarget(val id: String, val groupId: String?)
 @Composable
 fun AppsScreen() {
     val context = LocalContext.current
-    val settings = remember { AppSettings(context) }
-    val apps = remember {
-        val pm = context.packageManager
-        pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
-            .filter { it.activityInfo.packageName != context.packageName }
-            .map {
-                val key = "${it.activityInfo.packageName}/${it.activityInfo.name}"
-                AppInfo(key, it.loadLabel(pm).toString(), it.activityInfo.packageName, it.activityInfo.name, it.loadIcon(pm).toBitmap(128, 128).asImageBitmap())
-            }
-            .sortedBy { it.label.lowercase() }
-            .associateBy { it.key }
+    val apps by com.cockpitf30.system.AppCatalog.apps.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { if (apps == null) com.cockpitf30.system.AppCatalog.load(context) }
+    val loaded = apps
+    if (loaded == null) {
+        // Solo pasa si se abre Apps justo al arrancar, antes de que acabe la carga en segundo plano.
+        TriangleBackground(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize()) { TopBar("Apps") {} }
+            com.cockpitf30.ui.components.LoadingOverlay(true, "Cargando apps…", graceMs = 0)
+        }
+    } else {
+        AppsContent(loaded)
     }
-    var layout by remember { mutableStateOf(AppLayout.merge(settings.appsLayout, apps.keys.toList())) }
+}
+
+@Composable
+private fun AppsContent(apps: Map<String, AppInfo>) {
+    val context = LocalContext.current
+    val settings = remember { AppSettings(context) }
+    var layout by remember(apps) { mutableStateOf(AppLayout.merge(settings.appsLayout, apps.keys.toList())) }
     var alphabetical by remember { mutableStateOf(settings.appsAlphabetical) }
     var openGroup by remember { mutableStateOf<String?>(null) }
     var menu by remember { mutableStateOf<MenuTarget?>(null) }

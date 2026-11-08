@@ -23,7 +23,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.cockpitf30.R
@@ -38,7 +37,7 @@ import com.cockpitf30.ui.theme.Cockpit
 fun TriangleBackground(modifier: Modifier = Modifier, dim: Float = 0.12f, content: @Composable BoxScope.() -> Unit) {
     Box(modifier.background(Cockpit.Background)) {
         Image(
-            painterResource(R.drawable.bg_triangles), null,
+            com.cockpitf30.ui.components.cachedPainter(R.drawable.bg_triangles), null,
             Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,
         )

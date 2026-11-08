@@ -86,6 +86,9 @@ class MainActivity : ComponentActivity() {
         IDriveInput.learned = AppSettings(this).knobKeys
         VehicleService.start(this)
         askBatteryExemptionOnce()
+        // Lo pesado, en segundo plano y antes de que haga falta: imágenes grandes y lista de apps.
+        com.cockpitf30.system.AppCatalog.load(this)
+        Thread({ com.cockpitf30.ui.components.Images.preload(this) }, "precarga").apply { priority = Thread.MIN_PRIORITY + 2 }.start()
 
         setContent {
             CockpitTheme {

@@ -230,6 +230,7 @@ fun WeatherScreen() {
                 }
             }
         }
+        com.cockpitf30.ui.components.LoadingOverlay(weather.loading && weather.forecast == null, "Cargando el tiempo…")
     }
 }
 

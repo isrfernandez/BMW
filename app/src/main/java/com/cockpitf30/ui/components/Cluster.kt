@@ -68,7 +68,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
-import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.cockpitf30.R
@@ -126,7 +125,7 @@ private val RPM_FRACTIONS = (0..8).map { it * 1000f / RPM_MAX }
 fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier = Modifier) {
     // Muelle en vez de tween: los datos llegan cada 50 ms y un tween reiniciado a cada dato va a
     // tirones; el muelle conserva la velocidad de la aguja al cambiar de objetivo.
-    val needle = spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
+    val needle = spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
     val speed by animateFloatAsState(state.speedKmh?.let(::speedFraction) ?: 0f, needle, label = "speed")
     val rpm by animateFloatAsState(((state.rpm ?: 0).coerceIn(0, RPM_MAX)).toFloat() / RPM_MAX, needle, label = "rpm")
     // El halo de las cifras solo necesita unos pocos niveles: así el texto no se recompone en cada fotograma.
@@ -137,8 +136,8 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     val scaleStyle = numeric(28, FontWeight.SemiBold)
     val smallStyle = numeric(17, FontWeight.SemiBold)
     val captionStyle = numeric(17, FontWeight.Medium)
-    val homeRes = ImageBitmap.imageResource(R.drawable.home_car_scene)
-    val trianglesRes = ImageBitmap.imageResource(R.drawable.bg_triangles)
+    val homeRes = cachedBitmap(R.drawable.home_car_scene)
+    val trianglesRes = cachedBitmap(R.drawable.bg_triangles)
     // Presiones y autonomía en grande para leerlas de un vistazo conduciendo.
     val overlay = Overlay(
         value = numeric(38, FontWeight.SemiBold),

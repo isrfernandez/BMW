@@ -130,7 +130,7 @@ class AppSettings(context: Context) {
         get() = prefs.getFloat(KEY_TANK, 57f)
         set(value) = prefs.edit().putFloat(KEY_TANK, value).apply()
 
-    /** Pedir a la caja CAN la velocidad y las rpm cada 500 ms (lo mismo que hace la app de la radio). */
+    /** Pedir a la caja CAN la velocidad y las rpm cada 100 ms (la app de la radio lo hace cada 500 ms). */
     var canAskSpeed: Boolean
         get() = prefs.getBoolean(KEY_CAN_ASK_SPEED, true)
         set(value) = prefs.edit().putBoolean(KEY_CAN_ASK_SPEED, value).apply()
