@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit
  *
  * [explore] se conecta a cada servicio de CarCanbus, lista sus métodos, se registra con
  * callbacks que apuntan todo en «Avisos del servicio» y llama a los métodos de lectura.
- * [exportApks] copia los APK del fabricante a Descargas para poder estudiarlos en el PC.
+ * [writeTestZip] guarda el informe y los APK del fabricante en un zip en Descargas.
  */
 object CanbusProbe {
     private const val CANBUS = "android.car.app.canbus"
@@ -171,30 +171,44 @@ object CanbusProbe {
         else -> v.toString().take(300)
     }
 
+    /** Apps del fabricante que interesa estudiar (las que existan en esta radio). */
+    private val VENDOR_PACKAGES = listOf(CANBUS, LAUNCHER, "com.ID801.launcher2", "android.car.server", "android.car.provider", "android.car.app.tpms")
+
     /**
-     * Copia los APK de CarCanbus, el lanzador BMW y el servicio del coche a Descargas
-     * (para pasarlos al PC y ver con calma cómo se piden puertas, presiones, rpm…).
+     * Guarda en Descargas un único zip con el informe y los APK del fabricante. (Antes cada APK
+     * iba suelto y Android recortaba el nombre en el primer punto: todos se pisaban.)
      */
-    fun exportApks(context: Context): String {
-        val pkgs = listOf(CANBUS, LAUNCHER, "android.car.server", "android.car.provider")
-        val done = mutableListOf<String>()
-        for (pkg in pkgs) {
-            val src = runCatching { java.io.File(context.packageManager.getApplicationInfo(pkg, 0).sourceDir) }.getOrNull() ?: continue
-            val name = "cockpit-$pkg.apk"
-            runCatching {
-                if (Build.VERSION.SDK_INT >= 29) {
-                    val values = ContentValues().apply {
-                        put(MediaStore.Downloads.DISPLAY_NAME, name)
-                        put(MediaStore.Downloads.MIME_TYPE, "application/vnd.android.package-archive")
-                    }
-                    val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: error("sin destino")
-                    context.contentResolver.openOutputStream(uri)!!.use { out -> src.inputStream().use { it.copyTo(out) } }
-                } else {
-                    src.copyTo(java.io.File(context.getExternalFilesDir(null), name), overwrite = true)
-                }
-                done += "$name (${src.length() / 1024} KB)"
-            }.onFailure { done += "$name: ${it.message}" }
+    fun writeTestZip(context: Context, report: String): String {
+        val stamp = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
+        val name = "cockpit-prueba-$stamp.zip"
+        val included = mutableListOf<String>()
+        fun write(out: java.io.OutputStream) = java.util.zip.ZipOutputStream(out.buffered()).use { zip ->
+            zip.putNextEntry(java.util.zip.ZipEntry("informe.txt"))
+            zip.write(report.toByteArray())
+            zip.closeEntry()
+            for (pkg in VENDOR_PACKAGES) {
+                val src = runCatching { java.io.File(context.packageManager.getApplicationInfo(pkg, 0).sourceDir) }.getOrNull() ?: continue
+                runCatching {
+                    zip.putNextEntry(java.util.zip.ZipEntry("apks/$pkg.apk"))
+                    src.inputStream().use { it.copyTo(zip) }
+                    zip.closeEntry()
+                    included += "$pkg (${src.length() / 1024 / 1024} MB)"
+                }.onFailure { included += "$pkg: ${it.message}" }
+            }
         }
-        return if (done.isEmpty()) "No se encontró ningún APK" else "Guardado en Descargas: ${done.joinToString()}"
+        val where = if (Build.VERSION.SDK_INT >= 29) {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.MIME_TYPE, "application/zip")
+            }
+            val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: error("MediaStore no devolvió destino")
+            context.contentResolver.openOutputStream(uri)!!.use(::write)
+            "Descargas/$name"
+        } else {
+            val file = java.io.File(context.getExternalFilesDir(null), name)
+            file.outputStream().use(::write)
+            file.absolutePath
+        }
+        return "$where · informe + ${included.joinToString()}"
     }
 }

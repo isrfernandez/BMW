@@ -93,6 +93,8 @@ fun DiagnosticsScreen() {
     val vehicle by VehicleRepository.state.collectAsStateWithLifecycle()
     var canbusProbe by remember { mutableStateOf<List<String>>(emptyList()) }
     var showAllKeys by remember { mutableStateOf(false) }
+    var testRunning by remember { mutableStateOf(false) }
+    var testResult by remember { mutableStateOf<String?>(null) }
 
     var mode by remember { mutableStateOf(settings.sourceMode) }
     var path by remember { mutableStateOf(settings.serialPath) }
@@ -159,19 +161,58 @@ fun DiagnosticsScreen() {
         }
     }
 
-    fun exportApks() {
-        busy = "Copiando APKs a Descargas…"
-        scope.launch {
-            val r = withContext(Dispatchers.IO) { runCatching { com.cockpitf30.vehicle.probe.CanbusProbe.exportApks(context) }.getOrElse { "Error: ${it.message}" } }
-            busy = r
-            android.widget.Toast.makeText(context, r.take(200), android.widget.Toast.LENGTH_LONG).show()
-        }
-    }
-
     // Lo de la radio va al principio: el informe completo pasa de 150 KB y al compartir se recorta.
     fun report() = buildReport(context, status, probes, packages, props, input, raw, bytes, broadcasts, sysApps, services, jars, carProbe, dataProbe, callbacks)
         .replaceFirst("\n== Puertos", radioReport(radioValues, radioChanges, canbusProbe, vehicle) + "\n== Puertos")
     val automotive = remember { CarPropertySource.isAvailable(context) }
+
+    /**
+     * Todo de una vez: busca las apps del coche, escucha sus broadcasts, explora el servicio,
+     * lee el almacén, se apunta a los avisos y a CarCanbus, deja [TEST_SECONDS] para abrir puertas
+     * y girar el volante, y guarda informe + APKs en un zip en Descargas.
+     */
+    fun fullTest() {
+        if (testRunning) return
+        testRunning = true
+        testResult = null
+        scope.launch {
+            fun step(text: String) { busy = text }
+            if (settings.sourceMode != SourceMode.RADIO && settings.sourceMode != SourceMode.AUTO) {
+                mode = SourceMode.AUTO
+                settings.sourceMode = SourceMode.AUTO
+                VehicleService.restart(context)
+            }
+            step("1/6 Buscando apps del coche…")
+            withContext(Dispatchers.IO) {
+                packages = SystemProbe.scan(context)
+                props = SystemProbe.properties()
+                sysApps = SystemProbe.systemApps(context)
+                services = SystemProbe.systemServices()
+                jars = SystemProbe.frameworkJars()
+                dexActions = com.cockpitf30.vehicle.probe.CarServiceProbe.dexActions(context)
+            }
+            BroadcastSniffer.start(context, (packages.orEmpty().flatMap { it.actions } + dexActions).distinct())
+            step("2/6 Explorando el servicio del coche…")
+            carProbe = withContext(Dispatchers.IO) { runCatching { com.cockpitf30.vehicle.probe.CarServiceProbe.run(context) }.getOrElse { listOf("Error: $it") } }
+            step("3/6 Leyendo el almacén de datos…")
+            dataProbe = withContext(Dispatchers.IO) { runCatching { com.cockpitf30.vehicle.probe.CarDataProbe.explore(context) }.getOrElse { listOf("Error: $it") } }
+            withContext(Dispatchers.IO) { runCatching { com.cockpitf30.vehicle.probe.CarDataProbe.startCallbacks(context) } }
+            step("4/6 Conectando con CarCanbus…")
+            canbusProbe = withContext(Dispatchers.IO) { runCatching { com.cockpitf30.vehicle.probe.CanbusProbe.explore(context) }.getOrElse { listOf("Error: $it") } }
+            for (left in TEST_SECONDS downTo 1) {
+                step("5/6 Ahora: abre y cierra cada puerta, el maletero y el capó, gira el volante y acelera un poco… $left s")
+                kotlinx.coroutines.delay(1000)
+            }
+            step("6/6 Guardando el zip (informe + apps del coche)…")
+            val r = withContext(Dispatchers.IO) {
+                runCatching { com.cockpitf30.vehicle.probe.CanbusProbe.writeTestZip(context, report()) }.getOrElse { "Error: ${it.message}" }
+            }
+            testResult = r
+            busy = null
+            testRunning = false
+            android.widget.Toast.makeText(context, r.take(200), android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
 
     fun apply() {
         settings.sourceMode = mode
@@ -207,6 +248,15 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                DiagCard("Prueba completa") {
+                    Info("1. Arranca el motor. 2. Pulsa el botón. 3. Cuando lo pida, abre y cierra cada puerta, el maletero y el capó, gira el volante y acelera un poco. " +
+                        "Al acabar (unos 2 minutos) queda un zip en Descargas: pásamelo tal cual.", Cockpit.TextDim)
+                    ChipRow(listOf(if (testRunning) "Prueba en marcha…" else "Prueba completa"), if (testRunning) 0 else -1, Modifier.focusRequester(first)) { fullTest() }
+                    busy?.let { Info(it, Cockpit.BlueLight) }
+                    testResult?.let { Info("Guardado: $it", if (it.startsWith("Error")) Cockpit.Alert else Cockpit.Ok) }
+                }
+            }
+            item {
                 DiagCard("Estado") {
                     Info("Versión instalada: ${installedVersion(context)}", Cockpit.BlueLight)
                     Info("Fuente: ${status.sourceName} · ${if (status.connected) "conectada" else "desconectada"}")
@@ -225,13 +275,12 @@ fun DiagnosticsScreen() {
                     Info("Leído: ${vehicleSummary(vehicle)}")
                     Info("Claves en la radio: ${radioValues.size}. Abre y cierra cada puerta, el maletero y el capó, arranca y gira el volante: aquí abajo sale qué clave cambia.", Cockpit.TextDim)
                     ChipRow(
-                        listOf(if (showAllKeys) "Ocultar claves" else "Ver todas las claves (${radioValues.size})", "Explorar CarCanbus", "Guardar APKs del coche en Descargas"),
+                        listOf(if (showAllKeys) "Ocultar claves" else "Ver todas las claves (${radioValues.size})", "Explorar CarCanbus"),
                         if (showAllKeys) 0 else -1,
                     ) {
                         when (it) {
                             0 -> showAllKeys = !showAllKeys
-                            1 -> exploreCanbus()
-                            else -> exportApks()
+                            else -> exploreCanbus()
                         }
                     }
                     if (showAllKeys) radioValues.toSortedMap().forEach { (k, v) -> Mono("$k = $v") }
@@ -269,7 +318,7 @@ fun DiagnosticsScreen() {
             }
             item {
                 DiagCard("Fuente de datos") {
-                    ChipRow(SourceMode.entries.map { it.label }, SourceMode.entries.indexOf(mode), Modifier.focusRequester(first)) {
+                    ChipRow(SourceMode.entries.map { it.label }, SourceMode.entries.indexOf(mode)) {
                         mode = SourceMode.entries[it]
                         apply()
                     }
@@ -422,6 +471,8 @@ fun DiagnosticsScreen() {
     }
     }
 }
+
+private const val TEST_SECONDS = 60
 
 private val BAUDS = listOf(19200, 38400, 57600, 115200)
 

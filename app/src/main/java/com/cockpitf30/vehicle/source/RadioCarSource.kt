@@ -196,49 +196,38 @@ class VendorCar private constructor(
     }
 
     /**
-     * Se apunta a los avisos del servicio para las claves del coche. Prueba primero
-     * registerCallback(String, String[], CarBaseCallback) y luego registerICarCallback.
+     * Se apunta a los avisos del servicio igual que el lanzador de serie (visto en su código):
+     * ICarService.registerCallback(Bundle{package_name, name, key_filter, version=2}, ICarCallback).
+     * Los cambios llegan como "callback.dm.data_changed" con {key, bundle}.
      */
     fun subscribe(context: Context, onChange: () -> Unit): String {
-        val keys = SUBSCRIBE.toTypedArray()
-        val me = context.packageName
-        val results = mutableListOf<String>()
-        base.javaClass.methods.filter { it.name == "registerCallback" && it.parameterTypes.size == 3 && it.parameterTypes[2].isInterface }
-            .forEach { m ->
-                val cbType = m.parameterTypes[2]
-                val cb = Proxy.newProxyInstance(loader, arrayOf(cbType)) { _, method, args ->
-                    when (method.name) {
-                        "hashCode" -> System.identityHashCode(this)
-                        "equals" -> false
-                        "toString" -> "CockpitCarBaseCallback"
-                        else -> {
-                            CarDataProbe.logCallback("${method.name}(${args.orEmpty().joinToString { RadioCarData.describe(it) }})")
-                            onChange()
-                            defaultFor(method.returnType)
-                        }
-                    }
-                }
-                val ok = runCatching { m.invoke(base, me, keys, cb) }.getOrElse { "error ${(it.cause ?: it).message}" }
-                results += "registerCallback(CarBaseCallback) = $ok"
-                if (ok == true) { callback = cb; return results.joinToString("; ") }
-            }
-        val iCb = CarDataProbe.sniffingCarCallback(loader) { onChange() }
-        if (iCb != null) {
-            val m = base.javaClass.methods.firstOrNull { it.name == "registerICarCallback" && it.parameterTypes.size == 3 }
-            if (m != null) {
-                val ok = runCatching { m.invoke(base, me, keys, iCb) }.getOrElse { "error ${(it.cause ?: it).message}" }
-                results += "registerICarCallback(pkg, claves) = $ok"
-                if (ok == true) callback = iCb
-            }
+        val iCb = runCatching { CarDataProbe.sniffingCarCallback(loader) { onChange() } }
+            .getOrElse { return "no se pudo crear el callback: ${(it.cause ?: it).javaClass.simpleName}: ${(it.cause ?: it).message}" }
+            ?: return "el APK no trae ICarCallback"
+        val cbType = loader.loadClass("android.car.server.ICarCallback")
+        val bundle = Bundle().apply {
+            putString("package_name", context.packageName)
+            putString("name", "cockpit")
+            putStringArray("key_filter", SUBSCRIBE.toTypedArray())
+            putInt("version", 2)
         }
-        return results.joinToString("; ").ifEmpty { "sin métodos de registro" }
+        val m = base.javaClass.getDeclaredMethod("registerICarCallback", Bundle::class.java, cbType).apply { isAccessible = true }
+        val ok = runCatching { m.invoke(base, bundle, iCb) }.getOrElse { "error ${(it.cause ?: it).message}" }
+        if (ok == true) callback = iCb
+        return "registerCallback(package_name, key_filter ${SUBSCRIBE.size} claves, version 2) = $ok"
     }
 
     companion object {
         val CLIENT_PACKAGES = listOf("com.bmw1.launcher2", "android.car.app.canbus")
         private const val BASE_MANAGER = "android.car.base.CarBaseManager2"
         private val PREFIXES = listOf("canbus.", "state.", "info.", "data.car_original.", "data.wy.", "data.cusp.", "data.zhtd.", "callback.")
-        private val SUBSCRIBE = listOf("canbus.", "state.", "info.", "data.car_original.", "data.wy.", "callback.")
+        // No sabemos si el filtro admite prefijos: van las claves conocidas y también los prefijos.
+        private val SUBSCRIBE = listOf(
+            "canbus.car_speed", "canbus.rotate_speed", "canbus.steering_value", "canbus.info.door", "canbus.state.door",
+            "state.wy.car_speed", "state.wy.car_oilmass", "state.wy.car_outtemp", "state.wy.car_safetybelt", "state.wy.car_handbrake",
+            "state.main.brake", "state.main.headlight_state", "state.main.acc",
+            "canbus.", "canbus.info.", "canbus.state.", "state.", "info.", "data.car_original.", "data.wy.", "callback.", "",
+        )
 
         @Volatile private var cached: VendorCar? = null
 
