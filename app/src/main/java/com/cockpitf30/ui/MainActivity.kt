@@ -91,6 +91,9 @@ class MainActivity : ComponentActivity() {
         Thread({
             com.cockpitf30.ui.components.Images.preload(this)
             com.cockpitf30.ui.components.Images.get(this, com.cockpitf30.R.drawable.spinner_sheet)
+            // La pantalla de inicio espera también a la lista de apps (como mucho 5 s).
+            val until = System.currentTimeMillis() + 5000
+            while (com.cockpitf30.system.AppCatalog.apps.value == null && System.currentTimeMillis() < until) Thread.sleep(50)
             com.cockpitf30.ui.components.Startup.ready.value = true
         }, "precarga").apply { priority = Thread.MIN_PRIORITY + 2 }.start()
 

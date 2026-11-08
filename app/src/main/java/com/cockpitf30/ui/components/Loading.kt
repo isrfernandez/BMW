@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.unit.sp
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.withStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -90,27 +92,64 @@ object Startup {
 }
 
 /**
- * Pantalla de arranque: el spinner sobre fondo opaco hasta que acaba la precarga (y al menos
- * [minMs], para que no sea un destello). Luego se funde y deja ver la app.
+ * Pantalla de arranque: la imagen del usuario (triángulo y rótulo «CockPit F30») con un haz de
+ * luz que recorre las letras. Dura al menos [minMs] y sigue mientras la precarga no termine
+ * (imágenes y lista de apps), con un tope de [maxMs] para no quedarse nunca colgada.
  */
 @Composable
-fun StartupSplash(minMs: Long = 1200) {
+fun StartupSplash(minMs: Long = 2000, maxMs: Long = 6000) {
     val ready by Startup.ready.collectAsState()
-    var minDone by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) { delay(minMs); minDone = 1 }
-    AnimatedVisibility(!(ready && minDone == 1), enter = fadeIn(), exit = fadeOut(androidx.compose.animation.core.tween(600))) {
-        Box(
-            Modifier.fillMaxSize().background(Cockpit.Background).pointerInput(Unit) { detectTapGestures { } },
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CockpitSpinner(Modifier.size(300.dp))
-                Spacer(Modifier.height(18.dp))
-                BrandTitle()
+    var elapsed by remember { mutableIntStateOf(0) } // 0 = antes de minMs, 1 = pasado, 2 = tope
+    LaunchedEffect(Unit) { delay(minMs); elapsed = 1; delay(maxMs - minMs); elapsed = 2 }
+    val visible = !(elapsed == 2 || (elapsed == 1 && ready))
+    AnimatedVisibility(visible, enter = fadeIn(), exit = fadeOut(androidx.compose.animation.core.tween(700))) {
+        val scene = cachedBitmap(R.drawable.splash_scene)
+        val mask = cachedBitmap(R.drawable.splash_text_mask)
+        val beam by androidx.compose.animation.core.rememberInfiniteTransition(label = "haz").animateFloat(
+            -0.35f, 1.35f,
+            androidx.compose.animation.core.infiniteRepeatable(
+                androidx.compose.animation.core.tween(1700, delayMillis = 350, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            ),
+            label = "haz",
+        )
+        Box(Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { } }) {
+            Canvas(Modifier.fillMaxSize()) {
+                drawImage(scene, dstSize = IntSize(size.width.toInt(), size.height.toInt()))
+                // El haz solo ilumina las letras: se pinta dentro de su silueta en una capa
+                // aparte que se suma (Plus) a la imagen.
+                val k = size.height / SPLASH_H
+                val left = (SPLASH_W - SPLASH_H) / 2f * size.width / SPLASH_W + TEXT_X * k
+                val top = TEXT_Y * k
+                // La silueta está recortada de la imagen de 1024 px; aquí la imagen mide 720.
+                val w = mask.width * k * 720f / 1024f
+                val h = mask.height * k * 720f / 1024f
+                val layer = androidx.compose.ui.geometry.Rect(left, top, left + w, top + h)
+                val canvas = drawContext.canvas
+                canvas.saveLayer(layer, androidx.compose.ui.graphics.Paint().apply { blendMode = androidx.compose.ui.graphics.BlendMode.Plus })
+                drawImage(mask, dstOffset = IntOffset(left.toInt(), top.toInt()), dstSize = IntSize(w.toInt(), h.toInt()))
+                val cx = left + w * beam
+                val band = w * 0.16f
+                drawRect(
+                    androidx.compose.ui.graphics.Brush.linearGradient(
+                        0f to Color.Transparent, 0.35f to Color(0xFF9FD4FF).copy(alpha = 0.55f), 0.5f to Color.White,
+                        0.65f to Color(0xFFFFD2B0).copy(alpha = 0.55f), 1f to Color.Transparent,
+                        start = androidx.compose.ui.geometry.Offset(cx - band, top), end = androidx.compose.ui.geometry.Offset(cx + band, top + h * 0.6f),
+                    ),
+                    topLeft = androidx.compose.ui.geometry.Offset(left, top), size = androidx.compose.ui.geometry.Size(w, h),
+                    blendMode = androidx.compose.ui.graphics.BlendMode.SrcIn,
+                )
+                canvas.restore()
             }
         }
     }
 }
+
+// Medidas de splash_scene (1920×720, con la imagen cuadrada de 720 en el centro) y del recorte
+// de las letras en la imagen original de 1024, ya escaladas a 720.
+private const val SPLASH_W = 1920f
+private const val SPLASH_H = 720f
+private const val TEXT_X = 150f * 720f / 1024f
+private const val TEXT_Y = 790f * 720f / 1024f
 
 /**
  * «COCKPIT F30»: COCKPIT fino y muy espaciado en plata, F30 en cobre pulido, con un filo de luz
