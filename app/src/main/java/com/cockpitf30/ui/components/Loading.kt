@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -75,6 +76,30 @@ fun LoadingOverlay(visible: Boolean, text: String? = null, graceMs: Long = 150) 
                 CockpitSpinner()
                 if (text != null) Text(text, style = MaterialTheme.typography.bodyLarge, color = Cockpit.TextDim)
             }
+        }
+    }
+}
+
+/** true cuando las imágenes grandes ya están decodificadas (lo pone la precarga de MainActivity). */
+object Startup {
+    val ready = kotlinx.coroutines.flow.MutableStateFlow(false)
+}
+
+/**
+ * Pantalla de arranque: el spinner sobre fondo opaco hasta que acaba la precarga (y al menos
+ * [minMs], para que no sea un destello). Luego se funde y deja ver la app.
+ */
+@Composable
+fun StartupSplash(minMs: Long = 1200) {
+    val ready by Startup.ready.collectAsState()
+    var minDone by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) { delay(minMs); minDone = 1 }
+    AnimatedVisibility(!(ready && minDone == 1), enter = fadeIn(), exit = fadeOut(androidx.compose.animation.core.tween(600))) {
+        Box(
+            Modifier.fillMaxSize().background(Cockpit.Background).pointerInput(Unit) { detectTapGestures { } },
+            contentAlignment = Alignment.Center,
+        ) {
+            CockpitSpinner(Modifier.size(200.dp))
         }
     }
 }

@@ -88,11 +88,18 @@ class MainActivity : ComponentActivity() {
         askBatteryExemptionOnce()
         // Lo pesado, en segundo plano y antes de que haga falta: imágenes grandes y lista de apps.
         com.cockpitf30.system.AppCatalog.load(this)
-        Thread({ com.cockpitf30.ui.components.Images.preload(this) }, "precarga").apply { priority = Thread.MIN_PRIORITY + 2 }.start()
+        Thread({
+            com.cockpitf30.ui.components.Images.preload(this)
+            com.cockpitf30.ui.components.Images.get(this, com.cockpitf30.R.drawable.spinner_sheet)
+            com.cockpitf30.ui.components.Startup.ready.value = true
+        }, "precarga").apply { priority = Thread.MIN_PRIORITY + 2 }.start()
 
         setContent {
             CockpitTheme {
-                CockpitRoot(navActions)
+                Box(Modifier.fillMaxSize()) {
+                    CockpitRoot(navActions)
+                    com.cockpitf30.ui.components.StartupSplash()
+                }
             }
         }
     }
