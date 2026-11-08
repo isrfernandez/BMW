@@ -41,7 +41,7 @@ class RobotVoiceTest {
 
     @Test
     fun processedVoiceIsLoudButNotClipped() {
-        val out = RobotVoice.process(tone(24_000, 500))
+        val out = RobotVoice.process(tone(24_000, 500), RobotVoice.Strength.STRONG)
         val peak = out.samples.maxOf { abs(it.toInt()) }
         assertTrue("pico $peak", peak in 25_000..30_000)
         assertTrue(out.samples.size >= 12_000)

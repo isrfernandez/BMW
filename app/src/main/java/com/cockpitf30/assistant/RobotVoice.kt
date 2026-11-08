@@ -23,10 +23,22 @@ class Pcm(val samples: ShortArray, val rate: Int) {
  * Todo es Kotlin puro y sin conexión: se procesa el WAV que genera el TextToSpeech de la radio.
  */
 object RobotVoice {
+    // Por defecto la voz es natural (Strength.NATURAL) y este filtro no se usa; queda para quien
+    // quiera un toque de máquina.
 
-    /** Tono y velocidad que se piden al TextToSpeech (1.0 = normal). */
-    const val TTS_PITCH = 0.72f
-    const val TTS_RATE = 0.9f
+    /**
+     * Estilo de la voz. [pitch] y [rate] se piden al TextToSpeech (1.0 = normal). NATURAL es la voz de
+     * la radio, de hombre adulto, algo más grave y pausada, sin filtro; los demás pasan además por el
+     * filtro con los parámetros dados ([filter] = false: sin filtro).
+     */
+    enum class Strength(
+        val label: String, val pitch: Float, val rate: Float, val filter: Boolean,
+        val comb1: Float = 0f, val comb2: Float = 0f, val feedback: Float = 0f, val ring: Float = 0f, val drive: Float = 1f, val presenceDb: Double = 0.0,
+    ) {
+        NATURAL("Natural", 0.9f, 0.94f, false),
+        SOFT("Con timbre de máquina", 0.88f, 0.93f, true, 0.10f, 0.06f, 0.28f, 0.0f, 1.05f, 1.5),
+        STRONG("Robot", 0.75f, 0.9f, true, 0.30f, 0.20f, 0.48f, 0.08f, 1.7f, 4.0),
+    }
 
     /** Lee un WAV PCM de 16 bits (mono o estéreo, que se mezcla a mono). null si no es ese formato. */
     fun readWav(bytes: ByteArray): Pcm? {
@@ -71,7 +83,7 @@ object RobotVoice {
     fun readWav(file: File): Pcm? = runCatching { readWav(file.readBytes()) }.getOrNull()
 
     /** Aplica el timbre de robot. */
-    fun process(input: Pcm): Pcm {
+    fun process(input: Pcm, strength: Strength = Strength.SOFT): Pcm {
         val sr = input.rate
         val n = input.samples.size
         val pad = sr / 8 // cola para que la resonancia no se corte en seco
@@ -80,15 +92,15 @@ object RobotVoice {
         // 1) Banda de altavoz: fuera retumbe (<120 Hz) y siseo (>5,5 kHz); algo de presencia a 2,2 kHz.
         Biquad.highPass(sr, 120.0).run(x)
         Biquad.lowPass(sr, 5_500.0).run(x)
-        Biquad.peak(sr, 2_200.0, gainDb = 4.0, q = 1.0).run(x)
+        Biquad.peak(sr, 2_200.0, gainDb = strength.presenceDb, q = 1.0).run(x)
 
         // 2) Carcasa metálica: dos peines cortos (resonancias inarmónicas, suena a caja de metal).
         val wet = FloatArray(x.size)
-        comb(x, wet, delay = (sr * 0.0047).toInt(), feedback = 0.5f, gain = 0.32f)
-        comb(x, wet, delay = (sr * 0.0071).toInt(), feedback = 0.42f, gain = 0.22f)
+        comb(x, wet, delay = (sr * 0.0047).toInt(), feedback = strength.feedback, gain = strength.comb1)
+        comb(x, wet, delay = (sr * 0.0071).toInt(), feedback = strength.feedback * 0.85f, gain = strength.comb2)
 
         // 3) Zumbido electrónico: modulación en anillo a 55 Hz, muy poca, para que no suene a Dalek.
-        val ring = 0.10f
+        val ring = strength.ring
         val w = 2 * PI * 55.0 / sr
         for (i in x.indices) {
             val dry = x[i] + wet[i]
@@ -96,7 +108,7 @@ object RobotVoice {
         }
 
         // 4) Saturación suave y volumen al 90 %.
-        val drive = 1.8f
+        val drive = strength.drive
         val norm = tanh(drive)
         var peak = 1e-6f
         for (i in x.indices) {

@@ -642,15 +642,37 @@ object VoiceAssistant {
             val robot = settings().assistantRobotVoice
             val voices = t.voices.orEmpty().filter { it.locale.language == "es" && !it.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) }
             // Sin elegir: una voz masculina local si el motor la marca así (TARS es grave), si no la de siempre.
-            val male = Regex("(^|[^e])male")
-            val pick = voices.firstOrNull { it.name == name }
-                ?: if (robot) voices.filter { !it.isNetworkConnectionRequired }
-                    .firstOrNull { v -> male.containsMatchIn(v.name.lowercase()) || v.features.orEmpty().any { male.containsMatchIn(it.lowercase()) } }
-                else null
-            pick?.let { t.voice = it }
-            t.setPitch(if (robot) RobotVoice.TTS_PITCH else 1f)
-            t.setSpeechRate(if (robot) RobotVoice.TTS_RATE else 1f)
+            val pick = voices.firstOrNull { it.name == name } ?: if (robot) maleVoice(voices) else null
+            if (pick != null) t.voice = pick else t.setLanguage(Locale("es", "ES"))
+            val st = settings().assistantRobotStrength
+            t.setPitch(if (robot) st.pitch else 1f)
+            t.setSpeechRate(if (robot) st.rate else 1f)
         }.onFailure { Log.w(TAG, "Voz", it) }
+    }
+
+    /**
+     * Una voz de hombre en español si el motor la marca así («male» en el nombre o las
+     * características) o, en el motor de Google, las que suelen ser masculinas (es-ES «eed»/«eef»,
+     * es-US «esd»). Si no, null (la voz por defecto). Se prefieren las que no necesitan Internet.
+     */
+    private fun maleVoice(voices: List<android.speech.tts.Voice>): android.speech.tts.Voice? {
+        val male = Regex("(^|[^e])male")
+        val local = voices.sortedWith(compareBy({ it.isNetworkConnectionRequired }, { it.locale.country != "ES" }))
+        return local.firstOrNull { v -> male.containsMatchIn(v.name.lowercase()) || v.features.orEmpty().any { male.containsMatchIn(it.lowercase()) } }
+            ?: listOf("es-es-x-eed", "es-es-x-eef", "es-us-x-esd").firstNotNullOfOrNull { id -> local.firstOrNull { it.name.lowercase().startsWith(id) } }
+    }
+
+    /** Diagnóstico: pasar a la siguiente voz en español y probarla. Devuelve su nombre. */
+    fun nextVoice(context: Context): String? {
+        app = context.applicationContext
+        val list = spanishVoices()
+        if (list.isEmpty()) return null
+        val i = list.indexOf(currentVoice())
+        val next = list[(i + 1) % list.size]
+        settings().assistantVoiceName = next
+        applyVoice(next)
+        testVoice(context)
+        return next
     }
 
     /** Diagnóstico: probar la voz con una frase. */
@@ -674,7 +696,7 @@ object VoiceAssistant {
         if (t != null && ttsReady && settings().assistantSpeaks) {
             // No escuchar mientras habla la radio: se oiría a sí misma.
             muted = true
-            if (settings().assistantRobotVoice && !robotBroken && synthesizeRobot(t, text)) {
+            if (settings().assistantRobotVoice && settings().assistantRobotStrength.filter && !robotBroken && synthesizeRobot(t, text)) {
                 // La síntesis a archivo tarda un poco más; el tiempo real se ajusta al reproducir.
                 unmuteJob = scope.launch { delay(6_000L + text.length * 120L); doneSpeaking() }
             } else {
@@ -714,7 +736,8 @@ object VoiceAssistant {
     private suspend fun playRobot(id: String) {
         if (!robotText.containsKey(id)) return // ya se canceló o llegó otra frase
         val file = robotFile(id)
-        val pcm = withContext(Dispatchers.Default) { RobotVoice.readWav(file)?.let(RobotVoice::process) }
+        val pcm = withContext(Dispatchers.Default) { val st = settings().assistantRobotStrength
+            RobotVoice.readWav(file)?.let { RobotVoice.process(it, st) } }
         file.delete()
         if (pcm == null || pcm.samples.isEmpty()) { robotFailed(id); return }
         if (robotText.remove(id) == null || _state.value.phase != AssistantPhase.ANSWERING) return

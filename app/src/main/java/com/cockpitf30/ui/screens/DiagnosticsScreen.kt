@@ -455,11 +455,11 @@ fun DiagnosticsScreen() {
                         voiceTalks = it == 0
                         settings.assistantSpeaks = voiceTalks
                     }
-                    // Voz al estilo TARS: grave, lenta y con timbre metálico; humor ajustable como en la película.
+                    // Voz al estilo TARS: hombre adulto, grave y pausada; humor ajustable como en la película.
                     var robot by remember { mutableStateOf(settings.assistantRobotVoice) }
                     var voiceName by remember { mutableStateOf(settings.assistantVoiceName) }
                     val assistant = com.cockpitf30.assistant.VoiceAssistant
-                    ChipRow(listOf("Voz robot (TARS)", "Voz normal", "Probar voz"), if (robot) 0 else 1) {
+                    ChipRow(listOf("Voz estilo TARS", "Voz de la radio", "Probar voz"), if (robot) 0 else 1) {
                         if (it == 2) assistant.testVoice(context)
                         else {
                             robot = it == 0
@@ -467,13 +467,28 @@ fun DiagnosticsScreen() {
                             assistant.applyVoice()
                         }
                     }
-                    val voices = remember(voice.phase) { assistant.spanishVoices() }
+                    if (robot) {
+                        val strengths = com.cockpitf30.assistant.RobotVoice.Strength.entries
+                        var strength by remember { mutableStateOf(settings.assistantRobotStrength) }
+                        ChipRow(strengths.map { it.label }, strengths.indexOf(strength)) {
+                            strength = strengths[it]
+                            settings.assistantRobotStrength = strength
+                            assistant.applyVoice()
+                            assistant.testVoice(context)
+                        }
+                    }
+                    val voices = remember(voice.phase, voiceName) { assistant.spanishVoices() }
                     if (voices.isNotEmpty()) {
-                        val shown = (listOfNotNull(voiceName) + voices).distinct().take(5)
-                        ChipRow(listOf("Voz automática") + shown, if (voiceName == null) 0 else 1 + shown.indexOf(voiceName)) {
-                            voiceName = if (it == 0) null else shown[it - 1]
-                            settings.assistantVoiceName = voiceName
-                            assistant.applyVoice(voiceName)
+                        // El motor no siempre dice qué voz es de hombre: «Cambiar voz» las va probando.
+                        ChipRow(listOf("Voz automática", "Cambiar voz ›"), if (voiceName == null) 0 else 1) {
+                            if (it == 0) {
+                                voiceName = null
+                                settings.assistantVoiceName = null
+                                assistant.applyVoice(null)
+                                assistant.testVoice(context)
+                            } else {
+                                voiceName = assistant.nextVoice(context)
+                            }
                         }
                     }
                     Info("Voz en uso: ${assistant.currentVoice() ?: "—"} · ${voices.size} voces en español", Cockpit.TextDim)
