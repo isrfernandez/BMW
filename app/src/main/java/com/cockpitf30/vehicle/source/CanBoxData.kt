@@ -17,6 +17,15 @@ object CanBoxData {
     private val values = ConcurrentHashMap<String, Any>()
     private val stats = ConcurrentHashMap<Int, Stat>()
     private val bad = AtomicLong()
+    private val time = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
+    private val lastPayload = ConcurrentHashMap<Int, String>()
+    private val changeLog = java.util.concurrent.ConcurrentLinkedDeque<String>()
+
+    /**
+     * Cada vez que cambia el contenido de una trama (menos 0x16, que cambia sin parar), con la hora:
+     * abriendo las puertas de una en una se ve qué bit es cada una.
+     */
+    fun changes(): List<String> = changeLog.toList()
 
     /** true en cuanto llega una trama 0x12 válida: la caja habla este protocolo y se le puede preguntar. */
     @Volatile var baseSeen = false
@@ -37,7 +46,12 @@ object CanBoxData {
     fun feed(bytes: ByteArray) {
         val frames = CanBoxFrames.split(bytes) { bad.incrementAndGet() }
         for (f in frames) {
-            stats.getOrPut(f.type) { Stat(0, "") }.apply { count++; last = f.hex() }
+            val hex = f.hex()
+            stats.getOrPut(f.type) { Stat(0, "") }.apply { count++; last = hex }
+            if (f.type != CanBoxFrames.TYPE_DYNAMIC && lastPayload.put(f.type, hex) != hex) {
+                changeLog.addFirst("${java.time.LocalTime.now().format(time)}  $hex")
+                while (changeLog.size > 300) changeLog.pollLast()
+            }
             CanBoxFrames.decode(f).forEach { (k, v) -> values[k] = v }
             if (f.type == CanBoxFrames.TYPE_BASE) baseSeen = true
         }

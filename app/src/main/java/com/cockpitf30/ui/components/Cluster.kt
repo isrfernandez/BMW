@@ -757,13 +757,13 @@ private fun DrawScope.drawMark(
 ) {
     val label = tm.measure(text, style)
     val y = g.y1 - (g.y1 - g.y0) * fraction
-    // La cifra cuelga justo debajo de su marca: así la de arriba del todo cabe en la franja y no
-    // choca con la siguiente.
-    val cy = y + g.dp(2f) + label.size.height / 2f
+    // La cifra va centrada en la altura de su marca (el 1 en la raya de 1000 rpm), a la derecha
+    // de la raya. Solo la de arriba del todo baja lo justo para no salirse de la franja.
+    val cy = y.coerceAtLeast(g.y0 + g.dp(3f) + label.size.height / 2f)
     val cx = g.chevronX(cy, g.band * 0.60f)
     val center = g.mirror(cx, mirrored)
     val topLeft = Offset(center - label.size.width / 2f, cy - label.size.height / 2f)
-    // Grabada si la cifra (que cuelga bajo su marca) queda dentro de la parte rellena.
+    // Grabada si la cifra queda dentro de la parte rellena.
     val engraved = (g.y1 - cy) / (g.y1 - g.y0) <= level
     if (engraved) drawText(label, color = look.dark.copy(alpha = 0.92f), topLeft = topLeft, shadow = EngraveLight)
     else drawText(label, color = color, topLeft = topLeft, shadow = LabelShadow)

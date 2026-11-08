@@ -66,20 +66,26 @@ object CanBoxFrames {
             put("can.central_lock", f.u(2) == 1)
             put("can.handbrake", f.u(3) == 1)
             val d = f.u(4)
-            put("can.door_fl", d and 0x80 != 0)
-            put("can.door_fr", d and 0x40 != 0)
-            put("can.door_rl", d and 0x20 != 0)
-            put("can.door_rr", d and 0x10 != 0)
-            put("can.door_back", d and 0x08 != 0)
-            put("can.door_front", d and 0x04 != 0)
+            // En el F30 d4 se queda a 0; en la prueba del 08/11 lo que cambió al abrir fue el
+            // bit 0 de d8 (un byte que la app de la radio ni lee). Suponemos d8 = puertas en orden
+            // conductor, acompañante, traseras, maletero, capó, hasta verlo puerta a puerta.
+            val e = if (f.data.size > 8) f.u(8) else 0
+            put("can.door_fl", d and 0x80 != 0 || e and 0x01 != 0)
+            put("can.door_fr", d and 0x40 != 0 || e and 0x02 != 0)
+            put("can.door_rl", d and 0x20 != 0 || e and 0x04 != 0)
+            put("can.door_rr", d and 0x10 != 0 || e and 0x08 != 0)
+            put("can.door_back", d and 0x08 != 0 || e and 0x10 != 0)
+            put("can.door_front", d and 0x04 != 0 || e and 0x20 != 0)
+            put("can.d8_raw", e)
             put("can.fuel_liters", f.u(5))
             put("can.belt_driver", (f.u(6) shr 6) and 0x03 == 1)
             put("can.belt_passenger", (f.u(6) shr 4) and 0x03 == 1)
             val t = f.u(7) and 0x7F
             val temp = if (f.u(7) and 0x80 != 0) t else -t
+            // La fórmula de la app de la radio da −40/−42 en el F30: no es la temperatura (o usa
+            // otra escala). Se guarda en bruto para Diagnóstico y no se enseña en el cuadro.
             put("can.exterior_temp_raw", temp)
-            // −40 (0x28) es lo que manda la caja cuando no tiene el dato.
-            if (temp != -40) put("can.out_temp", temp)
+            put("can.d7_raw", f.u(7))
         }
         TYPE_DYNAMIC -> if (f.data.size < 4) emptyMap() else mapOf(
             "can.speed" to (f.u(0) shl 8 or f.u(1)),

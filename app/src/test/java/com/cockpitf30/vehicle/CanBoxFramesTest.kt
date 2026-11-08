@@ -19,7 +19,7 @@ class CanBoxFramesTest {
         assertEquals(false, v["can.door_fl"])
         assertEquals(18, v["can.fuel_liters"])
         assertEquals(-40, v["can.exterior_temp_raw"])
-        assertTrue("−40 es «sin dato»", "can.out_temp" !in v)
+        assertTrue("la fórmula de la radio no vale para el F30", "can.out_temp" !in v)
     }
 
     @Test fun badChecksumIsRejected() {
@@ -38,10 +38,16 @@ class CanBoxFramesTest {
         assertEquals(50, s.speedKmh)
         assertEquals(800, s.rpm)
         assertEquals(500, s.rangeKm)
-        assertEquals(21f, s.outsideTempC)
         assertEquals(Doors(driver = true, passenger = false, rearLeft = true, rearRight = false, trunk = true, hood = false), s.doors)
         assertEquals(123456, values["can.mileage"])
         assertEquals(true, values["can.belt_driver"])
+    }
+
+    @Test fun byteD8Bit0IsTheDriverDoor() {
+        // Mismo coche, mismo momento: solo cambió el último byte (bloque de 23 tramas seguidas).
+        val v = CanBoxFrames.decode(CanBoxFrames.split(hex("5A A5 09 12 01 00 00 01 00 12 00 28 01 57"))[0])
+        assertEquals(true, v["can.door_fl"])
+        assertEquals(false, v["can.door_fr"])
     }
 
     @Test fun speedQueryIsTheSameTheRadioSends() {

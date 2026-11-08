@@ -11,6 +11,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.withStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,12 +38,12 @@ import kotlinx.coroutines.delay
 
 private const val FRAMES = 60
 private const val COLS = 10
-private const val CELL = 160
+private const val CELL = 256
 private const val FRAME_MS = 30L
 
 /** El triángulo de cobre y luz azul del usuario (60 fotogramas de su GIF, fondo quitado). */
 @Composable
-fun CockpitSpinner(modifier: Modifier = Modifier.size(140.dp)) {
+fun CockpitSpinner(modifier: Modifier = Modifier.size(240.dp)) {
     val sheet = cachedBitmap(R.drawable.spinner_sheet)
     var frame by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
@@ -99,7 +103,39 @@ fun StartupSplash(minMs: Long = 1200) {
             Modifier.fillMaxSize().background(Cockpit.Background).pointerInput(Unit) { detectTapGestures { } },
             contentAlignment = Alignment.Center,
         ) {
-            CockpitSpinner(Modifier.size(200.dp))
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CockpitSpinner(Modifier.size(300.dp))
+                Spacer(Modifier.height(18.dp))
+                BrandTitle()
+            }
         }
+    }
+}
+
+/**
+ * «COCKPIT F30»: COCKPIT fino y muy espaciado en plata, F30 en cobre pulido, con un filo de luz
+ * azul debajo que se apaga hacia los lados, como el triángulo del spinner.
+ */
+@Composable
+fun BrandTitle() {
+    val silver = androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0xFFF4F8FC), Cockpit.SteelBlueLight, Color(0xFF8FA6BF)))
+    val copper = androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Cockpit.CopperLight, Cockpit.Copper, Color(0xFF8A4A28)))
+    val glow = androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(Cockpit.BlueLight.copy(alpha = 0.55f), androidx.compose.ui.geometry.Offset.Zero, 18f))
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            androidx.compose.ui.text.buildAnnotatedString {
+                withStyle(androidx.compose.ui.text.SpanStyle(brush = silver, fontFamily = com.cockpitf30.ui.theme.Inter, fontWeight = androidx.compose.ui.text.font.FontWeight.Light, letterSpacing = 14.sp)) { append("COCKPIT") }
+                append("  ")
+                withStyle(androidx.compose.ui.text.SpanStyle(brush = copper, fontFamily = com.cockpitf30.ui.theme.Saira, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, letterSpacing = 4.sp)) { append("F30") }
+            },
+            fontSize = 44.sp,
+            style = glow,
+        )
+        Spacer(Modifier.height(10.dp))
+        Box(
+            Modifier.size(width = 420.dp, height = 2.dp).background(
+                androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color.Transparent, Cockpit.BlueLight.copy(alpha = 0.9f), Cockpit.CopperLight.copy(alpha = 0.8f), Color.Transparent)),
+            ),
+        )
     }
 }

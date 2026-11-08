@@ -280,6 +280,9 @@ fun DiagnosticsScreen() {
                     else {
                         Info("Caja CAN: ${canBoxSummary(radioValues)}")
                         frames.forEach { Mono(it) }
+                        val canChanges = com.cockpitf30.vehicle.source.CanBoxData.changes()
+                        Info("Cambios en las tramas (abre las puertas de una en una, con unos segundos entre cada una):", Cockpit.TextDim)
+                        canChanges.take(30).forEach { Mono(it) }
                     }
                     ChipRow(listOf("Pedir velocidad y rpm a la caja: ${if (askSpeed) "sí" else "no"}"), if (askSpeed) 0 else -1) {
                         askSpeed = !askSpeed
@@ -674,7 +677,7 @@ private fun canBoxSummary(values: Map<String, String>): String {
     return "ACC ${yes("can.acc", "sí", "no")} · freno de mano ${yes("can.handbrake", "puesto", "quitado")} · " +
         "cierre ${yes("can.central_lock", "cerrado", "abierto")} · cinturón conductor ${yes("can.belt_driver", "puesto", "sin poner")} · " +
         "combustible ${values["can.fuel_liters"] ?: "?"} · km ${values["can.mileage"] ?: "?"} · autonomía ${values["can.fuel_range"] ?: "?"} · " +
-        "exterior ${values["can.exterior_temp_raw"] ?: "?"} · velocidad ${values["can.speed"] ?: "?"} · rpm ${values["can.rpm"] ?: "?"}"
+        "d7 (¿temperatura?) ${values["can.d7_raw"] ?: "?"} · d8 ${values["can.d8_raw"] ?: "?"} · velocidad ${values["can.speed"] ?: "?"} · rpm ${values["can.rpm"] ?: "?"}"
 }
 
 private fun radioReport(values: Map<String, String>, changes: List<String>, canbus: List<String>, vehicle: com.cockpitf30.vehicle.VehicleState): String = buildString {
@@ -685,6 +688,8 @@ private fun radioReport(values: Map<String, String>, changes: List<String>, canb
     appendLine("== Caja CAN (tramas callback.pt.canbus_cmd)")
     appendLine(canBoxSummary(values))
     com.cockpitf30.vehicle.source.CanBoxData.summary().forEach(::appendLine)
+    appendLine("-- cambios de contenido (la más nueva arriba)")
+    com.cockpitf30.vehicle.source.CanBoxData.changes().forEach(::appendLine)
     appendLine()
     values.toSortedMap().forEach { (k, v) -> appendLine("$k = $v") }
     appendLine()
