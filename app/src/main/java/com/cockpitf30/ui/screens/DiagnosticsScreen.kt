@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -429,6 +430,18 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                // Nivel de humor del asistente, como el robot TARS. También por voz: «Hola BMW, humor al 60 por ciento».
+                val assistant = com.cockpitf30.assistant.VoiceAssistant
+                LaunchedEffect(Unit) { assistant.loadHumor(context) }
+                val humor by assistant.humor.collectAsStateWithLifecycle()
+                DiagCard("Humor del asistente: $humor %") {
+                    ChipRow(listOf("− 5 %", "+ 5 %"), -1) { assistant.setHumor(context, humor + if (it == 0) -5 else 5) }
+                    val levels = listOf(0, 25, 50, 75, 90, 100)
+                    ChipRow(levels.map { "$it %" }, levels.indexOf(humor)) { assistant.setHumor(context, levels[it]) }
+                    Info("0 % responde seco y sin bromas; 100 % siempre con una broma. Por voz: «Hola BMW, humor al 60 por ciento», «sube el humor», «baja el humor» o «¿qué humor tienes?».", Cockpit.TextDim)
+                }
+            }
+            item {
                 // Asistente «Hola BMW»: activar, voz en alto y estado del micrófono y del modelo.
                 val voice by com.cockpitf30.assistant.VoiceAssistant.state.collectAsStateWithLifecycle()
                 var voiceOn by remember { mutableStateOf(settings.assistantEnabled) }
@@ -442,6 +455,28 @@ fun DiagnosticsScreen() {
                         voiceTalks = it == 0
                         settings.assistantSpeaks = voiceTalks
                     }
+                    // Voz al estilo TARS: grave, lenta y con timbre metálico; humor ajustable como en la película.
+                    var robot by remember { mutableStateOf(settings.assistantRobotVoice) }
+                    var voiceName by remember { mutableStateOf(settings.assistantVoiceName) }
+                    val assistant = com.cockpitf30.assistant.VoiceAssistant
+                    ChipRow(listOf("Voz robot (TARS)", "Voz normal", "Probar voz"), if (robot) 0 else 1) {
+                        if (it == 2) assistant.testVoice(context)
+                        else {
+                            robot = it == 0
+                            settings.assistantRobotVoice = robot
+                            assistant.applyVoice()
+                        }
+                    }
+                    val voices = remember(voice.phase) { assistant.spanishVoices() }
+                    if (voices.isNotEmpty()) {
+                        val shown = (listOfNotNull(voiceName) + voices).distinct().take(5)
+                        ChipRow(listOf("Voz automática") + shown, if (voiceName == null) 0 else 1 + shown.indexOf(voiceName)) {
+                            voiceName = if (it == 0) null else shown[it - 1]
+                            settings.assistantVoiceName = voiceName
+                            assistant.applyVoice(voiceName)
+                        }
+                    }
+                    Info("Voz en uso: ${assistant.currentVoice() ?: "—"} · ${voices.size} voces en español", Cockpit.TextDim)
                     Info("Estado: ${voice.phase} · micrófono ${"%.0f".format(voice.level * 100)} %" + (voice.error?.let { " · $it" } ?: ""))
                     Info("Modelo ${com.cockpitf30.assistant.VoiceModel.NAME}: " + if (com.cockpitf30.assistant.VoiceModel.isReady(context)) "instalado" else "no instalado")
                     voice.lastText?.let { Mono("Último reconocido: «$it»") }

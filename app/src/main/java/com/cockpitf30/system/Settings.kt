@@ -53,6 +53,21 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_ASSISTANT_TTS, true)
         set(value) = prefs.edit().putBoolean(KEY_ASSISTANT_TTS, value).apply()
 
+    /** Voz grave y metálica al estilo del robot TARS (false = voz normal de la radio). */
+    var assistantRobotVoice: Boolean
+        get() = prefs.getBoolean(KEY_ASSISTANT_ROBOT, true)
+        set(value) = prefs.edit().putBoolean(KEY_ASSISTANT_ROBOT, value).apply()
+
+    /** Nivel de humor del asistente, 0..100 %. */
+    var assistantHumor: Int
+        get() = prefs.getInt(KEY_ASSISTANT_HUMOR, com.cockpitf30.assistant.Personality.DEFAULT_HUMOR)
+        set(value) = prefs.edit().putInt(KEY_ASSISTANT_HUMOR, value.coerceIn(0, 100)).apply()
+
+    /** Nombre de la voz del motor de la radio elegida en Diagnóstico; null = elegir sola. */
+    var assistantVoiceName: String?
+        get() = prefs.getString(KEY_ASSISTANT_VOICE, null)
+        set(value) = prefs.edit().putString(KEY_ASSISTANT_VOICE, value).apply()
+
     var askedMicrophone: Boolean
         get() = prefs.getBoolean(KEY_ASKED_MIC, false)
         set(value) = prefs.edit().putBoolean(KEY_ASKED_MIC, value).apply()
@@ -139,6 +154,9 @@ class AppSettings(context: Context) {
         const val KEY_CAN_ASK_SPEED = "can_ask_speed"
         const val KEY_ASSISTANT = "assistant_enabled"
         const val KEY_ASSISTANT_TTS = "assistant_tts"
+        const val KEY_ASSISTANT_ROBOT = "assistant_robot_voice"
+        const val KEY_ASSISTANT_HUMOR = "assistant_humor"
+        const val KEY_ASSISTANT_VOICE = "assistant_voice_name"
         const val KEY_ASKED_MIC = "asked_microphone"
         const val KEY_TRIP_CURRENT = "trip_current"
         const val KEY_TRIP_LAST = "trip_last"

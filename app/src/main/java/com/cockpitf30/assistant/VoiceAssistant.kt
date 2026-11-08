@@ -6,9 +6,11 @@ import android.app.SearchManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
+import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.media.ToneGenerator
 import android.net.Uri
@@ -110,6 +112,22 @@ object VoiceAssistant {
     /** Tiempo para decir la orden después de «Hola BMW». */
     private const val LISTEN_MS = 7_000L
 
+    private val _humor = MutableStateFlow(Personality.DEFAULT_HUMOR)
+    /** Nivel de humor, 0..100 % (se guarda en Ajustes). */
+    val humor: StateFlow<Int> = _humor.asStateFlow()
+
+    fun loadHumor(context: Context) {
+        app = context.applicationContext
+        _humor.value = settings().assistantHumor
+    }
+
+    fun setHumor(context: Context, level: Int) {
+        app = context.applicationContext
+        val l = level.coerceIn(0, 100)
+        settings().assistantHumor = l
+        _humor.value = l
+    }
+
     private val _state = MutableStateFlow(AssistantState())
     val state: StateFlow<AssistantState> = _state.asStateFlow()
 
@@ -144,6 +162,7 @@ object VoiceAssistant {
     fun resume(context: Context) {
         app = context.applicationContext
         resumed = true
+        _humor.value = settings().assistantHumor
         initTts()
         refresh()
     }
@@ -153,7 +172,7 @@ object VoiceAssistant {
         resumed = false
         stopAudio()
         stopGoogle()
-        tts?.stop()
+        stopSpeaking()
         _state.update { it.copy(phase = AssistantPhase.PAUSED, level = 0f) }
     }
 
@@ -352,7 +371,7 @@ object VoiceAssistant {
         app = context.applicationContext
         when (_state.value.phase) {
             AssistantPhase.WAITING, AssistantPhase.ANSWERING -> {
-                tts?.stop()
+                stopSpeaking()
                 muted = false
                 resetRecognizer = true
                 wake()
@@ -430,18 +449,23 @@ object VoiceAssistant {
 
     private fun open(screen: Screen) = navigator?.invoke(screen)
 
+    private fun humor() = settings().assistantHumor
+
+    /** Respuesta con o sin broma según el nivel de humor. */
+    private fun joke(plain: String, vararg quips: String) = Personality.spice(plain, humor(), *quips)
+
     private fun perform(c: Command): String = when (c) {
         is Command.Open -> {
             open(c.screen)
             when (c.screen) {
-                Screen.FUEL -> "Te enseño las gasolineras"
-                Screen.VEHICLE -> "Aquí tienes el vehículo"
-                Screen.TRIP -> "Datos de viaje"
-                Screen.WEATHER -> "Este es el tiempo"
-                Screen.PHONE -> "Abro el teléfono"
-                Screen.APPS -> "Tus aplicaciones"
-                Screen.DIAGNOSTICS -> "Abro los ajustes"
-                Screen.HOME -> "Vuelvo al inicio"
+                Screen.FUEL -> joke("Te enseño las gasolineras", "Prometo no comentar tu consumo.", "Yo funciono con electricidad, por cierto.")
+                Screen.VEHICLE -> joke("Aquí tienes el vehículo", "Sigue teniendo cuatro ruedas. Lo he comprobado.")
+                Screen.TRIP -> joke("Datos de viaje", "Sin juzgar.", "Los números no mienten. Yo tampoco, casi nunca.")
+                Screen.WEATHER -> joke("Este es el tiempo", "Yo no me mojo. Literalmente.")
+                Screen.PHONE -> joke("Abro el teléfono", "No escucharé. Mucho.")
+                Screen.APPS -> joke("Tus aplicaciones", "Ninguna tan útil como yo.")
+                Screen.DIAGNOSTICS -> joke("Abro los ajustes", "Procura no tocar mi nivel de humor.")
+                Screen.HOME -> joke("Vuelvo al inicio", "Hogar, dulce hogar.")
             }
         }
         is Command.Info -> info(c.topic)
@@ -449,15 +473,31 @@ object VoiceAssistant {
             val nav = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=" + Uri.encode(c.destination))).setPackage(GOOGLE_MAPS)
             if (nav.resolveActivity(app.packageManager) != null) launch(app, nav)
             else launch(app, Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(c.destination))))
-            "Vamos a ${c.destination}"
+            joke("Vamos a ${c.destination}", "Ningún agujero negro en la ruta.", "Rumbo fijado. Sin maniobras de acoplamiento, espero.")
         }
-        Command.Music -> { openMusic(app); "Abro la música" }
-        Command.Maps -> { openMaps(app); "Abro el mapa" }
-        is Command.AskGoogle -> if (openGoogleAssistant(c.query)) "Se lo pregunto a Google" else "La radio no tiene la app de Google"
+        Command.Music -> { openMusic(app); joke("Abro la música", "Tus gustos no son asunto mío.") }
+        Command.Maps -> { openMaps(app); joke("Abro el mapa", "Sin agujeros de gusano a la vista.") }
+        is Command.AskGoogle -> if (openGoogleAssistant(c.query)) joke("Se lo pregunto a Google", "Me duele, pero lo hago.") else "La radio no tiene la app de Google"
         Command.Help -> "Puedo abrir gasolineras, vehículo, viaje, tiempo, teléfono o apps; decirte la autonomía, " +
-            "la presión de las ruedas o el tiempo; llevarte a un sitio, o preguntar a Google."
-        Command.Cancel -> "Vale"
-        is Command.Unknown -> "No te he entendido. Prueba con: qué tiempo hace, o pregunta a Google y tu pregunta."
+            "la presión de las ruedas o el tiempo; llevarte a un sitio, o preguntar a Google. " +
+            "Y puedes ajustar mi humor: di humor al cincuenta por ciento."
+        Command.Cancel -> joke("Vale", "Vuelvo a mi rincón.", "Me quedo aquí, vigilando.")
+        is Command.Humor -> {
+            val now = humor()
+            if (c.set == null && c.delta == 0) {
+                "Mi nivel de humor está al $now por ciento"
+            } else {
+                val level = (c.set ?: (now + c.delta)).coerceIn(0, 100)
+                setHumor(app, level)
+                Personality.humorReply(level)
+            }
+        }
+        Command.Honesty -> "Sinceridad al noventa por ciento. El diez restante es por tu bien."
+        is Command.Unknown -> joke(
+            "No te he entendido. Prueba con: qué tiempo hace, o pregunta a Google y tu pregunta.",
+            "=No te he entendido. Y mira que lo he intentado. Prueba con: qué tiempo hace.",
+            "=Eso no está en mi programación. Prueba con: qué tiempo hace, o pregunta a Google.",
+        )
     }
 
     private fun info(topic: InfoTopic): String {
@@ -468,8 +508,8 @@ object VoiceAssistant {
                 val range = car.rangeKm?.let { "Te quedan unos $it kilómetros de autonomía" }
                 val level = car.fuelLevel?.let { "el depósito está al ${(it * 100).toInt()} por ciento" }
                 when {
-                    range != null && level != null -> "$range y $level"
-                    range != null -> range
+                    range != null && level != null -> joke("$range y $level", "Suficiente para llegar. No para salir del sistema solar.")
+                    range != null -> joke(range, "Suficiente para llegar. No para salir del sistema solar.")
                     level != null -> level.replaceFirstChar { it.uppercase() }
                     else -> "Todavía no me llega la autonomía del coche"
                 }
@@ -498,7 +538,7 @@ object VoiceAssistant {
                     fun b(v: Float?) = v?.let { String.format(es, "%.1f", it) } ?: "sin dato"
                     val ok = all.filterNotNull().all { it in 1.9f..3.2f }
                     "Delanteras ${b(t.frontLeft)} y ${b(t.frontRight)}; traseras ${b(t.rearLeft)} y ${b(t.rearRight)} bares. " +
-                        if (ok) "Todo correcto" else "Revisa la presión"
+                        if (ok) joke("Todo correcto", "Ni un pinchazo a la vista.") else "Revisa la presión"
                 }
             }
             InfoTopic.DOORS -> {
@@ -511,7 +551,7 @@ object VoiceAssistant {
                     "el maletero".takeIf { d.trunk == true },
                     "el capó".takeIf { d.hood == true },
                 )
-                if (open.isEmpty()) "Todo cerrado" else { open(Screen.VEHICLE); "Abierto: " + open.joinToString(", ") }
+                if (open.isEmpty()) joke("Todo cerrado", "Nadie saldrá despedido por una escotilla.") else { open(Screen.VEHICLE); "Abierto: " + open.joinToString(", ") }
             }
             InfoTopic.TRIP -> {
                 open(Screen.TRIP)
@@ -532,8 +572,10 @@ object VoiceAssistant {
                         (today?.let { ". Hoy entre ${it.minC} y ${it.maxC}" } ?: "") + rain
                 }
             }
-            InfoTopic.TIME -> LocalTime.now().let { "Son las ${it.hour}:${"%02d".format(it.minute)}" }
-            InfoTopic.SPEED -> car.speedKmh?.let { "Vas a $it kilómetros por hora" } ?: "No me llega la velocidad"
+            InfoTopic.TIME -> LocalTime.now().let {
+                joke("Son las ${it.hour}:${"%02d".format(it.minute)}", "Aquí. Cerca de un agujero negro serían otras.", "Hora de la Tierra, claro.")
+            }
+            InfoTopic.SPEED -> car.speedKmh?.let { joke("Vas a $it kilómetros por hora", "Algo por debajo de la velocidad de la luz.") } ?: "No me llega la velocidad"
         }
     }
 
@@ -562,27 +604,147 @@ object VoiceAssistant {
             if (status != TextToSpeech.SUCCESS) return@TextToSpeech
             val r = t.setLanguage(Locale("es", "ES"))
             ttsReady = r != TextToSpeech.LANG_MISSING_DATA && r != TextToSpeech.LANG_NOT_SUPPORTED
+            applyVoice()
             t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {}
-                override fun onDone(utteranceId: String?) { scope.launch { doneSpeaking() } }
+                override fun onDone(utteranceId: String?) {
+                    if (utteranceId?.startsWith(ROBOT_ID) == true) scope.launch { playRobot(utteranceId) }
+                    else scope.launch { doneSpeaking() }
+                }
                 @Deprecated("Deprecated in Java")
-                override fun onError(utteranceId: String?) { scope.launch { doneSpeaking() } }
+                override fun onError(utteranceId: String?) { scope.launch { if (utteranceId?.startsWith(ROBOT_ID) == true) robotFailed(utteranceId) else doneSpeaking() } }
             })
         }
+    }
+
+    private const val ROBOT_ID = "robot-"
+    private var robotSeq = 0
+    /** Texto pendiente de cada síntesis a archivo, por si falla y hay que decirlo con la voz normal. */
+    private val robotText = HashMap<String, String>()
+    private var player: AudioTrack? = null
+    @Volatile private var robotBroken = false
+
+    /** Voces en español del motor de la radio (para elegir en Diagnóstico). */
+    fun spanishVoices(): List<String> = runCatching {
+        tts?.voices.orEmpty()
+            .filter { it.locale.language == "es" && !it.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) }
+            .sortedWith(compareBy({ it.isNetworkConnectionRequired }, { it.locale.country != "ES" }, { it.name }))
+            .map { it.name }
+    }.getOrDefault(emptyList())
+
+    /** Voz actual del motor. */
+    fun currentVoice(): String? = runCatching { tts?.voice?.name }.getOrNull()
+
+    /** Elegir voz (null = automática) y aplicar tono y velocidad según el estilo. */
+    fun applyVoice(name: String? = settings().assistantVoiceName) {
+        val t = tts ?: return
+        runCatching {
+            val robot = settings().assistantRobotVoice
+            val voices = t.voices.orEmpty().filter { it.locale.language == "es" && !it.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) }
+            // Sin elegir: una voz masculina local si el motor la marca así (TARS es grave), si no la de siempre.
+            val male = Regex("(^|[^e])male")
+            val pick = voices.firstOrNull { it.name == name }
+                ?: if (robot) voices.filter { !it.isNetworkConnectionRequired }
+                    .firstOrNull { v -> male.containsMatchIn(v.name.lowercase()) || v.features.orEmpty().any { male.containsMatchIn(it.lowercase()) } }
+                else null
+            pick?.let { t.voice = it }
+            t.setPitch(if (robot) RobotVoice.TTS_PITCH else 1f)
+            t.setSpeechRate(if (robot) RobotVoice.TTS_RATE else 1f)
+        }.onFailure { Log.w(TAG, "Voz", it) }
+    }
+
+    /** Diagnóstico: probar la voz con una frase. */
+    fun testVoice(context: Context) {
+        app = context.applicationContext
+        initTts()
+        applyVoice()
+        say(
+            Personality.spice(
+                "Hola. Soy el asistente del coche. Humor al ${humor()} por ciento.", humor(),
+                "Todo listo para el despegue.", "Prometo no abrir ninguna escotilla.",
+            ),
+        )
     }
 
     private fun say(text: String) {
         _state.update { it.copy(phase = AssistantPhase.ANSWERING, reply = text, replyAt = System.currentTimeMillis(), engine = null) }
         unmuteJob?.cancel()
+        stopPlayer()
         val t = tts
         if (t != null && ttsReady && settings().assistantSpeaks) {
             // No escuchar mientras habla la radio: se oiría a sí misma.
             muted = true
-            t.speak(text, TextToSpeech.QUEUE_FLUSH, null, "reply")
-            unmuteJob = scope.launch { delay(2_000L + text.length * 90L); doneSpeaking() }
+            if (settings().assistantRobotVoice && !robotBroken && synthesizeRobot(t, text)) {
+                // La síntesis a archivo tarda un poco más; el tiempo real se ajusta al reproducir.
+                unmuteJob = scope.launch { delay(6_000L + text.length * 120L); doneSpeaking() }
+            } else {
+                t.speak(text, TextToSpeech.QUEUE_FLUSH, null, "reply")
+                unmuteJob = scope.launch { delay(2_000L + text.length * 90L); doneSpeaking() }
+            }
         } else {
             unmuteJob = scope.launch { delay(1_200); doneSpeaking() }
         }
+    }
+
+    private fun robotFile(id: String) = java.io.File(app.cacheDir, "$id.wav")
+
+    /** Pide al motor la frase en un WAV, que luego se pasa por [RobotVoice] y se reproduce. */
+    private fun synthesizeRobot(t: TextToSpeech, text: String): Boolean {
+        robotText.keys.toList().forEach { robotFile(it).delete() }
+        robotText.clear()
+        val id = ROBOT_ID + (++robotSeq)
+        robotText[id] = text
+        val r = runCatching { t.synthesizeToFile(text, Bundle(), robotFile(id), id) }.getOrDefault(TextToSpeech.ERROR)
+        if (r != TextToSpeech.SUCCESS) { robotText.remove(id); return false }
+        return true
+    }
+
+    /** No se pudo hacer el WAV: se dice con la voz normal (y no se reintenta hasta reiniciar la app). */
+    private fun robotFailed(id: String) {
+        val text = robotText.remove(id) ?: return
+        robotFile(id).delete()
+        Log.w(TAG, "Voz robot no disponible; voz normal")
+        robotBroken = true
+        if (_state.value.phase != AssistantPhase.ANSWERING) return
+        unmuteJob?.cancel()
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "reply")
+        unmuteJob = scope.launch { delay(2_000L + text.length * 90L); doneSpeaking() }
+    }
+
+    private suspend fun playRobot(id: String) {
+        if (!robotText.containsKey(id)) return // ya se canceló o llegó otra frase
+        val file = robotFile(id)
+        val pcm = withContext(Dispatchers.Default) { RobotVoice.readWav(file)?.let(RobotVoice::process) }
+        file.delete()
+        if (pcm == null || pcm.samples.isEmpty()) { robotFailed(id); return }
+        if (robotText.remove(id) == null || _state.value.phase != AssistantPhase.ANSWERING) return
+        val track = runCatching {
+            AudioTrack.Builder()
+                .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(pcm.rate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                .setBufferSizeInBytes(pcm.samples.size * 2)
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .build().also { it.write(pcm.samples, 0, pcm.samples.size); it.play() }
+        }.onFailure { Log.w(TAG, "AudioTrack", it) }.getOrNull()
+        if (track == null) { robotBroken = true; doneSpeaking(); return }
+        player = track
+        unmuteJob?.cancel()
+        unmuteJob = scope.launch {
+            delay(pcm.durationMs + 300)
+            if (player === track) stopPlayer()
+            doneSpeaking()
+        }
+    }
+
+    private fun stopPlayer() {
+        player?.let { runCatching { it.stop() }; it.release() }
+        player = null
+    }
+
+    private fun stopSpeaking() {
+        tts?.stop()
+        robotText.clear()
+        stopPlayer()
     }
 
     private fun doneSpeaking() {
