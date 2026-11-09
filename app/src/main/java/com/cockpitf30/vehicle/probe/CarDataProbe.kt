@@ -372,11 +372,15 @@ object CarDataProbe {
      * Un ICarCallback (del cargador [loader]) cuyo Binder apunta cada aviso en [callbackLog] y
      * llama a [onCall]. Devuelve null si el APK no trae la interfaz.
      */
-    fun sniffingCarCallback(loader: ClassLoader, onCall: () -> Unit = {}): Any? = runCatching {
+    fun sniffingCarCallback(
+        loader: ClassLoader,
+        onRaw: ((List<Any?>) -> Boolean)? = null,
+        onCall: () -> Unit = {},
+    ): Any? = runCatching {
         val callbackIface = loader.loadClass(CAR_CALLBACK)
         val callbackStub = runCatching { loader.loadClass("$CAR_CALLBACK\$Stub") }.getOrNull()
         val (codes, signatures) = transactions(callbackIface, callbackStub)
-        val binder = SniffBinder(CAR_CALLBACK, codes, signatures, loader) { logCallback(it); onCall() }
+        val binder = SniffBinder(CAR_CALLBACK, codes, signatures, loader, onRaw) { logCallback(it); onCall() }
         proxyFor(callbackIface, loader, binder).also { keep += binder; keep += it }
     }.getOrNull()
 
@@ -414,7 +418,7 @@ object CarDataProbe {
             val callbackIface = loader.loadClass(CAR_CALLBACK)
             val callbackStub = runCatching { loader.loadClass("$CAR_CALLBACK\$Stub") }.getOrNull()
             val (codes, signatures) = transactions(callbackIface, callbackStub)
-            val binder = SniffBinder(CAR_CALLBACK, codes, signatures, loader) { logCallback(it) }
+            val binder = SniffBinder(CAR_CALLBACK, codes, signatures, loader, com.cockpitf30.vehicle.source.CanBoxData::handle) { logCallback(it) }
             val proxy = proxyFor(callbackIface, loader, binder)
             callbackBinder = binder
             callbackProxy = proxy
@@ -467,24 +471,30 @@ object CarDataProbe {
         private val names: Map<Int, String>,
         private val signatures: Map<Int, List<Class<*>>>,
         private val loader: ClassLoader,
+        /** Recibe los argumentos ya leídos (String, Bundle, byte[]…); si devuelve true, no se apunta en el registro. */
+        private val onRaw: ((List<Any?>) -> Boolean)? = null,
         private val log: (String) -> Unit,
     ) : Binder() {
+        private val raw = mutableListOf<Any?>()
+
         init { attachInterface(null, descriptor) }
 
         override fun getInterfaceDescriptor(): String = descriptor
 
-        override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+        @Synchronized override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
             if (code == INTERFACE_TRANSACTION) {
                 reply?.writeString(descriptor)
                 return true
             }
             val name = names[code] ?: "código $code"
+            raw.clear()
             val args = runCatching {
                 data.enforceInterface(descriptor)
                 val sig = signatures[code]
                 if (sig == null) "${data.dataAvail()} bytes" else sig.joinToString(", ") { readArg(data, it) }
             }.getOrElse { "no decodificado (${it.javaClass.simpleName})" }
-            log("$name($args)")
+            val handled = onRaw?.let { cb -> runCatching { cb(raw.toList()) }.getOrDefault(false) } ?: false
+            if (!handled) log("$name($args)")
             reply?.writeNoException()
             return true
         }
@@ -494,15 +504,15 @@ object CarDataProbe {
             Long::class.javaPrimitiveType -> p.readLong().toString()
             Boolean::class.javaPrimitiveType -> (p.readInt() != 0).toString()
             Float::class.javaPrimitiveType -> p.readFloat().toString()
-            String::class.java -> p.readString() ?: "null"
-            ByteArray::class.java -> p.createByteArray()?.let { PortProbe.hex(it, minOf(it.size, 64)) } ?: "null"
+            String::class.java -> p.readString().also { raw += it } ?: "null"
+            ByteArray::class.java -> p.createByteArray().also { raw += it }?.let { PortProbe.hex(it, minOf(it.size, 64)) } ?: "null"
             IntArray::class.java -> p.createIntArray()?.joinToString(",", "[", "]") ?: "null"
             Double::class.javaPrimitiveType -> p.readDouble().toString()
             FloatArray::class.java -> p.createFloatArray()?.joinToString(",", "[", "]") ?: "null"
             Array<String>::class.java -> p.createStringArray()?.joinToString(",", "[", "]") ?: "null"
             Bundle::class.java -> if (p.readInt() != 0) {
-                Bundle.CREATOR.createFromParcel(p).apply { classLoader = loader }.let { BroadcastSniffer.describe(it) }
-            } else "null"
+                Bundle.CREATOR.createFromParcel(p).apply { classLoader = loader }.also { raw += it }.let { BroadcastSniffer.describe(it) }
+            } else "null".also { raw += null }
             else -> readParcelable(p, type)
         }
 

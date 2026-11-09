@@ -28,7 +28,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.cockpitf30.R
 import kotlin.math.sin
@@ -83,7 +82,7 @@ fun BoxScope.CardArt(theme: CardTheme) {
             GlassBadge(theme, Modifier.align(Alignment.Center).size(110.dp)) { GradientIcon(Icons.Filled.Build, theme, 50) }
         }
         CardTheme.VEHICLE -> Image(
-            painterResource(R.drawable.car_rear_scene), null,
+            com.cockpitf30.ui.components.cachedPainter(R.drawable.car_rear_scene), null,
             Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp).size(width = 300.dp, height = 150.dp)
                 .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
                 .drawWithContent {

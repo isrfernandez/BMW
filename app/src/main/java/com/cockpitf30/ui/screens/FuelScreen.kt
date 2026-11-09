@@ -138,6 +138,7 @@ fun FuelScreen() {
             StationList(view.near, selected?.station?.id, Modifier.width(600.dp).fillMaxHeight()) { selectedId = it.station.id }
         }
     }
+    com.cockpitf30.ui.components.LoadingOverlay(view.state.loading && view.near.isEmpty(), "Descargando gasolineras…")
     }
 }
 

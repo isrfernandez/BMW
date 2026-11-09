@@ -53,6 +53,27 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_ASSISTANT_TTS, true)
         set(value) = prefs.edit().putBoolean(KEY_ASSISTANT_TTS, value).apply()
 
+    /** Voz al estilo TARS: hombre adulto, grave y pausada (false = voz normal de la radio, sin cambios). */
+    var assistantRobotVoice: Boolean
+        get() = prefs.getBoolean(KEY_ASSISTANT_ROBOT, true)
+        set(value) = prefs.edit().putBoolean(KEY_ASSISTANT_ROBOT, value).apply()
+
+    /** Estilo de la voz TARS: natural (por defecto), con timbre de máquina o robot. */
+    var assistantRobotStrength: com.cockpitf30.assistant.RobotVoice.Strength
+        get() = runCatching { com.cockpitf30.assistant.RobotVoice.Strength.valueOf(prefs.getString(KEY_ASSISTANT_STRENGTH, null)!!) }
+            .getOrDefault(com.cockpitf30.assistant.RobotVoice.Strength.NATURAL)
+        set(value) = prefs.edit().putString(KEY_ASSISTANT_STRENGTH, value.name).apply()
+
+    /** Nivel de humor del asistente, 0..100 %. */
+    var assistantHumor: Int
+        get() = prefs.getInt(KEY_ASSISTANT_HUMOR, com.cockpitf30.assistant.Personality.DEFAULT_HUMOR)
+        set(value) = prefs.edit().putInt(KEY_ASSISTANT_HUMOR, value.coerceIn(0, 100)).apply()
+
+    /** Nombre de la voz del motor de la radio elegida en Diagnóstico; null = elegir sola. */
+    var assistantVoiceName: String?
+        get() = prefs.getString(KEY_ASSISTANT_VOICE, null)
+        set(value) = prefs.edit().putString(KEY_ASSISTANT_VOICE, value).apply()
+
     var askedMicrophone: Boolean
         get() = prefs.getBoolean(KEY_ASKED_MIC, false)
         set(value) = prefs.edit().putBoolean(KEY_ASKED_MIC, value).apply()
@@ -130,9 +151,19 @@ class AppSettings(context: Context) {
         get() = prefs.getFloat(KEY_TANK, 57f)
         set(value) = prefs.edit().putFloat(KEY_TANK, value).apply()
 
+    /** Pedir a la caja CAN la velocidad y las rpm cada 100 ms (la app de la radio lo hace cada 500 ms). */
+    var canAskSpeed: Boolean
+        get() = prefs.getBoolean(KEY_CAN_ASK_SPEED, true)
+        set(value) = prefs.edit().putBoolean(KEY_CAN_ASK_SPEED, value).apply()
+
     private companion object {
+        const val KEY_CAN_ASK_SPEED = "can_ask_speed"
         const val KEY_ASSISTANT = "assistant_enabled"
         const val KEY_ASSISTANT_TTS = "assistant_tts"
+        const val KEY_ASSISTANT_ROBOT = "assistant_robot_voice"
+        const val KEY_ASSISTANT_STRENGTH = "assistant_voice_style"
+        const val KEY_ASSISTANT_HUMOR = "assistant_humor"
+        const val KEY_ASSISTANT_VOICE = "assistant_voice_name"
         const val KEY_ASKED_MIC = "asked_microphone"
         const val KEY_TRIP_CURRENT = "trip_current"
         const val KEY_TRIP_LAST = "trip_last"

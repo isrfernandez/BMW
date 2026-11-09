@@ -16,6 +16,10 @@ sealed interface Command {
     /** «Pregunta a Google …»: se le pasa la pregunta (o nada para abrir el asistente de Google). */
     data class AskGoogle(val query: String?) : Command
     data object Help : Command
+    /** «Humor al 60 por ciento» ([set]), «sube/baja el humor» ([delta]) o «¿qué humor tienes?» (nada). */
+    data class Humor(val set: Int? = null, val delta: Int = 0) : Command
+    /** «¿Cuál es tu nivel de sinceridad?» */
+    data object Honesty : Command
     data object Cancel : Command
     data class Unknown(val text: String) : Command
 }
@@ -99,6 +103,18 @@ object VoiceCommands {
         if (t in setOf("nada", "no", "gracias", "cancelar", "cancela", "olvidalo", "salir", "adios") || has("cancela", "olvidalo")) return Command.Cancel
         if (has("ayuda", "que puedes", "que sabes")) return Command.Help
 
+        // Ajustes de personalidad, como el robot de la película: «humor al setenta y cinco por ciento».
+        if (has("humor")) {
+            val n = number(t.substringAfter("humor"))
+            return when {
+                n != null -> Command.Humor(set = n.coerceIn(0, 100))
+                has("sube", "subir", "mas humor", "aumenta") -> Command.Humor(delta = 25)
+                has("baja", "bajar", "menos humor", "reduce", "quita") -> Command.Humor(delta = -25)
+                else -> Command.Humor()
+            }
+        }
+        if (has("sinceridad", "honestidad")) return Command.Honesty
+
         if (has("google") && !has("maps", "mapa")) {
             val q = t.substringAfter("google").trim()
             return Command.AskGoogle(q.ifEmpty { null })
@@ -142,5 +158,30 @@ object VoiceCommands {
             has("hora") -> Command.Info(InfoTopic.TIME)
             else -> Command.Unknown(t)
         }
+    }
+
+    private val UNITS = listOf("cero", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve")
+    private val TEENS = listOf("diez", "once", "doce", "trece", "catorce", "quince", "dieciseis", "diecisiete", "dieciocho", "diecinueve")
+    private val TENS = mapOf("veinte" to 20, "treinta" to 30, "cuarenta" to 40, "cincuenta" to 50, "sesenta" to 60, "setenta" to 70, "ochenta" to 80, "noventa" to 90)
+
+    /**
+     * Primer número de 0 a 100 en [text], en cifras («60») o en palabras, como lo escribe Vosk
+     * («setenta y cinco», «veinticinco», «cien»). null si no hay.
+     */
+    fun number(text: String): Int? {
+        val w = normalize(text).split(' ').filter { it.isNotEmpty() }.map { if (it == "un") "uno" else it }
+        for (i in w.indices) {
+            val word = w[i]
+            word.toIntOrNull()?.let { return it }
+            if (word == "cien" || word == "ciento") return 100
+            UNITS.indexOf(word).takeIf { it >= 0 }?.let { return it }
+            TEENS.indexOf(word).takeIf { it >= 0 }?.let { return 10 + it }
+            if (word.startsWith("veinti")) UNITS.indexOf(word.removePrefix("veinti")).takeIf { it > 0 }?.let { return 20 + it }
+            TENS[word]?.let { tens ->
+                val unit = if (w.getOrNull(i + 1) == "y") UNITS.indexOf(w.getOrNull(i + 2) ?: "") else -1
+                return tens + unit.coerceAtLeast(0)
+            }
+        }
+        return null
     }
 }

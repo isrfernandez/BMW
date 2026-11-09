@@ -67,6 +67,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.cockpitf30.ui.screens.openMaps
+import com.cockpitf30.ui.screens.openOriginalBmw
 import com.cockpitf30.ui.screens.openMusic
 import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.ui.theme.CockpitTheme
@@ -86,10 +87,23 @@ class MainActivity : ComponentActivity() {
         IDriveInput.learned = AppSettings(this).knobKeys
         VehicleService.start(this)
         askBatteryExemptionOnce()
+        // Lo pesado, en segundo plano y antes de que haga falta: imágenes grandes y lista de apps.
+        com.cockpitf30.system.AppCatalog.load(this)
+        Thread({
+            com.cockpitf30.ui.components.Images.preload(this)
+            com.cockpitf30.ui.components.Images.get(this, com.cockpitf30.R.drawable.spinner_sheet)
+            // La pantalla de inicio espera también a la lista de apps (como mucho 5 s).
+            val until = System.currentTimeMillis() + 5000
+            while (com.cockpitf30.system.AppCatalog.apps.value == null && System.currentTimeMillis() < until) Thread.sleep(50)
+            com.cockpitf30.ui.components.Startup.ready.value = true
+        }, "precarga").apply { priority = Thread.MIN_PRIORITY + 2 }.start()
 
         setContent {
             CockpitTheme {
-                CockpitRoot(navActions)
+                Box(Modifier.fillMaxSize()) {
+                    CockpitRoot(navActions)
+                    com.cockpitf30.ui.components.StartupSplash()
+                }
             }
         }
     }
@@ -270,28 +284,13 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     BackHandler(enabled = screen != Screen.HOME) { screen = Screen.HOME }
 
     // Las órdenes de voz abren pantallas como los botones.
+    // Vehículo abre el iDrive original del coche (la caja CAN no da puertas ni presiones):
+    // allí está «Estado del vehículo» con las ruedas y su presión.
+    val go: (Screen) -> Unit = { if (it == Screen.VEHICLE) openOriginalBmw(ctx) else screen = it }
     DisposableEffect(Unit) {
-        val nav: (Screen) -> Unit = { screen = it }
+        val nav: (Screen) -> Unit = go
         VoiceAssistant.navigator = nav
         onDispose { if (VoiceAssistant.navigator === nav) VoiceAssistant.navigator = null }
-    }
-
-    // Puerta, capó o maletero abierto: se abre la pantalla Vehículo (vista cenital con cada puerta).
-    // Al cerrarse todo se vuelve al Inicio, que ya abre en el mapa. En Diagnóstico no se interrumpe.
-    LaunchedEffect(Unit) {
-        var autoOpened = false
-        VehicleRepository.state.map { it.doors.anyOpen }.distinctUntilChanged().collect { open ->
-            if (open && screen != Screen.VEHICLE && screen != Screen.DIAGNOSTICS) {
-                screen = Screen.VEHICLE
-                autoOpened = true
-            } else if (!open && autoOpened) {
-                autoOpened = false
-                if (screen == Screen.VEHICLE) {
-                    ClusterIntro.done = true
-                    screen = Screen.HOME
-                }
-            }
-        }
     }
 
     val context = LocalContext.current
@@ -320,7 +319,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
             label = "screen",
         ) { current ->
             when (current) {
-                Screen.HOME -> HomeScreen(onOpen = { screen = it })
+                Screen.HOME -> HomeScreen(onOpen = go)
                 Screen.VEHICLE -> VehicleScreen()
                 Screen.TRIP -> TripScreen()
                 Screen.APPS -> AppsScreen()

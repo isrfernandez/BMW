@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -93,6 +94,9 @@ fun DiagnosticsScreen() {
     val vehicle by VehicleRepository.state.collectAsStateWithLifecycle()
     var canbusProbe by remember { mutableStateOf<List<String>>(emptyList()) }
     var showAllKeys by remember { mutableStateOf(false) }
+    var askSpeed by remember { mutableStateOf(settings.canAskSpeed) }
+    var testRunning by remember { mutableStateOf(false) }
+    var testResult by remember { mutableStateOf<String?>(null) }
 
     var mode by remember { mutableStateOf(settings.sourceMode) }
     var path by remember { mutableStateOf(settings.serialPath) }
@@ -159,19 +163,58 @@ fun DiagnosticsScreen() {
         }
     }
 
-    fun exportApks() {
-        busy = "Copiando APKs a Descargas…"
-        scope.launch {
-            val r = withContext(Dispatchers.IO) { runCatching { com.cockpitf30.vehicle.probe.CanbusProbe.exportApks(context) }.getOrElse { "Error: ${it.message}" } }
-            busy = r
-            android.widget.Toast.makeText(context, r.take(200), android.widget.Toast.LENGTH_LONG).show()
-        }
-    }
-
     // Lo de la radio va al principio: el informe completo pasa de 150 KB y al compartir se recorta.
     fun report() = buildReport(context, status, probes, packages, props, input, raw, bytes, broadcasts, sysApps, services, jars, carProbe, dataProbe, callbacks)
         .replaceFirst("\n== Puertos", radioReport(radioValues, radioChanges, canbusProbe, vehicle) + "\n== Puertos")
     val automotive = remember { CarPropertySource.isAvailable(context) }
+
+    /**
+     * Todo de una vez: busca las apps del coche, escucha sus broadcasts, explora el servicio,
+     * lee el almacén, se apunta a los avisos y a CarCanbus, deja [TEST_SECONDS] para abrir puertas
+     * y girar el volante, y guarda informe + APKs en un zip en Descargas.
+     */
+    fun fullTest() {
+        if (testRunning) return
+        testRunning = true
+        testResult = null
+        scope.launch {
+            fun step(text: String) { busy = text }
+            if (settings.sourceMode != SourceMode.RADIO && settings.sourceMode != SourceMode.AUTO) {
+                mode = SourceMode.AUTO
+                settings.sourceMode = SourceMode.AUTO
+                VehicleService.restart(context)
+            }
+            step("1/6 Buscando apps del coche…")
+            withContext(Dispatchers.IO) {
+                packages = SystemProbe.scan(context)
+                props = SystemProbe.properties()
+                sysApps = SystemProbe.systemApps(context)
+                services = SystemProbe.systemServices()
+                jars = SystemProbe.frameworkJars()
+                dexActions = com.cockpitf30.vehicle.probe.CarServiceProbe.dexActions(context)
+            }
+            BroadcastSniffer.start(context, (packages.orEmpty().flatMap { it.actions } + dexActions).distinct())
+            step("2/6 Explorando el servicio del coche…")
+            carProbe = withContext(Dispatchers.IO) { runCatching { com.cockpitf30.vehicle.probe.CarServiceProbe.run(context) }.getOrElse { listOf("Error: $it") } }
+            step("3/6 Leyendo el almacén de datos…")
+            dataProbe = withContext(Dispatchers.IO) { runCatching { com.cockpitf30.vehicle.probe.CarDataProbe.explore(context) }.getOrElse { listOf("Error: $it") } }
+            withContext(Dispatchers.IO) { runCatching { com.cockpitf30.vehicle.probe.CarDataProbe.startCallbacks(context) } }
+            step("4/6 Conectando con CarCanbus…")
+            canbusProbe = withContext(Dispatchers.IO) { runCatching { com.cockpitf30.vehicle.probe.CanbusProbe.explore(context) }.getOrElse { listOf("Error: $it") } }
+            for (left in TEST_SECONDS downTo 1) {
+                step("5/6 Ahora: abre y cierra cada puerta, el maletero y el capó, gira el volante y acelera un poco… $left s")
+                kotlinx.coroutines.delay(1000)
+            }
+            step("6/6 Guardando el zip (informe + apps del coche)…")
+            val r = withContext(Dispatchers.IO) {
+                runCatching { com.cockpitf30.vehicle.probe.CanbusProbe.writeTestZip(context, report()) }.getOrElse { "Error: ${it.message}" }
+            }
+            testResult = r
+            busy = null
+            testRunning = false
+            android.widget.Toast.makeText(context, r.take(200), android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
 
     fun apply() {
         settings.sourceMode = mode
@@ -207,6 +250,15 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                DiagCard("Prueba completa") {
+                    Info("1. Arranca el motor. 2. Pulsa el botón. 3. Cuando lo pida, abre y cierra cada puerta, el maletero y el capó, gira el volante y acelera un poco. " +
+                        "Al acabar (unos 2 minutos) queda un zip en Descargas: pásamelo tal cual.", Cockpit.TextDim)
+                    ChipRow(listOf(if (testRunning) "Prueba en marcha…" else "Prueba completa"), if (testRunning) 0 else -1, Modifier.focusRequester(first)) { fullTest() }
+                    busy?.let { Info(it, Cockpit.BlueLight) }
+                    testResult?.let { Info("Guardado: $it", if (it.startsWith("Error")) Cockpit.Alert else Cockpit.Ok) }
+                }
+            }
+            item {
                 DiagCard("Estado") {
                     Info("Versión instalada: ${installedVersion(context)}", Cockpit.BlueLight)
                     Info("Fuente: ${status.sourceName} · ${if (status.connected) "conectada" else "desconectada"}")
@@ -223,15 +275,27 @@ fun DiagnosticsScreen() {
                 DiagCard("Datos del coche (la propia radio)") {
                     if (status.sourceName != "Radio (CAN)") Info("La fuente activa es «${status.sourceName}». Elige «Radio CAN» o «Auto» en Fuente de datos para leer el coche.", Cockpit.Alert)
                     Info("Leído: ${vehicleSummary(vehicle)}")
+                    val frames = com.cockpitf30.vehicle.source.CanBoxData.summary()
+                    if (frames.isEmpty()) Info("Caja CAN: todavía no ha llegado ninguna trama", Cockpit.TextDim)
+                    else {
+                        Info("Caja CAN: ${canBoxSummary(radioValues)}")
+                        frames.forEach { Mono(it) }
+                        val canChanges = com.cockpitf30.vehicle.source.CanBoxData.changes()
+                        Info("Cambios en las tramas (abre las puertas de una en una, con unos segundos entre cada una):", Cockpit.TextDim)
+                        canChanges.take(30).forEach { Mono(it) }
+                    }
+                    ChipRow(listOf("Pedir velocidad y rpm a la caja: ${if (askSpeed) "sí" else "no"}"), if (askSpeed) 0 else -1) {
+                        askSpeed = !askSpeed
+                        settings.canAskSpeed = askSpeed
+                    }
                     Info("Claves en la radio: ${radioValues.size}. Abre y cierra cada puerta, el maletero y el capó, arranca y gira el volante: aquí abajo sale qué clave cambia.", Cockpit.TextDim)
                     ChipRow(
-                        listOf(if (showAllKeys) "Ocultar claves" else "Ver todas las claves (${radioValues.size})", "Explorar CarCanbus", "Guardar APKs del coche en Descargas"),
+                        listOf(if (showAllKeys) "Ocultar claves" else "Ver todas las claves (${radioValues.size})", "Explorar CarCanbus"),
                         if (showAllKeys) 0 else -1,
                     ) {
                         when (it) {
                             0 -> showAllKeys = !showAllKeys
-                            1 -> exploreCanbus()
-                            else -> exportApks()
+                            else -> exploreCanbus()
                         }
                     }
                     if (showAllKeys) radioValues.toSortedMap().forEach { (k, v) -> Mono("$k = $v") }
@@ -268,8 +332,23 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                DiagCard("Pantalla de inicio (lanzador)") {
+                    val isHome = remember { isDefaultHome(context) }
+                    Info(
+                        if (isHome) "Cockpit F30 es ahora la pantalla de inicio de la radio. Para volver a la de serie u otra, elige aquí."
+                        else "La pantalla de inicio de la radio es otra app. Puedes poner Cockpit F30 desde aquí.",
+                    )
+                    ChipRow(listOf("Elegir pantalla de inicio", "Abrir la de serie (BMW)"), -1) {
+                        when (it) {
+                            0 -> chooseHome(context)
+                            else -> openStockLauncher(context)
+                        }
+                    }
+                }
+            }
+            item {
                 DiagCard("Fuente de datos") {
-                    ChipRow(SourceMode.entries.map { it.label }, SourceMode.entries.indexOf(mode), Modifier.focusRequester(first)) {
+                    ChipRow(SourceMode.entries.map { it.label }, SourceMode.entries.indexOf(mode)) {
                         mode = SourceMode.entries[it]
                         apply()
                     }
@@ -369,6 +448,18 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                // Nivel de humor del asistente, como el robot TARS. También por voz: «Hola BMW, humor al 60 por ciento».
+                val assistant = com.cockpitf30.assistant.VoiceAssistant
+                LaunchedEffect(Unit) { assistant.loadHumor(context) }
+                val humor by assistant.humor.collectAsStateWithLifecycle()
+                DiagCard("Humor del asistente: $humor %") {
+                    ChipRow(listOf("− 5 %", "+ 5 %"), -1) { assistant.setHumor(context, humor + if (it == 0) -5 else 5) }
+                    val levels = listOf(0, 25, 50, 75, 90, 100)
+                    ChipRow(levels.map { "$it %" }, levels.indexOf(humor)) { assistant.setHumor(context, levels[it]) }
+                    Info("0 % responde seco y sin bromas; 100 % siempre con una broma. Por voz: «Hola BMW, humor al 60 por ciento», «sube el humor», «baja el humor» o «¿qué humor tienes?».", Cockpit.TextDim)
+                }
+            }
+            item {
                 // Asistente «Hola BMW»: activar, voz en alto y estado del micrófono y del modelo.
                 val voice by com.cockpitf30.assistant.VoiceAssistant.state.collectAsStateWithLifecycle()
                 var voiceOn by remember { mutableStateOf(settings.assistantEnabled) }
@@ -382,6 +473,57 @@ fun DiagnosticsScreen() {
                         voiceTalks = it == 0
                         settings.assistantSpeaks = voiceTalks
                     }
+                    // Voz al estilo TARS: hombre adulto, grave y pausada; humor ajustable como en la película.
+                    var robot by remember { mutableStateOf(settings.assistantRobotVoice) }
+                    var voiceName by remember { mutableStateOf(settings.assistantVoiceName) }
+                    val assistant = com.cockpitf30.assistant.VoiceAssistant
+                    ChipRow(listOf("Voz estilo TARS", "Voz de la radio", "Probar voz"), if (robot) 0 else 1) {
+                        if (it == 2) assistant.testVoice(context)
+                        else {
+                            robot = it == 0
+                            settings.assistantRobotVoice = robot
+                            assistant.applyVoice()
+                        }
+                    }
+                    if (robot) {
+                        val strengths = com.cockpitf30.assistant.RobotVoice.Strength.entries
+                        var strength by remember { mutableStateOf(settings.assistantRobotStrength) }
+                        ChipRow(strengths.map { it.label }, strengths.indexOf(strength)) {
+                            strength = strengths[it]
+                            settings.assistantRobotStrength = strength
+                            assistant.applyVoice()
+                            assistant.testVoice(context)
+                        }
+                    }
+                    val voices = remember(voice.phase, voiceName) { assistant.spanishVoices() }
+                    if (voices.isNotEmpty()) {
+                        // El motor no siempre dice qué voz es de hombre: «Cambiar voz» las va probando.
+                        ChipRow(listOf("Voz automática", "Cambiar voz ›"), if (voiceName == null) 0 else 1) {
+                            if (it == 0) {
+                                voiceName = null
+                                settings.assistantVoiceName = null
+                                assistant.applyVoice(null)
+                                assistant.testVoice(context)
+                            } else {
+                                voiceName = assistant.nextVoice(context)
+                            }
+                        }
+                    }
+                    val ttsStatus by assistant.ttsStatus.collectAsStateWithLifecycle()
+                    Info("Motor de voz: ${ttsStatus.text}" + (assistant.ttsEngine?.let { " · $it" } ?: "") + (assistant.ttsLastError?.let { " · $it" } ?: ""),
+                        if (ttsStatus == com.cockpitf30.assistant.VoiceAssistant.TtsStatus.READY) Cockpit.TextDim else Cockpit.Alert)
+                    when (ttsStatus) {
+                        com.cockpitf30.assistant.VoiceAssistant.TtsStatus.NO_ENGINE ->
+                            ChipRow(listOf("Instalar «Servicios de voz de Google»", "Volver a probar"), -1) {
+                                if (it == 0) assistant.installVoiceEngine(context) else assistant.restartTts(context)
+                            }
+                        com.cockpitf30.assistant.VoiceAssistant.TtsStatus.NO_SPANISH ->
+                            ChipRow(listOf("Descargar voz española", "Volver a probar"), -1) {
+                                if (it == 0) assistant.installSpanishVoice(context) else assistant.restartTts(context)
+                            }
+                        else -> Unit
+                    }
+                    Info("Voz en uso: ${assistant.currentVoice() ?: "—"} · ${voices.size} voces en español", Cockpit.TextDim)
                     Info("Estado: ${voice.phase} · micrófono ${"%.0f".format(voice.level * 100)} %" + (voice.error?.let { " · $it" } ?: ""))
                     Info("Modelo ${com.cockpitf30.assistant.VoiceModel.NAME}: " + if (com.cockpitf30.assistant.VoiceModel.isReady(context)) "instalado" else "no instalado")
                     voice.lastText?.let { Mono("Último reconocido: «$it»") }
@@ -422,6 +564,8 @@ fun DiagnosticsScreen() {
     }
     }
 }
+
+private const val TEST_SECONDS = 60
 
 private val BAUDS = listOf(19200, 38400, 57600, 115200)
 
@@ -542,10 +686,26 @@ private fun vehicleSummary(v: com.cockpitf30.vehicle.VehicleState): String {
         "ruedas ${p(v.tyres.frontLeft)} ${p(v.tyres.frontRight)} ${p(v.tyres.rearLeft)} ${p(v.tyres.rearRight)} bar"
 }
 
+/** Lo que dice la caja CAN y no cabe en VehicleState: freno de mano, cinturones, litros, kilometraje. */
+private fun canBoxSummary(values: Map<String, String>): String {
+    fun yes(k: String, si: String, no: String) = when (values[k]) { "true" -> si; "false" -> no; else -> "?" }
+    return "ACC ${yes("can.acc", "sí", "no")} · freno de mano ${yes("can.handbrake", "puesto", "quitado")} · " +
+        "cierre ${yes("can.central_lock", "cerrado", "abierto")} · cinturón conductor ${yes("can.belt_driver", "puesto", "sin poner")} · " +
+        "combustible ${values["can.fuel_liters"] ?: "?"} · km ${values["can.mileage"] ?: "?"} · autonomía ${values["can.fuel_range"] ?: "?"} · " +
+        "d7 (¿temperatura?) ${values["can.d7_raw"] ?: "?"} · d8 ${values["can.d8_raw"] ?: "?"} · velocidad ${values["can.speed"] ?: "?"} · rpm ${values["can.rpm"] ?: "?"}"
+}
+
 private fun radioReport(values: Map<String, String>, changes: List<String>, canbus: List<String>, vehicle: com.cockpitf30.vehicle.VehicleState): String = buildString {
     appendLine()
     appendLine("== Datos del coche (radio)")
     appendLine(vehicleSummary(vehicle))
+    appendLine()
+    appendLine("== Caja CAN (tramas callback.pt.canbus_cmd)")
+    appendLine(canBoxSummary(values))
+    com.cockpitf30.vehicle.source.CanBoxData.summary().forEach(::appendLine)
+    appendLine("-- cambios de contenido (la más nueva arriba)")
+    com.cockpitf30.vehicle.source.CanBoxData.changes().forEach(::appendLine)
+    appendLine()
     values.toSortedMap().forEach { (k, v) -> appendLine("$k = $v") }
     appendLine()
     appendLine("== Cambios de claves")
@@ -598,3 +758,40 @@ internal fun installedVersion(context: android.content.Context): String = runCat
     val code = if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
     "${info.versionName} (build $code)"
 }.getOrDefault("desconocida")
+
+/** ¿Es Cockpit la app de inicio (HOME) por defecto? */
+private fun isDefaultHome(context: android.content.Context): Boolean {
+    val home = android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_HOME)
+    return context.packageManager.resolveActivity(home, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName == context.packageName
+}
+
+/**
+ * Abre el ajuste de Android para elegir la app de inicio. Si la radio no lo tiene, los de apps
+ * por defecto, y como último recurso la ficha de Cockpit (allí «Borrar valores predeterminados»).
+ */
+private fun chooseHome(context: android.content.Context) {
+    val tries = listOf(
+        android.content.Intent(android.provider.Settings.ACTION_HOME_SETTINGS),
+        android.content.Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS),
+        android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:" + context.packageName)),
+    )
+    for (i in tries) {
+        if (runCatching { context.startActivity(i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess) return
+    }
+    android.widget.Toast.makeText(context, "La radio no deja abrir el ajuste de pantalla de inicio", android.widget.Toast.LENGTH_LONG).show()
+}
+
+/** Abre el lanzador BMW de serie de la radio (o cualquier otro lanzador instalado que no sea Cockpit). */
+private fun openStockLauncher(context: android.content.Context) {
+    val pm = context.packageManager
+    val home = android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_HOME)
+    val others = pm.queryIntentActivities(home, 0).map { it.activityInfo }.filter { it.packageName != context.packageName && it.packageName != "com.android.settings" }
+    val target = others.firstOrNull { it.packageName == "com.bmw1.launcher2" } ?: others.firstOrNull()
+    if (target == null) {
+        android.widget.Toast.makeText(context, "No hay otro lanzador instalado", android.widget.Toast.LENGTH_LONG).show()
+        return
+    }
+    runCatching {
+        context.startActivity(android.content.Intent(home).setClassName(target.packageName, target.name).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+}

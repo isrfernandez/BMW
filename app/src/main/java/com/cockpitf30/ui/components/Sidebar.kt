@@ -34,7 +34,6 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -94,8 +93,8 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
                 Box(
                     Modifier.fillMaxSize().drawWithContent {
                         drawContent()
-                        glassOverlay(item.art.accent, shade = 0.65f)
-                        metalBevel(lit)
+                        // Velo más ligero que antes: los iconos se veían apagados con luz de día.
+                        glassOverlay(item.art.accent, shade = 0.35f)
                     },
                 ) {
                     SideArtwork(item.art, lit, Modifier.matchParentSize())
@@ -105,7 +104,7 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
                             fontSize = 15.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp,
                             shadow = Shadow(Color.Black.copy(alpha = 0.9f), Offset(0f, 1f), 6f),
                         ),
-                        color = if (lit) Cockpit.Text else Cockpit.Text.copy(alpha = 0.82f),
+                        color = Cockpit.Text,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.align(Alignment.BottomStart).padding(start = 10.dp, end = 6.dp, bottom = 8.dp),
@@ -126,13 +125,13 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
 /** Fondo ilustrado del botón. Apagado cuando no está activo ni enfocado. */
 @Composable
 private fun SideArtwork(art: SideArt, lit: Boolean, modifier: Modifier = Modifier) {
-    val dim = if (lit) 1f else 0.72f
+    val dim = if (lit) 1f else 0.9f
     Box(modifier) {
         Canvas(Modifier.matchParentSize()) { backdrop(art, dim) }
         if (art == SideArt.HOME) {
             // El propio coche, en vista 3/4, posado sobre un suelo azul.
             Image(
-                painterResource(R.drawable.car_34_closed), null,
+                com.cockpitf30.ui.components.cachedPainter(R.drawable.car_34_closed), null,
                 Modifier.matchParentSize().padding(bottom = 18.dp),
                 contentScale = ContentScale.Crop,
                 alpha = dim,
@@ -188,20 +187,6 @@ private fun DrawScope.backdrop(art: SideArt, dim: Float) {
     )
 }
 
-/** Bisel de metal: filo de cobre arriba a la izquierda que pasa a azul acero abajo a la derecha. */
-private fun DrawScope.metalBevel(lit: Boolean) {
-    val stroke = 1.6.dp.toPx()
-    val a = if (lit) 1f else 0.7f
-    drawRoundRect(
-        Brush.linearGradient(
-            0f to Cockpit.CopperLight.copy(alpha = 0.85f * a), 0.3f to Cockpit.Copper.copy(alpha = 0.45f * a),
-            0.55f to Color.White.copy(alpha = 0.12f * a), 0.8f to Cockpit.SteelBlue.copy(alpha = 0.5f * a),
-            1f to Cockpit.SteelBlueLight.copy(alpha = 0.8f * a),
-            start = Offset(0f, 0f), end = Offset(size.width, size.height),
-        ),
-        Offset(stroke / 2, stroke / 2), Size(size.width - stroke, size.height - stroke), CornerRadius(12.dp.toPx()), style = Stroke(stroke),
-    )
-}
 
 /** Calles en perspectiva, una ruta luminosa y el pin de destino. */
 private fun DrawScope.navArt(accent: Color, dim: Float) {

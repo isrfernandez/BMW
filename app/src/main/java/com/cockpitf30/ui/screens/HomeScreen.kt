@@ -132,7 +132,7 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
             Card("fuel", "Gasolinera", "La más cercana", CardTheme.FUEL, { onOpen(Screen.FUEL) }),
             Card("trip", "Datos de viaje", "Duración, km y consumo", CardTheme.TRIP, { onOpen(Screen.TRIP) }, Alignment.BottomStart) { TripBody(it) },
             Card("weather", "Tiempo", "", CardTheme.WEATHER, { onOpen(Screen.WEATHER) }),
-            Card("vehicle", "Vehículo", "Puertas y neumáticos", CardTheme.VEHICLE, { onOpen(Screen.VEHICLE) }),
+            Card("vehicle", "Vehículo", "iDrive original del coche", CardTheme.VEHICLE, { onOpen(Screen.VEHICLE) }),
             Card("phone", "Teléfono", "Marcador y contactos", CardTheme.PHONE, { onOpen(Screen.PHONE) }),
             Card("diag", "Diagnóstico", "Fuente de datos e iDrive", CardTheme.DIAG, { onOpen(Screen.DIAGNOSTICS) }),
         ).associateBy { it.id }
@@ -382,6 +382,28 @@ internal fun openMaps(context: Context) {
         maps
     }
     launch(context, intent)
+}
+
+/**
+ * Pasa la pantalla al iDrive original del coche, igual que el botón del lanzador de la radio:
+ * la actividad OsuInfoActivity de CarCanbus manda a la caja CAN la orden de enseñar el vídeo del
+ * iDrive y se cierra. Allí, con la ruleta, está «Estado del vehículo» (neumáticos, puertas…).
+ * Para volver, el botón de inicio o atrás de la radio.
+ */
+internal fun openOriginalBmw(context: Context) {
+    val candidates = listOf(
+        "android.car.app.canbus" to "android.car.app.canbus.instance.osuwy.activity.OsuInfoActivity",
+        "android.car.app.video_original" to "android.car.app.video_original.OriginalMain",
+        "android.car.app.canbus" to "android.car.app.canbus.activity.MainActivity",
+    )
+    for ((pkg, cls) in candidates) {
+        try {
+            context.startActivity(Intent().setClassName(pkg, cls).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return
+        } catch (_: Exception) {
+        }
+    }
+    Toast.makeText(context, "No encuentro la app del coche original", Toast.LENGTH_SHORT).show()
 }
 
 internal fun openMusic(context: Context) = launch(
