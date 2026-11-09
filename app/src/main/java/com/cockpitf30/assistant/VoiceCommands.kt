@@ -101,6 +101,15 @@ object VoiceCommands {
         "hola be eme", "hola uve doble", "ola be eme uve doble", "oye be eme uve doble", "[unk]",
     ).joinToString(",", "[", "]") { "\"$it\"" }
 
+    /** Palabras para cortar al asistente mientras habla. */
+    private val STOP_WORDS = listOf("basta", "calla", "callate", "cállate", "espera", "vale ya", "para ya", "stop", "silencio")
+
+    /** Gramática mientras habla la radio: «Hola BMW» o una palabra para cortarla. */
+    val BARGE_GRAMMAR: String = (Regex("\"([^\"]+)\"").findAll(WAKE_GRAMMAR).map { it.groupValues[1] }.filter { it != "[unk]" }.toList() +
+        STOP_WORDS + "[unk]").joinToString(",", "[", "]") { "\"$it\"" }
+
+    fun isStopWord(text: String): Boolean = normalize(text) in STOP_WORDS.map(::normalize)
+
     private val HELLO = setOf("hola", "ola", "hello", "oye")
 
     /**

@@ -114,7 +114,9 @@ object VoiceAssistant {
     /** Tiempo para decir la orden después de «Hola BMW». */
     private const val LISTEN_MS = 7_000L
     /** Tras responder, tiempo para seguir la conversación sin «Hola BMW». */
-    private const val FOLLOW_MS = 6_000L
+    private const val FOLLOW_MS = 8_000L
+    /** Silencio tras la última palabra para dar la frase por terminada (Vosk corta en cada pausa). */
+    private const val END_SILENCE_MS = 1_200L
     /** Tras una pregunta del copiloto, algo más. */
     private const val COPILOT_FOLLOW_MS = 9_000L
 
@@ -304,7 +306,16 @@ object VoiceAssistant {
         // texto libre, porque el modelo no conoce «BMW») y otro libre para la orden.
         val wakeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.WAKE_GRAMMAR)
         val cmdRec = Recognizer(m, RATE.toFloat())
+        // Mientras habla la radio solo se escucha «Hola BMW» o «basta», para poder interrumpirla
+        // (con gramática cerrada: su propia voz no se confunde con eso).
+        val bargeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.BARGE_GRAMMAR)
         var usingCmd = false
+        var bargePartial = ""
+        // Lo dicho hasta ahora en la orden: Vosk corta en cada pausa corta, y se espera a que el
+        // conductor termine de verdad (END_SILENCE_MS sin hablar) antes de entenderla.
+        val utterance = StringBuilder()
+        var utteranceAt = 0L
+        var speaking = false
         try {
             audio.startRecording()
             if (audio.recordingState != AudioRecord.RECORDSTATE_RECORDING) error("el micrófono está ocupado")
@@ -338,34 +349,63 @@ object VoiceAssistant {
                     val lvl = if (muted) 0f else rms(buf, n)
                     _state.update { it.copy(level = lvl) }
                 }
-                if (resetRecognizer) { resetRecognizer = false; wakeRec.reset(); cmdRec.reset(); lastPartial = "" }
+                if (resetRecognizer) {
+                    resetRecognizer = false; wakeRec.reset(); cmdRec.reset(); bargeRec.reset(); lastPartial = ""; bargePartial = ""
+                    utterance.clear(); speaking = false
+                }
                 // Por si no llega el aviso de fin de la voz: nunca más de 30 s sordo.
                 if (muted) { if (mutedSince == 0L) mutedSince = now else if (now - mutedSince > 30_000) { muted = false; resetRecognizer = true } }
                 else mutedSince = 0L
-                if (muted) continue
+                if (muted) {
+                    // Hablando: solo se atiende a la interrupción.
+                    val text = if (bargeRec.acceptWaveForm(buf, n)) JSONObject(bargeRec.result).optString("text").also { bargePartial = "" }
+                    else JSONObject(bargeRec.partialResult).optString("partial").takeIf { it != bargePartial }?.also { bargePartial = it }
+                    val clean = text?.replace("[unk]", "")?.trim().orEmpty()
+                    if (clean.isNotBlank()) withContext(Dispatchers.Main) { safely("interrupción") { onBargeIn(clean) } }
+                    continue
+                }
                 val wantCmd = _state.value.phase == AssistantPhase.LISTENING
                 if (wantCmd != usingCmd) {
                     usingCmd = wantCmd
                     (if (wantCmd) cmdRec else wakeRec).reset()
                     lastPartial = ""
+                    utterance.clear(); speaking = false
                 }
                 val rec = if (usingCmd) cmdRec else wakeRec
                 if (rec.acceptWaveForm(buf, n)) {
                     val text = JSONObject(rec.result).optString("text")
                     lastPartial = ""
+                    speaking = false
                     val clean = text.replace("[unk]", "").trim()
                     if (text.isNotBlank()) _state.update { it.copy(lastText = text) }
-                    if (clean.isNotBlank()) withContext(Dispatchers.Main) { safely("onFinal") { onFinal(clean) } }
+                    if (clean.isNotBlank()) {
+                        if (usingCmd) {
+                            if (utterance.isNotEmpty()) utterance.append(' ')
+                            utterance.append(clean)
+                            utteranceAt = now
+                            if (listenUntil > 0) listenUntil = maxOf(listenUntil, now + END_SILENCE_MS + 1_000)
+                        } else withContext(Dispatchers.Main) { safely("onFinal") { onFinal(clean) } }
+                    }
                 } else {
                     val partial = JSONObject(rec.partialResult).optString("partial")
                     if (partial != lastPartial) {
                         lastPartial = partial
                         if (listenUntil > 0) listenUntil = maxOf(listenUntil, now + 2_500)
                         val clean = partial.replace("[unk]", "").trim()
-                        if (clean.isNotBlank()) withContext(Dispatchers.Main) { safely("onPartial") { onPartial(clean) } }
+                        speaking = clean.isNotBlank()
+                        if (speaking) utteranceAt = now
+                        val shown = listOf(utterance.toString(), clean).filter { it.isNotBlank() }.joinToString(" ")
+                        if (shown.isNotBlank()) withContext(Dispatchers.Main) { safely("onPartial") { onPartial(shown) } }
                     }
                 }
-                if (listenUntil in 1 until now) {
+                // Terminó de hablar: se entiende la frase entera.
+                if (utterance.isNotEmpty() && !speaking && (now - utteranceAt >= END_SILENCE_MS || listenUntil in 1 until now)) {
+                    val whole = utterance.toString()
+                    utterance.clear()
+                    listenUntil = 0
+                    withContext(Dispatchers.Main) { safely("onFinal") { onFinal(whole) } }
+                }
+                if (listenUntil in 1 until now && !speaking) {
                     listenUntil = 0
                     withContext(Dispatchers.Main) { safely("timeout") { onListenTimeout() } }
                 }
@@ -375,6 +415,7 @@ object VoiceAssistant {
             audio.release()
             wakeRec.close()
             cmdRec.close()
+            bargeRec.close()
         }
     }
 
@@ -1088,7 +1129,8 @@ object VoiceAssistant {
                 unmuteJob = scope.launch { delay(6_000L + text.length * 120L); doneSpeaking() }
             } else {
                 t.speak(text, TextToSpeech.QUEUE_FLUSH, null, "reply")
-                unmuteJob = scope.launch { delay(2_000L + text.length * 90L); doneSpeaking() }
+                // El aviso real es onDone; esto es solo por si el motor no lo manda.
+                unmuteJob = scope.launch { delay(4_000L + text.length * 140L); doneSpeaking() }
             }
         } else {
             if (settings().assistantSpeaks) {
@@ -1161,11 +1203,35 @@ object VoiceAssistant {
         stopPlayer()
     }
 
+    /**
+     * Mientras habla: «Hola BMW» la corta y escucha una orden nueva; «basta», «calla», «espera»
+     * la corta y queda escuchando (sin «Hola BMW»).
+     */
+    private fun onBargeIn(text: String) {
+        if (_state.value.phase != AssistantPhase.ANSWERING || !muted) return
+        val wake = VoiceCommands.afterWakeWord(text) != null
+        val stop = VoiceCommands.isStopWord(text) && !VoiceCommands.normalize(_state.value.reply.orEmpty()).contains(VoiceCommands.normalize(text))
+        if (!wake && !stop) return
+        Log.i(TAG, "Interrumpida: «$text»")
+        unmuteJob?.cancel()
+        listenAfterReply = 0
+        stopSpeaking()
+        muted = false
+        resetRecognizer = true
+        if (wake) wake()
+        else {
+            followUp = true
+            listenUntil = System.currentTimeMillis() + FOLLOW_MS
+            _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, engine = "Vosk", followUp = true, level = 0f) }
+        }
+    }
+
     private fun doneSpeaking() {
         unmuteJob?.cancel()
         muted = false
-        resetRecognizer = true
+        // Si ya se interrumpió y está escuchando, no se borra lo que se está oyendo.
         if (_state.value.phase != AssistantPhase.ANSWERING) return
+        resetRecognizer = true
         val follow = listenAfterReply
         listenAfterReply = 0
         when {

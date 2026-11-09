@@ -3,6 +3,7 @@ package com.cockpitf30.assistant
 import com.cockpitf30.ui.screens.Screen
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class VoiceCommandsTest {
@@ -89,5 +90,14 @@ class VoiceCommandsTest {
         assertEquals(Command.Mode(com.cockpitf30.ui.theme.DriveMode.SPORT), VoiceCommands.parse("modo sport"))
         assertEquals(Command.Mode(com.cockpitf30.ui.theme.DriveMode.NIGHT), VoiceCommands.parse("pon el modo noche"))
         assertEquals(Command.Open(Screen.PERFORMANCE), VoiceCommands.parse("abre rendimiento"))
+    }
+
+    @Test
+    fun bargeInWords() {
+        assertTrue(VoiceCommands.isStopWord("basta"))
+        assertTrue(VoiceCommands.isStopWord("Cállate"))
+        assertTrue(!VoiceCommands.isStopWord("para descansar"))
+        assertTrue(VoiceCommands.BARGE_GRAMMAR.contains("\"hola be eme uve doble\""))
+        assertTrue(VoiceCommands.BARGE_GRAMMAR.contains("\"basta\""))
     }
 }
