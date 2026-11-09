@@ -494,14 +494,7 @@ private fun DrawScope.drawCar(
             y += l.size.height + g.dp(12f)
         }
 
-        // Presión de cada rueda con una línea hasta ella. Las del lado derecho quedan ocultas tras el
-        // coche: su punto es solo un aro. Coordenadas medidas sobre home_car_scene (1394x768).
-        val t = state.tyres
-        fun bar(v: Float?) = v?.let { "%.1f".format(it) } ?: "--"
-        marker(tm, st, "DEL. IZQ.", bar(t.frontLeft), " bar", at(687f, 457f), at(746f, 482f), alignRight = false, status = tyreStatusColor(t.frontLeft))
-        marker(tm, st, "TRAS. IZQ.", bar(t.rearLeft), " bar", at(860f, 352f), at(930f, 395f), alignRight = false, status = tyreStatusColor(t.rearLeft))
-        marker(tm, st, "DEL. DER.", bar(t.frontRight), " bar", at(548f, 432f), at(505f, 450f), alignRight = true, hidden = true, status = tyreStatusColor(t.frontRight))
-        marker(tm, st, "TRAS. DER.", bar(t.rearRight), " bar", at(742f, 292f), at(560f, 270f), alignRight = true, hidden = true, status = tyreStatusColor(t.rearRight))
+        // Sin presiones de rueda: la caja CAN no las manda (se ven en el iDrive original).
         // Autonomía arriba a la derecha, sin línea.
         marker(tm, st, "AUTONOMÍA", state.rangeKm?.toString() ?: "--", " km", null, at(905f, 250f), alignRight = false)
     }

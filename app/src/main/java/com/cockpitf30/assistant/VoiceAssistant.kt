@@ -459,7 +459,7 @@ object VoiceAssistant {
             open(c.screen)
             when (c.screen) {
                 Screen.FUEL -> joke("Te enseño las gasolineras", "Prometo no comentar tu consumo.", "Yo funciono con electricidad, por cierto.")
-                Screen.VEHICLE -> joke("Aquí tienes el vehículo", "Sigue teniendo cuatro ruedas. Lo he comprobado.")
+                Screen.VEHICLE -> joke("Te paso al iDrive original del coche", "Allí manda él. Yo espero aquí.")
                 Screen.TRIP -> joke("Datos de viaje", "Sin juzgar.", "Los números no mienten. Yo tampoco, casi nunca.")
                 Screen.WEATHER -> joke("Este es el tiempo", "Yo no me mojo. Literalmente.")
                 Screen.PHONE -> joke("Abro el teléfono", "No escucharé. Mucho.")
@@ -530,28 +530,11 @@ object VoiceAssistant {
             }
             InfoTopic.TYRES -> {
                 open(Screen.VEHICLE)
-                val t = car.tyres
-                val all = listOf(t.frontLeft, t.frontRight, t.rearLeft, t.rearRight)
-                if (all.all { it == null }) {
-                    "La radio aún no me da la presión de los neumáticos"
-                } else {
-                    fun b(v: Float?) = v?.let { String.format(es, "%.1f", it) } ?: "sin dato"
-                    val ok = all.filterNotNull().all { it in 1.9f..3.2f }
-                    "Delanteras ${b(t.frontLeft)} y ${b(t.frontRight)}; traseras ${b(t.rearLeft)} y ${b(t.rearRight)} bares. " +
-                        if (ok) joke("Todo correcto", "Ni un pinchazo a la vista.") else "Revisa la presión"
-                }
+                "La caja no me da la presión. Te abro el iDrive original: entra en Estado del vehículo"
             }
             InfoTopic.DOORS -> {
-                val d = car.doors
-                val open = listOfNotNull(
-                    "la del conductor".takeIf { d.driver == true },
-                    "la del acompañante".takeIf { d.passenger == true },
-                    "la trasera izquierda".takeIf { d.rearLeft == true },
-                    "la trasera derecha".takeIf { d.rearRight == true },
-                    "el maletero".takeIf { d.trunk == true },
-                    "el capó".takeIf { d.hood == true },
-                )
-                if (open.isEmpty()) joke("Todo cerrado", "Nadie saldrá despedido por una escotilla.") else { open(Screen.VEHICLE); "Abierto: " + open.joinToString(", ") }
+                open(Screen.VEHICLE)
+                joke("No puedo ver las puertas. Te abro el iDrive original", "Si oyes corriente de aire, mala señal.")
             }
             InfoTopic.TRIP -> {
                 open(Screen.TRIP)
