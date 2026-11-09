@@ -200,6 +200,7 @@ object VoiceAssistant {
     /** La app sale de pantalla: suelta el micrófono para no molestar a Maps, llamadas, etc. */
     fun pause() {
         resumed = false
+        muted = false
         copilotJob?.cancel()
         copilotJob = null
         stopAudio()
@@ -261,7 +262,20 @@ object VoiceAssistant {
                     LibVosk.setLogLevel(LogLevel.WARNINGS)
                     Model(VoiceModel.dir(app).absolutePath).also { model = it }
                 }
-                listen(m)
+                // Si el micrófono deja de dar audio (pasa en el emulador al hablar la voz), se vuelve a abrir.
+                var failures = 0
+                while (coroutineScopeActive()) {
+                    try {
+                        listen(m) { failures = 0 }
+                        break
+                    } catch (e: MicLost) {
+                        failures++
+                        Log.w(TAG, "Micrófono perdido (${e.message}); se reabre ($failures)")
+                        _state.update { it.copy(error = "Micrófono reabierto $failures ${if (failures == 1) "vez" else "veces"}: ${e.message}") }
+                        if (failures > 20) throw e
+                        delay(500L * failures.coerceAtMost(6))
+                    }
+                }
             } catch (e: Throwable) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.w(TAG, "Vosk", e)
@@ -276,7 +290,10 @@ object VoiceAssistant {
     }
 
     @SuppressLint("MissingPermission") // Se comprueba en refresh().
-    private suspend fun listen(m: Model) {
+    /** El micrófono ha dejado de dar audio: hay que cerrarlo y abrirlo otra vez. */
+    private class MicLost(msg: String) : Exception(msg)
+
+    private suspend fun listen(m: Model, onAudio: () -> Unit) {
         val minBuf = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         fun open(source: Int) = AudioRecord(source, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuf, RATE))
             .takeIf { it.state == AudioRecord.STATE_INITIALIZED }
@@ -295,16 +312,36 @@ object VoiceAssistant {
             val buf = ShortArray(RATE / 10) // 100 ms
             var lastPartial = ""
             var lastLevel = 0L
+            var badReads = 0
+            var silentSince = 0L
+            var heardSomething = false
+            var mutedSince = 0L
             while (coroutineScopeActive()) {
                 val n = audio.read(buf, 0, buf.size)
-                if (n <= 0) { delay(50); continue }
+                if (n <= 0) {
+                    // Un error de lectura seguido (p. ej. ERROR_DEAD_OBJECT) no se arregla solo.
+                    if (++badReads > 20) throw MicLost("error de lectura $n")
+                    delay(50); continue
+                }
+                badReads = 0
                 val now = System.currentTimeMillis()
+                // Ceros exactos durante mucho rato (sin estar callado) = el micrófono se ha quedado mudo.
+                var allZero = true
+                for (i in 0 until n) if (buf[i].toInt() != 0) { allZero = false; break }
+                if (!allZero) { silentSince = 0L; if (!heardSomething) { heardSomething = true; onAudio() } }
+                else if (!muted) {
+                    if (silentSince == 0L) silentSince = now
+                    else if (heardSomething && now - silentSince > 4_000) throw MicLost("sin audio")
+                }
                 if (now - lastLevel > 80) {
                     lastLevel = now
                     val lvl = if (muted) 0f else rms(buf, n)
                     _state.update { it.copy(level = lvl) }
                 }
                 if (resetRecognizer) { resetRecognizer = false; wakeRec.reset(); cmdRec.reset(); lastPartial = "" }
+                // Por si no llega el aviso de fin de la voz: nunca más de 30 s sordo.
+                if (muted) { if (mutedSince == 0L) mutedSince = now else if (now - mutedSince > 30_000) { muted = false; resetRecognizer = true } }
+                else mutedSince = 0L
                 if (muted) continue
                 val wantCmd = _state.value.phase == AssistantPhase.LISTENING
                 if (wantCmd != usingCmd) {
@@ -318,19 +355,19 @@ object VoiceAssistant {
                     lastPartial = ""
                     val clean = text.replace("[unk]", "").trim()
                     if (text.isNotBlank()) _state.update { it.copy(lastText = text) }
-                    if (clean.isNotBlank()) withContext(Dispatchers.Main) { onFinal(clean) }
+                    if (clean.isNotBlank()) withContext(Dispatchers.Main) { safely("onFinal") { onFinal(clean) } }
                 } else {
                     val partial = JSONObject(rec.partialResult).optString("partial")
                     if (partial != lastPartial) {
                         lastPartial = partial
                         if (listenUntil > 0) listenUntil = maxOf(listenUntil, now + 2_500)
                         val clean = partial.replace("[unk]", "").trim()
-                        if (clean.isNotBlank()) withContext(Dispatchers.Main) { onPartial(clean) }
+                        if (clean.isNotBlank()) withContext(Dispatchers.Main) { safely("onPartial") { onPartial(clean) } }
                     }
                 }
                 if (listenUntil in 1 until now) {
                     listenUntil = 0
-                    withContext(Dispatchers.Main) { onListenTimeout() }
+                    withContext(Dispatchers.Main) { safely("timeout") { onListenTimeout() } }
                 }
             }
         } finally {
@@ -338,6 +375,22 @@ object VoiceAssistant {
             audio.release()
             wakeRec.close()
             cmdRec.close()
+        }
+    }
+
+    /**
+     * Un fallo al ejecutar una orden no debe matar la escucha (antes, tras un error, «Hola BMW» dejaba
+     * de funcionar hasta reiniciar la app): se avisa y se vuelve a esperar.
+     */
+    private inline fun safely(what: String, block: () -> Unit) {
+        try { block() } catch (e: Throwable) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w(TAG, "Fallo en $what", e)
+            listenUntil = 0
+            followUp = false
+            muted = false
+            resetRecognizer = true
+            _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, reply = "Algo ha fallado. Vuelve a intentarlo", replyAt = System.currentTimeMillis(), error = "$what: ${e.message ?: e.javaClass.simpleName}") }
         }
     }
 
