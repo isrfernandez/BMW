@@ -130,6 +130,8 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
             Card("assistant", "Hola BMW", "Asistente de voz", CardTheme.ASSIST, { VoiceAssistant.tap(it) }),
             // Antes "Navegación" (repetida en la barra lateral): ahora la gasolinera más cercana.
             Card("fuel", "Gasolinera", "La más cercana", CardTheme.FUEL, { onOpen(Screen.FUEL) }),
+            // Modo de conducción: cada pulsación pasa al siguiente (Normal → Sport → Night).
+            Card("mode", "Modo", "", CardTheme.MODE, { com.cockpitf30.ui.theme.DriveModes.cycle(it) }),
             Card("trip", "Datos de viaje", "Duración, km y consumo", CardTheme.TRIP, { onOpen(Screen.TRIP) }, Alignment.BottomStart) { TripBody(it) },
             Card("weather", "Tiempo", "", CardTheme.WEATHER, { onOpen(Screen.WEATHER) }),
             Card("vehicle", "Vehículo", "iDrive original del coche", CardTheme.VEHICLE, { onOpen(Screen.VEHICLE) }),
@@ -267,6 +269,14 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0f)
                             }) { CardArt(card.theme) }
                             AssistantCardBody()
+                        } else if (card.id == "mode") {
+                            val mode = com.cockpitf30.ui.theme.DriveModes.current
+                            Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
+                                Text("MODO DE CONDUCCIÓN", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
+                                Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 8.dp)) {
+                                    ModeFace(mode, active = true, lit = true, glow = 0.6f, hint = "OK: siguiente modo")
+                                }
+                            }
                         } else if (card.id == "fuel") {
                             Box(Modifier.matchParentSize().graphicsLayer {
                                 scaleX = 0.66f; scaleY = 0.66f
@@ -419,4 +429,4 @@ internal fun launch(context: Context, intent: Intent) {
     }
 }
 
-enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, WEATHER, PHONE, FUEL }
+enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, WEATHER, PHONE, FUEL, PERFORMANCE }

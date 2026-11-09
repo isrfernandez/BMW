@@ -83,6 +83,8 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.cockpitf30.ui.theme.Cockpit
+import com.cockpitf30.ui.theme.DriveMode
+import com.cockpitf30.ui.theme.DriveModes
 import com.cockpitf30.ui.theme.numeric
 import com.cockpitf30.vehicle.SourceStatus
 import com.cockpitf30.vehicle.VehicleState
@@ -90,14 +92,18 @@ import com.cockpitf30.vehicle.GearEstimator
 import kotlin.math.abs
 import kotlin.math.hypot
 
-private val Cyan = Color(0xFF29B6F6)
+private val Cyan: Color get() = when (DriveModes.current) {
+    DriveMode.NORMAL -> Color(0xFF29B6F6)
+    DriveMode.SPORT -> Color(0xFFFF4A3A)
+    DriveMode.NIGHT -> Color(0xFFFFB238)
+}
 /** Cifras de la escala: blanco con un punto de azul hielo; rojo en la zona roja de las rpm. */
 private val SpeedLabel = Color(0xFFF4F8FC)
 private val RpmLabel = Color(0xFFF4F8FC)
 private val RpmRed = Color(0xFFFF4A3D)
 /** Halo de las cifras grandes, del color de su marcador. */
-private val SpeedGlow = Color(0xFFE59A78)
-private val RpmGlow = Color(0xFF9DBAD4)
+private val SpeedGlow: Color get() = SpeedMetal.light
+private val RpmGlow: Color get() = SteelMetal.light
 /** Fondo del panel, del mismo azul marino que la escena del coche para que se funda. */
 private val SceneTop = Color(0xFF091A2D)
 
@@ -395,6 +401,11 @@ private fun DrawScope.drawPanel(
         if (page > 0f) translate(left = (1f - page) * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawMap(bounds, map, tm, mapText) } }
         if (page < 1f) translate(left = -page * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawCar(g, scene, state, tm, st, bounds) } }
     }
+    // Sport y Night tiñen la escena (coche y mapa) del color del modo, manteniendo luces y sombras.
+    DriveModes.palette.tint?.let { tint ->
+        drawPath(panel, tint, alpha = 0.9f, blendMode = BlendMode.Hue)
+        if (DriveModes.palette.dim > 0f) drawPath(panel, Color.Black.copy(alpha = DriveModes.palette.dim))
+    }
     val edge = if (focused) Cyan.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.10f)
     if (focused) drawPath(panel, Cyan.copy(alpha = 0.25f), style = Stroke(g.dp(8f)), blendMode = BlendMode.Plus)
     drawPath(panel, edge, style = Stroke(g.dp(if (focused) 2f else 1.2f)))
@@ -574,10 +585,27 @@ private fun DrawScope.marker(
 private class MetalLook(val dark: Color, val mid: Color, val bright: Color, val tip: Color, val light: Color)
 
 /** Relleno de velocidad y rpm en cobre rosado metalizado, como en el cuadro del iDrive 8.5. */
-private val SpeedMetal = MetalLook(Color(0xFF4E2418), Color(0xFFC07A5C), Color(0xFFF5C8AE), Color(0xFFFFF0E4), Color(0xFFE59A78))
-private val RpmMetal = SpeedMetal
+private val CopperRose = MetalLook(Color(0xFF4E2418), Color(0xFFC07A5C), Color(0xFFF5C8AE), Color(0xFFFFF0E4), Color(0xFFE59A78))
 /** Franja vacía en azul hielo metalizado suave. */
-private val SteelMetal = MetalLook(Color(0xFF1F3549), Color(0xFF6489AE), Color(0xFFC0D8EE), Color.White, Color(0xFFA9C8E4))
+private val IceSteel = MetalLook(Color(0xFF1F3549), Color(0xFF6489AE), Color(0xFFC0D8EE), Color.White, Color(0xFFA9C8E4))
+/** Sport: relleno rojo metalizado sobre titanio. */
+private val RedMetal = MetalLook(Color(0xFF4A0A06), Color(0xFFC8261A), Color(0xFFFF8070), Color(0xFFFFE8E2), Color(0xFFFF5A46))
+private val Titanium = MetalLook(Color(0xFF26292E), Color(0xFF7C838D), Color(0xFFCDD2D9), Color.White, Color(0xFFB8BEC8))
+/** Night: ámbar sobre bronce oscuro. */
+private val AmberMetal = MetalLook(Color(0xFF4A2A04), Color(0xFFC8841A), Color(0xFFFFD27A), Color(0xFFFFF4DC), Color(0xFFF0A838))
+private val Bronze = MetalLook(Color(0xFF2C2212), Color(0xFF7A6446), Color(0xFFC8B28A), Color(0xFFFFF3DA), Color(0xFFB89E76))
+
+private val SpeedMetal: MetalLook get() = when (DriveModes.current) {
+    DriveMode.NORMAL -> CopperRose
+    DriveMode.SPORT -> RedMetal
+    DriveMode.NIGHT -> AmberMetal
+}
+private val RpmMetal: MetalLook get() = SpeedMetal
+private val SteelMetal: MetalLook get() = when (DriveModes.current) {
+    DriveMode.NORMAL -> IceSteel
+    DriveMode.SPORT -> Titanium
+    DriveMode.NIGHT -> Bronze
+}
 
 /**
  * Perfil de brillo a lo ancho de la franja (0 = borde exterior, 1 = interior), como una pieza de

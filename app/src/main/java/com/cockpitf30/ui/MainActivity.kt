@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -85,6 +86,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         hideSystemBars()
         IDriveInput.learned = AppSettings(this).knobKeys
+        com.cockpitf30.ui.theme.DriveModes.load(this)
         VehicleService.start(this)
         askBatteryExemptionOnce()
         // Lo pesado, en segundo plano y antes de que haga falta: imágenes grandes y lista de apps.
@@ -239,6 +241,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     val ctx = LocalContext.current
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         RouteTracker.start(ctx)
+        com.cockpitf30.vehicle.telemetry.Telemetry.startGps(ctx)
         scope.launch { WeatherRepository.refresh(ctx) }
         VoiceAssistant.resume(ctx)
     }
@@ -283,6 +286,27 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     }
     BackHandler(enabled = screen != Screen.HOME) { screen = Screen.HOME }
 
+    // Modo Night automático: cada 5 s se mira si está oscuro (faros, sensor de luz o el sol).
+    LaunchedEffect(Unit) {
+        while (true) {
+            val lights = com.cockpitf30.vehicle.source.RadioCarData.values.value["state.main.headlight_state"]?.toIntOrNull()?.let { it != 0 }
+            val pos = RouteTracker.state.value.position?.takeIf { RouteTracker.state.value.live }
+            val here = pos ?: WeatherRepository.lastKnownLocation(ctx)?.let { com.cockpitf30.nav.GeoPoint(it.latitude, it.longitude) }
+            com.cockpitf30.ui.theme.NightDetector.update(
+                lights, com.cockpitf30.vehicle.telemetry.Telemetry.state.value.lux, here?.lat, here?.lon,
+                useHeadlights = com.cockpitf30.ui.theme.DriveModes.nightWithHeadlights,
+            )
+            delay(5000)
+        }
+    }
+    // Al elegir Sport se abre Rendimiento (relojes de potencia y G-meter).
+    val selectedMode = com.cockpitf30.ui.theme.DriveModes.selected
+    var lastMode by remember { mutableStateOf(selectedMode) }
+    LaunchedEffect(selectedMode) {
+        if (selectedMode == com.cockpitf30.ui.theme.DriveMode.SPORT && lastMode != selectedMode) screen = Screen.PERFORMANCE
+        lastMode = selectedMode
+    }
+
     // Las órdenes de voz abren pantallas como los botones.
     // Vehículo abre el iDrive original del coche (la caja CAN no da puertas ni presiones):
     // allí está «Estado del vehículo» con las ruedas y su presión.
@@ -298,12 +322,15 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
         // Pulsación larga en Home: atajo a Diagnóstico.
         SideItem("Home", SideArt.HOME, screen == Screen.HOME, onLongClick = { screen = Screen.DIAGNOSTICS }) { screen = Screen.HOME },
         SideItem("Navegación", SideArt.NAV, false) { openMaps(context) },
+        SideItem("Rendimiento", SideArt.PERF, screen == Screen.PERFORMANCE) { screen = Screen.PERFORMANCE },
         SideItem("Música", SideArt.MUSIC, false) { openMusic(context) },
         SideItem("Apps", SideArt.APPS, screen == Screen.APPS) { screen = Screen.APPS },
         // Ajustes de la app: fuente de datos, puerto serie, batería.
         SideItem("Ajustes", SideArt.SETTINGS, screen == Screen.DIAGNOSTICS) { screen = Screen.DIAGNOSTICS },
     )
 
+    // Al cambiar de modo se rehace la interfaz entera con la paleta nueva.
+    androidx.compose.runtime.key(com.cockpitf30.ui.theme.DriveModes.current) {
     Row(
         Modifier
             .fillMaxSize()
@@ -327,9 +354,11 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 Screen.WEATHER -> WeatherScreen()
                 Screen.PHONE -> PhoneScreen()
                 Screen.FUEL -> FuelScreen()
+                Screen.PERFORMANCE -> com.cockpitf30.ui.screens.PerformanceScreen()
             }
         }
             AssistantOverlay()
         }
+    }
     }
 }

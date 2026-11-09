@@ -49,12 +49,17 @@ import kotlin.math.sin
  * cobre metalizado y azul acero: los acentos alternan entre los dos y [second] es el metal que
  * acompaña a cada uno.
  */
-enum class SideArt(val accent: Color, val second: Color) {
-    HOME(Cockpit.SteelBlue, Cockpit.Copper),
-    NAV(Cockpit.Copper, Cockpit.SteelBlue),
-    MUSIC(Cockpit.SteelBlue, Cockpit.Copper),
-    APPS(Cockpit.Copper, Cockpit.SteelBlue),
-    SETTINGS(Cockpit.SteelBlue, Cockpit.Copper),
+enum class SideArt(private val steelFirst: Boolean) {
+    HOME(true),
+    NAV(false),
+    PERF(true),
+    MUSIC(false),
+    APPS(true),
+    SETTINGS(false);
+
+    // Se leen al pintar: siguen la paleta del modo de conducción.
+    val accent: Color get() = if (steelFirst) Cockpit.SteelBlue else Cockpit.Copper
+    val second: Color get() = if (steelFirst) Cockpit.Copper else Cockpit.SteelBlue
 }
 
 class SideItem(
@@ -81,13 +86,13 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
             .verticalScroll(rememberScrollState())
             .padding(vertical = 16.dp, horizontal = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(11.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
     ) {
-        MStripe(Modifier.padding(bottom = 6.dp), segment = 22.dp)
+        MStripe(Modifier.padding(bottom = 2.dp), segment = 22.dp)
         items.forEach { item ->
             FocusTile(
                 onClick = item.onClick, onLongClick = item.onLongClick, selected = item.active,
-                modifier = Modifier.fillMaxWidth().height(116.dp),
+                modifier = Modifier.fillMaxWidth().height(100.dp),
             ) { focused ->
                 val lit = item.active || focused
                 Box(
@@ -143,6 +148,7 @@ private fun SideArtwork(art: SideArt, lit: Boolean, modifier: Modifier = Modifie
                     SideArt.MUSIC -> musicArt(art.accent, art.second, dim)
                     SideArt.APPS -> appsArt(dim)
                     SideArt.SETTINGS -> settingsArt(art.accent, dim)
+                    SideArt.PERF -> perfArt(art.accent, art.second, dim)
                     SideArt.HOME -> Unit
                 }
             }
@@ -156,7 +162,8 @@ private fun SideArtwork(art: SideArt, lit: Boolean, modifier: Modifier = Modifie
  */
 private fun DrawScope.backdrop(art: SideArt, dim: Float) {
     val w = size.width; val h = size.height
-    drawRect(Brush.verticalGradient(listOf(Color(0xFF1A2A3E), Color(0xFF0A111B), Color(0xFF07090E))))
+    val top = if (com.cockpitf30.ui.theme.DriveModes.current == com.cockpitf30.ui.theme.DriveMode.NORMAL) Color(0xFF1A2A3E) else Cockpit.SteelBlueDark
+    drawRect(Brush.verticalGradient(listOf(top, Color(0xFF0A111B), Color(0xFF07090E))))
     // Viso cobre abajo a la izquierda y azul acero arriba a la derecha.
     drawRect(
         Brush.linearGradient(
@@ -283,4 +290,28 @@ private fun DrawScope.settingsArt(accent: Color, dim: Float) {
         drawLine(accent.copy(alpha = 0.85f * dim), Offset(w * 0.10f, y), Offset(w * (0.10f + 0.52f * fx), y), 3.dp.toPx(), StrokeCap.Round)
         drawCircle(Color.White.copy(alpha = dim), 4.5.dp.toPx(), Offset(w * (0.10f + 0.52f * fx), y))
     }
+}
+
+/** G-meter: anillos de fuerzas G con el punto desplazado y su estela, y una aguja de potencia. */
+private fun DrawScope.perfArt(accent: Color, second: Color, dim: Float) {
+    val w = size.width; val h = size.height
+    val c = Offset(w * 0.70f, h * 0.36f)
+    val r = h * 0.34f
+    for (k in 1..3) drawCircle(Color.White.copy(alpha = (0.10f + 0.05f * k) * dim), r * k / 3f, c, style = Stroke(1.dp.toPx()))
+    drawLine(Color.White.copy(alpha = 0.18f * dim), Offset(c.x - r, c.y), Offset(c.x + r, c.y), 1.dp.toPx())
+    drawLine(Color.White.copy(alpha = 0.18f * dim), Offset(c.x, c.y - r), Offset(c.x, c.y + r), 1.dp.toPx())
+    val trail = Path().apply {
+        moveTo(c.x, c.y)
+        cubicTo(c.x + r * 0.1f, c.y - r * 0.4f, c.x + r * 0.5f, c.y - r * 0.5f, c.x + r * 0.62f, c.y - r * 0.18f)
+    }
+    drawPath(trail, accent.copy(alpha = 0.45f * dim), style = Stroke(6.dp.toPx(), cap = StrokeCap.Round), blendMode = BlendMode.Plus)
+    drawPath(trail, Brush.linearGradient(listOf(accent.copy(alpha = 0.2f * dim), Color.White.copy(alpha = dim)), c, Offset(c.x + r * 0.62f, c.y - r * 0.18f)), style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
+    val dot = Offset(c.x + r * 0.62f, c.y - r * 0.18f)
+    drawCircle(accent.copy(alpha = 0.35f * dim), 9.dp.toPx(), dot)
+    drawCircle(Color.White.copy(alpha = dim), 4.dp.toPx(), dot)
+    // Arco de potencia abajo a la izquierda.
+    val pc = Offset(w * 0.24f, h * 0.62f)
+    val pr = h * 0.26f
+    drawArc(Color.White.copy(alpha = 0.15f * dim), 150f, 240f, false, Offset(pc.x - pr, pc.y - pr), Size(pr * 2, pr * 2), style = Stroke(4.dp.toPx(), cap = StrokeCap.Round))
+    drawArc(Brush.sweepGradient(listOf(second, accent, second), pc), 150f, 170f, false, Offset(pc.x - pr, pc.y - pr), Size(pr * 2, pr * 2), alpha = dim, style = Stroke(4.dp.toPx(), cap = StrokeCap.Round))
 }

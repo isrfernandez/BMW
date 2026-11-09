@@ -466,9 +466,18 @@ object VoiceAssistant {
                 Screen.APPS -> joke("Tus aplicaciones", "Ninguna tan útil como yo.")
                 Screen.DIAGNOSTICS -> joke("Abro los ajustes", "Procura no tocar mi nivel de humor.")
                 Screen.HOME -> joke("Vuelvo al inicio", "Hogar, dulce hogar.")
+                Screen.PERFORMANCE -> joke("Rendimiento", "Los caballos son estimados. El entusiasmo, real.")
             }
         }
         is Command.Info -> info(c.topic)
+        is Command.Mode -> {
+            com.cockpitf30.ui.theme.DriveModes.select(app, c.mode)
+            when (c.mode) {
+                com.cockpitf30.ui.theme.DriveMode.SPORT -> joke("Modo Sport", "Agárrate. Yo ya lo estoy.", "Intenta no asustar a los peatones.")
+                com.cockpitf30.ui.theme.DriveMode.NIGHT -> joke("Modo noche", "Ámbar, como los BMW de antes.")
+                com.cockpitf30.ui.theme.DriveMode.NORMAL -> joke("Modo normal", "La calma también tiene su encanto.")
+            }
+        }
         is Command.Navigate -> {
             val nav = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=" + Uri.encode(c.destination))).setPackage(GOOGLE_MAPS)
             if (nav.resolveActivity(app.packageManager) != null) launch(app, nav)

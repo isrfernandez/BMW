@@ -259,6 +259,14 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                DiagCard("Sensores y modo Night") {
+                    val sensors = remember { com.cockpitf30.vehicle.telemetry.Telemetry.sensorList(context) }
+                    sensors.forEach { Info(it) }
+                    val lights = radioValues["state.main.headlight_state"]
+                    Info("Faros (state.main.headlight_state): ${lights ?: "?"} · oscuro: ${if (com.cockpitf30.ui.theme.DriveModes.dark) "sí" else "no"} (${com.cockpitf30.ui.theme.NightDetector.reason})", Cockpit.BlueLight)
+                }
+            }
+            item {
                 DiagCard("Estado") {
                     Info("Versión instalada: ${installedVersion(context)}", Cockpit.BlueLight)
                     Info("Fuente: ${status.sourceName} · ${if (status.connected) "conectada" else "desconectada"}")
@@ -635,6 +643,13 @@ private fun buildReport(
     appendLine("Cockpit F30 ${installedVersion(context)} · informe de diagnóstico · ${java.time.LocalDateTime.now()}")
     appendLine("Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT}) · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · ${android.os.Build.DISPLAY}")
     appendLine("Pantalla ${dm.widthPixels}x${dm.heightPixels} ${dm.densityDpi} dpi")
+    appendLine()
+    appendLine("== Sensores")
+    com.cockpitf30.vehicle.telemetry.Telemetry.sensorList(context).forEach { appendLine(it) }
+    appendLine("Modo ${com.cockpitf30.ui.theme.DriveModes.current} (elegido ${com.cockpitf30.ui.theme.DriveModes.selected}) · oscuro=${com.cockpitf30.ui.theme.DriveModes.dark} (${com.cockpitf30.ui.theme.NightDetector.reason})")
+    com.cockpitf30.vehicle.telemetry.Telemetry.state.value.let { t ->
+        appendLine("Telemetría: G ${t.gSource} long=${"%.2f".format(t.longG)} lat=${"%.2f".format(t.latG)} calibrado=${t.calibrated} · altitud ${t.altitudeM} (${t.altSource}) pendiente ${t.slopePct} · CV ${t.powerCv} Nm ${t.torqueNm} · lux ${t.lux}")
+    }
     appendLine()
     appendLine("== Fuente")
     appendLine("${status.sourceName} · conectada=${status.connected} · bytes=${status.bytesReceived} · tramas=${status.framesReceived} · checksum mal=${status.badChecksums}")

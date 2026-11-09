@@ -21,6 +21,7 @@ sealed interface Command {
     /** «¿Cuál es tu nivel de sinceridad?» */
     data object Honesty : Command
     data object Cancel : Command
+    data class Mode(val mode: com.cockpitf30.ui.theme.DriveMode) : Command
     data class Unknown(val text: String) : Command
 }
 
@@ -142,8 +143,18 @@ object VoiceCommands {
             }
         }
 
+        // Modos de conducción: «modo sport», «pon el modo noche», «modo normal».
+        if (has("modo")) {
+            when {
+                has("sport", "deportivo", "sporty", "espor") -> return Command.Mode(com.cockpitf30.ui.theme.DriveMode.SPORT)
+                has("noche", "night", "nocturno", "naight") -> return Command.Mode(com.cockpitf30.ui.theme.DriveMode.NIGHT)
+                has("normal", "confort", "comfort") -> return Command.Mode(com.cockpitf30.ui.theme.DriveMode.NORMAL)
+            }
+        }
+
         // Abrir pantallas (con o sin «abre», «muestra», «pon», «ver»…).
         return when {
+            has("rendimiento", "potencia", "fuerzas g", "fuerza g", "altitud", "pendiente", "telemetria") -> Command.Open(Screen.PERFORMANCE)
             has("gasolinera", "repostar", "echar gasoil", "echar gasolina") -> Command.Open(Screen.FUEL)
             has("viaje", "consumo", "recorrido") -> Command.Open(Screen.TRIP)
             has("vehiculo", "coche", "neumatico", "rueda", "puerta", "presion") -> Command.Open(Screen.VEHICLE)

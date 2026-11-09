@@ -42,6 +42,7 @@ class VehicleService : LifecycleService() {
         val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
         ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), type)
         TripComputer.start(this, tripScope)
+        com.cockpitf30.vehicle.telemetry.Telemetry.start(this, tripScope)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -54,6 +55,7 @@ class VehicleService : LifecycleService() {
         stopSource()
         tripScope.cancel()
         TripComputer.stop()
+        com.cockpitf30.vehicle.telemetry.Telemetry.stop()
         super.onDestroy()
     }
 
