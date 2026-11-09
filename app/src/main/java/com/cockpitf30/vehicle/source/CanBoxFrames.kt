@@ -66,8 +66,8 @@ object CanBoxFrames {
             put("can.central_lock", f.u(2) == 1)
             put("can.handbrake", f.u(3) == 1)
             val d = f.u(4)
-            // En el F30 d4 se queda a 0. El bit 0 de d8 cambió una sola vez en cada prueba (no al
-            // abrir cada puerta), así que no son las puertas: se guarda en bruto y no se usa.
+            // En el F30 d4 se queda a 0. El bit 0 de d8 se enciende un segundo con el aviso sonoro
+            // del coche (al abrir el capó y también en marcha): no son las puertas. Se guarda en bruto.
             val e = if (f.data.size > 8) f.u(8) else 0
             put("can.door_fl", d and 0x80 != 0)
             put("can.door_fr", d and 0x40 != 0)

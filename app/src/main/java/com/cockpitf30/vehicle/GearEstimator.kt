@@ -7,12 +7,13 @@ import kotlin.math.abs
  * metida, así que se deduce de la relación velocidad / rpm.
  *
  * Tabla del 320d manual (caja GS6: 4,11 · 2,25 · 1,40 · 1,00 · 0,83 · 0,69; grupo ≈2,8; rueda
- * ≈1,98 m de desarrollo). La de antes era un 20 % más corta y daba una marcha de más.
+ * ≈1,98 m de desarrollo), corregida un 5 % con la prueba en marcha del 09/11 (2ª salía a
+ * 19,5–20 km/h por 1000 rpm y 3ª a 31–33). La de antes era un 20 % más corta.
  * Además se ajusta sola conduciendo: cada vez que la relación cae cerca de una marcha, corrige
  * poco a poco una escala común (neumáticos distintos, velocímetro que marca de más…).
  */
 object GearEstimator {
-    val KMH_PER_1000_RPM = floatArrayOf(10.3f, 18.8f, 30.1f, 42.3f, 50.9f, 61.2f)
+    val KMH_PER_1000_RPM = floatArrayOf(10.8f, 19.7f, 31.6f, 44.4f, 53.4f, 64.3f)
 
     /** Escala aprendida sobre la tabla (1 = tal cual). */
     @Volatile var scale = 1f
@@ -20,7 +21,7 @@ object GearEstimator {
 
     /** Margen admitido respecto a la relación de cada marcha (embrague pisado, cambiando...). */
     private const val TOLERANCE = 0.12f
-    private const val LEARN_TOLERANCE = 0.06f
+    private const val LEARN_TOLERANCE = 0.08f
     private const val LEARN_RATE = 0.01f
 
     /** "1".."6", "N" parado, o null si no se puede saber (sin datos o embrague pisado). */
