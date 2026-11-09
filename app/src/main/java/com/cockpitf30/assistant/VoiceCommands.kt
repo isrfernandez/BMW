@@ -21,6 +21,8 @@ sealed interface Command {
     /** «¿Cuál es tu nivel de sinceridad?» */
     data object Honesty : Command
     data object Cancel : Command
+    /** «Llama a Manuel»: [who] es lo dicho tras «llama a» (nombre o número). */
+    data class Call(val who: String) : Command
     data class Mode(val mode: com.cockpitf30.ui.theme.DriveMode) : Command
     data class Unknown(val text: String) : Command
 }
@@ -121,6 +123,12 @@ object VoiceCommands {
             return Command.AskGoogle(q.ifEmpty { null })
         }
 
+        // «Llama a Manuel», «llamar a mamá», «telefonea a Pedro móvil».
+        Regex("^(?:(?:puedes|podrias) )?(?:llama|llamar|telefonea|marca)(?: a| al| a la)? (.+)").find(t)?.let { m ->
+            val who = m.groupValues[1].trim()
+            if (who.isNotEmpty() && who !in setOf("telefono", "por telefono")) return Command.Call(who)
+        }
+
         // «Llévame a …», «navega a …», «cómo llego a …».
         Regex("\\b(?:llevame|llevanos|navega|navegar|ruta|como llego|ir|vamos|guiame)(?: hasta| hacia| a| al| a la)+ (.+)").find(t)?.let { m ->
             val dest = m.groupValues[1].replace(Regex("^(la |el |los |las )"), "").trim()
@@ -154,6 +162,7 @@ object VoiceCommands {
 
         // Abrir pantallas (con o sin «abre», «muestra», «pon», «ver»…).
         return when {
+            has("radar", "radares", "multa", "en ruta", "en el camino", "por el camino", "destino") -> Command.Open(Screen.ROUTE)
             has("rendimiento", "potencia", "fuerzas g", "fuerza g", "altitud", "pendiente", "telemetria") -> Command.Open(Screen.PERFORMANCE)
             has("gasolinera", "repostar", "echar gasoil", "echar gasolina") -> Command.Open(Screen.FUEL)
             has("viaje", "consumo", "recorrido") -> Command.Open(Screen.TRIP)

@@ -44,6 +44,7 @@ enum class CardTheme(val from: Color, val to: Color) {
     FUEL(Color(0xFFE8473B), Color(0xFFFFA36B)),
     ASSIST(Color(0xFF3D5AFE), Color(0xFF3FE0FF)),
     MODE(Color(0xFFD0160C), Color(0xFFFFB238)),
+    RADAR(Color(0xFFFF3B30), Color(0xFFFFC94D)),
 }
 
 /**
@@ -104,7 +105,7 @@ fun BoxScope.CardArt(theme: CardTheme) {
             }
         }
         CardTheme.ASSIST -> AssistantArt(theme)
-        CardTheme.WEATHER, CardTheme.MODE -> Unit
+        CardTheme.WEATHER, CardTheme.MODE, CardTheme.RADAR -> Unit
     }
 }
 

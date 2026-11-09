@@ -263,6 +263,12 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 add(Manifest.permission.ACCESS_COARSE_LOCATION)
                 add(Manifest.permission.ACCESS_FINE_LOCATION)
             }
+            // Agenda y llamadas: para «Hola BMW, llama a …».
+            if (!settings.askedContacts) {
+                settings.askedContacts = true
+                if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.READ_CONTACTS)
+                if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.CALL_PHONE)
+            }
             if (!settings.askedMicrophone && settings.assistantEnabled &&
                 ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
             ) {
@@ -297,6 +303,24 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 useHeadlights = com.cockpitf30.ui.theme.DriveModes.nightWithHeadlights,
             )
             delay(5000)
+        }
+    }
+    // Radares: aviso hablado al acercarse a uno que queda delante. Tiempo en ruta: se recalcula solo.
+    DisposableEffect(Unit) {
+        com.cockpitf30.nav.SpeedCameras.onAlert = { v ->
+            if (AppSettings(ctx).radarVoice) {
+                val limit = v.camera.maxspeed?.let { ", límite $it" } ?: ""
+                val what = if (v.camera.kind == "Tramo") "Tramo de radar" else "Radar"
+                VoiceAssistant.announce("$what a ${com.cockpitf30.ui.components.radarDistance(v.meters).replace(" m", " metros").replace(" km", " kilómetros")}$limit")
+            }
+        }
+        onDispose { com.cockpitf30.nav.SpeedCameras.onAlert = null }
+    }
+    LaunchedEffect(Unit) {
+        com.cockpitf30.weather.RouteWeather.load(ctx)
+        while (true) {
+            com.cockpitf30.weather.RouteWeather.refresh(ctx)
+            delay(2 * 60 * 1000L)
         }
     }
     // Al elegir Sport se abre Rendimiento (relojes de potencia y G-meter).
@@ -355,6 +379,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 Screen.PHONE -> PhoneScreen()
                 Screen.FUEL -> FuelScreen()
                 Screen.PERFORMANCE -> com.cockpitf30.ui.screens.PerformanceScreen()
+                Screen.ROUTE -> com.cockpitf30.ui.screens.RouteScreen()
             }
         }
             AssistantOverlay()

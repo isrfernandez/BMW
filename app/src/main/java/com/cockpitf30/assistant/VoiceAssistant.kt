@@ -160,7 +160,9 @@ object VoiceAssistant {
 
     /** La app vuelve a estar en pantalla (o ha cambiado un ajuste / el permiso). */
     fun resume(context: Context) {
+        contactsCache = null
         app = context.applicationContext
+        scope.launch(Dispatchers.IO) { contactsCache = com.cockpitf30.system.Contacts.load(app).takeIf { it.isNotEmpty() } }
         resumed = true
         _humor.value = settings().assistantHumor
         initTts()
@@ -449,6 +451,50 @@ object VoiceAssistant {
 
     private fun open(screen: Screen) = navigator?.invoke(screen)
 
+    /**
+     * Busca en la agenda y llama. Con un único contacto que encaja llama al terminar de decirlo;
+     * con varios pide nombre y apellido; un número dictado se marca tal cual.
+     */
+    private fun callContact(who: String): String {
+        val number = com.cockpitf30.system.VoiceMatch.spokenNumber(who)
+        if (number != null) {
+            scope.launch { delay(2200); com.cockpitf30.system.Contacts.call(app, number) }
+            return "Llamando al ${number.chunked(3).joinToString(" ")}"
+        }
+        val book = contactsCache ?: com.cockpitf30.system.Contacts.load(app).also { if (it.isNotEmpty()) contactsCache = it }
+        if (book.isEmpty()) {
+            open(Screen.PHONE)
+            return if (!com.cockpitf30.system.Contacts.canRead(app)) "No tengo permiso para ver tus contactos. Te abro el teléfono"
+            else "No veo la agenda. ¿Está el móvil conectado por Bluetooth?"
+        }
+        val found = com.cockpitf30.system.VoiceMatch.match(who, book) { it.name }
+        val people = found.distinctBy { com.cockpitf30.system.VoiceMatch.normalize(it.name) }
+        return when {
+            found.isEmpty() -> joke("No encuentro a $who en tus contactos", "Quizá lo tengas guardado con otro nombre.")
+            people.size == 1 -> {
+                val c = found.first()
+                scope.launch { delay(2200); com.cockpitf30.system.Contacts.call(app, c.number) }
+                joke("Llamando a ${c.name}", "Saluda de mi parte.")
+            }
+            else -> "Tengo ${people.size}: " + people.take(3).joinToString(", ") { it.name } + ". Dime nombre y apellido"
+        }
+    }
+
+    /**
+     * Aviso hablado que no viene de una orden (p. ej. un radar): solo con la app en pantalla y si
+     * no se está escuchando al conductor en ese momento.
+     */
+    fun announce(text: String) {
+        scope.launch {
+            val phase = _state.value.phase
+            if (!resumed || phase == AssistantPhase.LISTENING) return@launch
+            say(text)
+        }
+    }
+
+    /** La agenda leída (se relee al reanudar la app, por si se conectó otro móvil). */
+    @Volatile private var contactsCache: List<com.cockpitf30.system.Contact>? = null
+
     private fun humor() = settings().assistantHumor
 
     /** Respuesta con o sin broma según el nivel de humor. */
@@ -466,10 +512,12 @@ object VoiceAssistant {
                 Screen.APPS -> joke("Tus aplicaciones", "Ninguna tan útil como yo.")
                 Screen.DIAGNOSTICS -> joke("Abro los ajustes", "Procura no tocar mi nivel de humor.")
                 Screen.HOME -> joke("Vuelvo al inicio", "Hogar, dulce hogar.")
+                Screen.ROUTE -> joke("Radares y tiempo en ruta", "Yo también vigilo. Por si acaso.")
                 Screen.PERFORMANCE -> joke("Rendimiento", "Los caballos son estimados. El entusiasmo, real.")
             }
         }
         is Command.Info -> info(c.topic)
+        is Command.Call -> callContact(c.who)
         is Command.Mode -> {
             com.cockpitf30.ui.theme.DriveModes.select(app, c.mode)
             when (c.mode) {

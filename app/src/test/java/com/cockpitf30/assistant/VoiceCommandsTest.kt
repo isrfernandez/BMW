@@ -75,4 +75,19 @@ class VoiceCommandsTest {
         assertEquals(Command.Help, VoiceCommands.parse("qué puedes hacer"))
         assertEquals(Command.Unknown("cuentame un chiste"), VoiceCommands.parse("cuéntame un chiste"))
     }
+
+    @Test
+    fun callContact() {
+        assertEquals(Command.Call("manuel"), VoiceCommands.parse("llama a Manuel"))
+        assertEquals(Command.Call("manuel garcia"), VoiceCommands.parse("Llama a Manuel García"))
+        assertEquals(Command.Call("mama"), VoiceCommands.parse("llamar a mamá"))
+        assertEquals(Command.Open(Screen.PHONE), VoiceCommands.parse("teléfono"))
+    }
+
+    @Test
+    fun driveModes() {
+        assertEquals(Command.Mode(com.cockpitf30.ui.theme.DriveMode.SPORT), VoiceCommands.parse("modo sport"))
+        assertEquals(Command.Mode(com.cockpitf30.ui.theme.DriveMode.NIGHT), VoiceCommands.parse("pon el modo noche"))
+        assertEquals(Command.Open(Screen.PERFORMANCE), VoiceCommands.parse("abre rendimiento"))
+    }
 }

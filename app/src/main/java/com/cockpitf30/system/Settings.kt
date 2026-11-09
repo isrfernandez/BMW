@@ -74,6 +74,15 @@ class AppSettings(context: Context) {
         get() = prefs.getString(KEY_ASSISTANT_VOICE, null)
         set(value) = prefs.edit().putString(KEY_ASSISTANT_VOICE, value).apply()
 
+    /** Decir en voz alta «Radar a 400 metros». */
+    var radarVoice: Boolean
+        get() = prefs.getBoolean("radar_voice", true)
+        set(value) = prefs.edit().putBoolean("radar_voice", value).apply()
+
+    var askedContacts: Boolean
+        get() = prefs.getBoolean("asked_contacts", false)
+        set(value) = prefs.edit().putBoolean("asked_contacts", value).apply()
+
     var askedMicrophone: Boolean
         get() = prefs.getBoolean(KEY_ASKED_MIC, false)
         set(value) = prefs.edit().putBoolean(KEY_ASKED_MIC, value).apply()
