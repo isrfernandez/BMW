@@ -64,7 +64,17 @@ object DriveModes {
         private set
 
     /** Está oscuro (anochecer, túnel o faros encendidos): con Normal elegido se pasa a Night solo. */
-    var dark by mutableStateOf(false)
+    var dark: Boolean
+        get() = darkState
+        set(value) {
+            // Al hacerse de día se olvida que el conductor quitó Night: el próximo anochecer vuelve solo.
+            if (!value) nightOverridden = false
+            darkState = value
+        }
+    private var darkState by mutableStateOf(false)
+
+    /** El conductor eligió Normal estando oscuro: manda él hasta que vuelva a haber luz y oscuridad. */
+    private var nightOverridden by mutableStateOf(false)
 
     /** Si Night se pone solo cuando está oscuro. */
     var autoNight by mutableStateOf(true)
@@ -76,7 +86,7 @@ object DriveModes {
 
     /** El modo que se ve. */
     val current: DriveMode
-        get() = if (selected == DriveMode.NORMAL && autoNight && dark) DriveMode.NIGHT else selected
+        get() = if (selected == DriveMode.NORMAL && autoNight && dark && !nightOverridden) DriveMode.NIGHT else selected
 
     /** true si el modo Night lo ha puesto la oscuridad y no el conductor. */
     val nightIsAuto: Boolean get() = current == DriveMode.NIGHT && selected == DriveMode.NORMAL
@@ -95,13 +105,15 @@ object DriveModes {
         nightWithHeadlights = prefs.getBoolean(KEY_NIGHT_LIGHTS, true)
     }
 
-    fun select(context: Context, mode: DriveMode) {
+    fun select(context: Context?, mode: DriveMode) {
+        // Elegir Normal (o pasar de Night a Normal) a oscuras quita el Night automático por ahora.
+        nightOverridden = mode == DriveMode.NORMAL && darkState
         selected = mode
-        prefs(context).edit().putString(KEY_MODE, mode.name).apply()
+        context?.let { prefs(it).edit().putString(KEY_MODE, mode.name).apply() }
     }
 
     /** Siguiente modo (tarjeta del Inicio y voz): Normal → Sport → Night → Normal. */
-    fun cycle(context: Context) = select(context, DriveMode.entries[(selected.ordinal + 1) % DriveMode.entries.size])
+    fun cycle(context: Context) = select(context, DriveMode.entries[(current.ordinal + 1) % DriveMode.entries.size])
 
     fun setAutoNight(context: Context, on: Boolean) {
         autoNight = on

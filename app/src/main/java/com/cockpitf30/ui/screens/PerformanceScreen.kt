@@ -73,6 +73,7 @@ import com.cockpitf30.vehicle.telemetry.GSource
 import com.cockpitf30.vehicle.telemetry.Telemetry
 import com.cockpitf30.vehicle.telemetry.TelemetryState
 import java.util.Locale
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
@@ -197,11 +198,12 @@ private fun DrawScope.gMeter(t: TelemetryState, tm: TextMeasurer, label: TextSty
 @Composable
 private fun PowerPanel(t: TelemetryState, modifier: Modifier) {
     val measurer = rememberTextMeasurer(cacheSize = 64)
-    val needle = spring<Float>(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessLow)
+    // Muelle rígido y casi sin rebote: la cifra y los segmentos siguen al pie al instante.
+    val needle = spring<Float>(dampingRatio = 0.82f, stiffness = 900f)
     val cv by animateFloatAsState((t.powerCv ?: 0f) / MAX_CV, needle, label = "cv")
     val nm by animateFloatAsState((t.torqueNm ?: 0f) / MAX_NM, needle, label = "nm")
     val tick = numeric(16, FontWeight.SemiBold)
-    val big = numeric(54, FontWeight.Medium)
+    val big = numeric(60, FontWeight.Medium)
     val unit = numeric(17, FontWeight.Medium)
     Column(modifier.glassPanel(16.dp).padding(16.dp)) {
         PanelTitle("Potencia y par entregados", trailing = {
@@ -219,83 +221,102 @@ private fun PowerPanel(t: TelemetryState, modifier: Modifier) {
 }
 
 /**
- * Reloj estilo M: arco de 270°, marcas finas y gruesas con cifras, relleno en degradado del color
- * del modo con el último 15 % en rojo, aguja con brillo y la cifra en el centro.
+ * Reloj al estilo del cuadro M digital: arco abierto de 250° hecho de segmentos finos que se
+ * encienden del color del modo al rojo, con la punta más larga y luminosa, un filo continuo
+ * interior con brillo, marca del máximo retenido, escala discreta por dentro y la cifra grande
+ * en el centro. Sin aguja ni esfera: todo luz sobre el cristal.
  */
 private fun DrawScope.dial(
     frac: Float, peak: Float, max: Float, minor: Float, major: Float, value: String, unitText: String, title: String, peakText: String,
     tm: TextMeasurer, tick: TextStyle, big: TextStyle, unit: TextStyle,
 ) {
-    val f = frac.coerceIn(0f, 1.02f)
-    val c = Offset(size.width / 2, size.height * 0.53f)
-    val r = min(size.width, size.height) * 0.46f
-    val start = 135f
-    val sweep = 270f
-    val band = 12.dp.toPx()
-    val tl = Offset(c.x - r, c.y - r)
-    val sz = Size(r * 2, r * 2)
-    // Fondo del reloj.
-    drawCircle(Brush.radialGradient(listOf(Color(0xFF0D1118), Color(0xFF05070B)), c, r * 1.05f), r * 1.05f, c)
-    drawCircle(Brush.sweepGradient(listOf(Cockpit.CopperLight, Cockpit.SteelBlueDark, Cockpit.SteelBlueLight, Cockpit.CopperDark, Cockpit.CopperLight), c), r * 1.05f, c, style = Stroke(2.dp.toPx()))
-    drawArc(Color.White.copy(alpha = 0.07f), start, sweep, false, tl + Offset(band / 2, band / 2), Size(sz.width - band, sz.height - band), style = Stroke(band))
-    // Zona roja.
-    drawArc(Cockpit.Alert.copy(alpha = 0.55f), start + sweep * 0.85f, sweep * 0.15f, false, tl + Offset(band / 2, band / 2), Size(sz.width - band, sz.height - band), style = Stroke(band * 0.35f))
-    // Relleno.
-    if (f > 0f) {
-        drawArc(
-            Brush.sweepGradient(0f to Cockpit.Blue, 0.375f to Cockpit.Blue, 0.75f to Cockpit.BlueLight, 1f to Cockpit.Blue, center = c),
-            start, sweep * min(f, 1f), false, tl + Offset(band / 2, band / 2), Size(sz.width - band, sz.height - band), style = Stroke(band),
-        )
-        drawArc(Cockpit.BlueLight.copy(alpha = 0.35f), start, sweep * min(f, 1f), false, tl + Offset(band / 2, band / 2), Size(sz.width - band, sz.height - band), style = Stroke(band * 2.2f), blendMode = BlendMode.Plus)
+    val f = frac.coerceIn(0f, 1f)
+    val c = Offset(size.width / 2, size.height * 0.54f)
+    val r = min(size.width, size.height) * 0.47f
+    val start = 145f
+    val sweep = 250f
+    val red = 0.85f
+    val accent = Cockpit.BlueLight
+    val deep = Cockpit.Blue
+    fun at(rad: Float, deg: Float): Offset {
+        val a = Math.toRadians(deg.toDouble())
+        return Offset(c.x + rad * cos(a).toFloat(), c.y + rad * sin(a).toFloat())
     }
-    // Marcas.
+    // Halo de fondo del color del modo, más intenso cuanto más se pide al motor.
+    drawCircle(Brush.radialGradient(listOf(accent.copy(alpha = 0.06f + 0.14f * f), Color.Transparent), c, r * 1.1f), r * 1.1f, c)
+    // Filo exterior fino (cromo), abierto abajo.
+    drawArc(
+        Brush.sweepGradient(listOf(Cockpit.SteelBlueLight.copy(alpha = 0.5f), Color.White.copy(alpha = 0.15f), Cockpit.CopperLight.copy(alpha = 0.45f), Color.White.copy(alpha = 0.15f), Cockpit.SteelBlueLight.copy(alpha = 0.5f)), c),
+        start - 3f, sweep + 6f, false, Offset(c.x - r, c.y - r), Size(r * 2, r * 2), style = Stroke(1.2.dp.toPx(), cap = StrokeCap.Round),
+    )
+    // Segmentos.
+    val n = 48
+    val r0 = r * 0.80f
+    val r1 = r * 0.94f
+    val segW = (2 * PI.toFloat() * r1 * sweep / 360f / n) * 0.5f
+    for (i in 0 until n) {
+        val k = (i + 0.5f) / n
+        val deg = start + sweep * k
+        val lit = k <= f
+        val isRed = k >= red
+        val tip = lit && k + 1f / n > f
+        val col = when {
+            !lit -> if (isRed) Cockpit.Alert.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.07f)
+            isRed -> Cockpit.Alert
+            else -> androidx.compose.ui.graphics.lerp(deep, accent, (k / red).coerceIn(0f, 1f))
+        }
+        val outer = if (tip) r * 1.0f else r1
+        if (lit) drawLine(col.copy(alpha = 0.35f), at(r0, deg), at(outer, deg), segW * 2.6f, StrokeCap.Butt, blendMode = BlendMode.Plus)
+        drawLine(if (tip) Color.White else col, at(r0, deg), at(outer, deg), segW, StrokeCap.Butt)
+    }
+    // Filo continuo interior con brillo hasta el valor.
+    val ri = r * 0.75f
+    val box = Offset(c.x - ri, c.y - ri)
+    val bs = Size(ri * 2, ri * 2)
+    drawArc(Color.White.copy(alpha = 0.06f), start, sweep, false, box, bs, style = Stroke(2.dp.toPx()))
+    if (f > 0f) {
+        drawArc(accent.copy(alpha = 0.45f), start, sweep * f, false, box, bs, style = Stroke(7.dp.toPx(), cap = StrokeCap.Round), blendMode = BlendMode.Plus)
+        drawArc(Brush.sweepGradient(0f to Color.White, 1f to accent, center = c), start, sweep * f, false, box, bs, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
+        val p = at(ri, start + sweep * f)
+        drawCircle(accent.copy(alpha = 0.5f), 9.dp.toPx(), p, blendMode = BlendMode.Plus)
+        drawCircle(Color.White, 3.5.dp.toPx(), p)
+    }
+    // Máximo retenido: una marca fina por fuera.
+    if (peak > 0.01f) {
+        val deg = start + sweep * min(peak, 1f)
+        drawLine(Color.White.copy(alpha = 0.85f), at(r * 1.01f, deg), at(r * 1.08f, deg), 2.5.dp.toPx(), StrokeCap.Round)
+    }
+    // Escala: cifras pequeñas por dentro y rayitas finas.
     var v = 0f
     while (v <= max + 0.1f) {
         val isMajor = abs(v / major - (v / major).roundToInt()) < 0.01f
-        val a = Math.toRadians((start + sweep * v / max).toDouble())
-        val r0 = r - band - (if (isMajor) 14.dp.toPx() else 7.dp.toPx())
-        val r1 = r - band - 2.dp.toPx()
-        val red = v / max >= 0.85f
+        val deg = start + sweep * v / max
+        val inRed = v / max >= red
         drawLine(
-            (if (red) Cockpit.Alert else Color.White).copy(alpha = if (isMajor) 0.95f else 0.45f),
-            Offset(c.x + r0 * cos(a).toFloat(), c.y + r0 * sin(a).toFloat()), Offset(c.x + r1 * cos(a).toFloat(), c.y + r1 * sin(a).toFloat()),
-            (if (isMajor) 3f else 1.5f).dp.toPx(), StrokeCap.Round,
+            (if (inRed) Cockpit.Alert else Color.White).copy(alpha = if (isMajor) 0.7f else 0.25f),
+            at(r * 0.70f, deg), at(r * (if (isMajor) 0.735f else 0.72f), deg), 1.2.dp.toPx(),
         )
         if (isMajor) {
             val txt = tm.measure("${v.roundToInt()}", tick)
-            val rt = r0 - 16.dp.toPx()
-            drawText(txt, if (red) Cockpit.Alert else Color.White.copy(alpha = 0.85f), Offset(c.x + rt * cos(a).toFloat() - txt.size.width / 2, c.y + rt * sin(a).toFloat() - txt.size.height / 2))
+            val p = at(r * 0.60f, deg)
+            drawText(txt, (if (inRed) Cockpit.Alert else Color.White).copy(alpha = 0.6f), Offset(p.x - txt.size.width / 2, p.y - txt.size.height / 2))
         }
         v += minor
     }
-    // Marca del máximo alcanzado.
-    if (peak > 0.01f) {
-        val a = Math.toRadians((start + sweep * min(peak, 1f)).toDouble())
-        val p = Offset(c.x + (r - band / 2) * cos(a).toFloat(), c.y + (r - band / 2) * sin(a).toFloat())
-        drawCircle(Color.White, 4.dp.toPx(), p)
-    }
-    // Aguja.
-    rotate(start + sweep * min(f, 1f) + 90f, c) {
-        val needle = Path().apply {
-            moveTo(c.x - 3.dp.toPx(), c.y - r * 0.30f)
-            lineTo(c.x, c.y - (r - band * 0.6f))
-            lineTo(c.x + 3.dp.toPx(), c.y - r * 0.30f)
-            close()
-        }
-        drawPath(needle, Cockpit.BlueLight.copy(alpha = 0.5f), style = Stroke(6.dp.toPx()), blendMode = BlendMode.Plus)
-        drawPath(needle, Brush.verticalGradient(listOf(Color.White, Cockpit.BlueLight), c.y - r, c.y))
-    }
-    drawCircle(Brush.radialGradient(listOf(Color(0xFF2A3038), Color(0xFF0A0C10)), c, r * 0.27f), r * 0.27f, c)
-    drawCircle(Color.White.copy(alpha = 0.15f), r * 0.27f, c, style = Stroke(1.dp.toPx()))
     // Cifras.
     val vt = tm.measure(value, big)
-    val tt = tm.measure(title, unit.copy(fontSize = unit.fontSize * 0.85f))
-    drawText(tt, Cockpit.TextDim, Offset(c.x - tt.size.width / 2, c.y - vt.size.height / 2 - tt.size.height + 6.dp.toPx()))
+    val tt = tm.measure(title, unit.copy(fontSize = unit.fontSize * 0.8f, letterSpacing = 3.sp))
+    drawText(tt, Cockpit.TextDim, Offset(c.x - tt.size.width / 2, c.y - vt.size.height / 2 - tt.size.height + 4.dp.toPx()))
     drawText(vt, Color.White, Offset(c.x - vt.size.width / 2, c.y - vt.size.height / 2))
     val ut = tm.measure(unitText, unit)
-    drawText(ut, Cockpit.BlueLight, Offset(c.x - ut.size.width / 2, c.y + r * 0.30f))
+    drawText(ut, accent, Offset(c.x - ut.size.width / 2, c.y + vt.size.height / 2 - 6.dp.toPx()))
+    // Abajo, en la abertura del arco: el máximo y una barrita de lo que queda hasta el tope.
     val pt = tm.measure(peakText, unit.copy(fontSize = unit.fontSize * 0.85f))
-    drawText(pt, Color.White.copy(alpha = 0.6f), Offset(c.x - pt.size.width / 2, c.y + r * 0.62f))
+    val by = c.y + r * 0.78f
+    drawText(pt, Color.White.copy(alpha = 0.65f), Offset(c.x - pt.size.width / 2, by - pt.size.height))
+    val bw = r * 0.5f
+    drawLine(Color.White.copy(alpha = 0.10f), Offset(c.x - bw / 2, by + 4.dp.toPx()), Offset(c.x + bw / 2, by + 4.dp.toPx()), 3.dp.toPx(), StrokeCap.Round)
+    drawLine(Brush.horizontalGradient(listOf(deep, accent), c.x - bw / 2, c.x + bw / 2), Offset(c.x - bw / 2, by + 4.dp.toPx()), Offset(c.x - bw / 2 + bw * min(peak, 1f), by + 4.dp.toPx()), 3.dp.toPx(), StrokeCap.Round)
 }
 
 // ---------------------------------------------------------------- Modos de conducción

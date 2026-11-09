@@ -300,7 +300,8 @@ object Telemetry {
         var nm: Float? = null
         if (v != null && aSpeed != null) {
             val p = if (v < 1.5f) 0f else TelemetryMath.enginePowerW(v, aSpeed, (slopePct ?: 0f) / 100f).coerceAtLeast(0f)
-            powerF += (p - powerF) * 0.3f
+            // Filtro corto: la potencia responde en ~0,2 s al pisar o soltar.
+            powerF += (p - powerF) * 0.55f
             cv = (powerF / TelemetryMath.W_PER_CV).coerceIn(0f, 300f)
             nm = (TelemetryMath.torqueNm(powerF, car.rpm) ?: 0f).coerceIn(0f, 600f)
         }
