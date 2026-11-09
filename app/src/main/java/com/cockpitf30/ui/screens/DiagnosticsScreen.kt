@@ -468,6 +468,40 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                // Conversación seguida, memoria y modo copiloto (charla cada cierto tiempo contra la fatiga).
+                val assistant = com.cockpitf30.assistant.VoiceAssistant
+                var follow by remember { mutableStateOf(settings.assistantFollowUp) }
+                var copilot by remember { mutableStateOf(settings.copilotEnabled) }
+                var minutes by remember { mutableStateOf(settings.copilotMinutes) }
+                var name by remember { mutableStateOf(settings.assistantUserName) }
+                DiagCard("Conversación y copiloto") {
+                    ChipRow(listOf("Sigue escuchando tras responder", "Solo con «Hola BMW»"), if (follow) 0 else 1) {
+                        follow = it == 0
+                        settings.assistantFollowUp = follow
+                    }
+                    ChipRow(listOf("Copiloto activado", "Copiloto desactivado", "Probar ahora"), if (copilot) 0 else 1) {
+                        if (it == 2) assistant.copilotNow(context)
+                        else {
+                            copilot = it == 0
+                            settings.copilotEnabled = copilot
+                        }
+                    }
+                    val options = listOf(5, 10, 15, 20, 30)
+                    ChipRow(options.map { "Cada $it min" }, options.indexOf(minutes)) {
+                        minutes = options[it]
+                        settings.copilotMinutes = minutes
+                    }
+                    ChipRow(listOf(name?.let { "Te llamas $it" } ?: "Sin nombre", "Olvidar nombre y frases"), 0) {
+                        if (it == 1) {
+                            assistant.forgetMemory(context)
+                            name = null
+                        }
+                    }
+                    Info("Tras contestar sigue escuchando unos segundos: puedes decir «otra», «¿y mañana?», «llévame», «repite» o «¿de qué hablábamos?» sin repetir «Hola BMW». " +
+                        "El copiloto habla solo con el coche en marcha (en demo, cada 2 minutos): descansos, autonomía, mal tiempo, destino o una pregunta. Por voz: «activa / desactiva el copiloto», «cállate un rato».", Cockpit.TextDim)
+                }
+            }
+            item {
                 // Asistente «Hola BMW»: activar, voz en alto y estado del micrófono y del modelo.
                 val voice by com.cockpitf30.assistant.VoiceAssistant.state.collectAsStateWithLifecycle()
                 var voiceOn by remember { mutableStateOf(settings.assistantEnabled) }

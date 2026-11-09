@@ -73,7 +73,7 @@ class VoiceCommandsTest {
         assertEquals(Command.AskGoogle(null), VoiceCommands.parse("abre Google"))
         assertEquals(Command.Cancel, VoiceCommands.parse("nada"))
         assertEquals(Command.Help, VoiceCommands.parse("qué puedes hacer"))
-        assertEquals(Command.Unknown("cuentame un chiste"), VoiceCommands.parse("cuéntame un chiste"))
+        assertEquals(Command.Joke, VoiceCommands.parse("cuéntame un chiste"))
     }
 
     @Test

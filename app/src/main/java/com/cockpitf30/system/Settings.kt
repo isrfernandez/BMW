@@ -69,6 +69,30 @@ class AppSettings(context: Context) {
         get() = prefs.getInt(KEY_ASSISTANT_HUMOR, com.cockpitf30.assistant.Personality.DEFAULT_HUMOR)
         set(value) = prefs.edit().putInt(KEY_ASSISTANT_HUMOR, value.coerceIn(0, 100)).apply()
 
+    /** Tras responder, seguir escuchando unos segundos sin «Hola BMW» (conversación seguida). */
+    var assistantFollowUp: Boolean
+        get() = prefs.getBoolean("assistant_follow_up", true)
+        set(value) = prefs.edit().putBoolean("assistant_follow_up", value).apply()
+
+    /** Modo copiloto: el asistente habla por su cuenta cada [copilotMinutes] (cada 2 min en demo). */
+    var copilotEnabled: Boolean
+        get() = prefs.getBoolean("copilot_enabled", true)
+        set(value) = prefs.edit().putBoolean("copilot_enabled", value).apply()
+
+    var copilotMinutes: Int
+        get() = prefs.getInt("copilot_minutes", com.cockpitf30.assistant.Copilot.DEFAULT_MINUTES)
+        set(value) = prefs.edit().putInt("copilot_minutes", value.coerceIn(2, 60)).apply()
+
+    /** Nombre del conductor («me llamo Israel»). */
+    var assistantUserName: String?
+        get() = prefs.getString("assistant_user_name", null)
+        set(value) = prefs.edit().putString("assistant_user_name", value).apply()
+
+    /** Últimas frases dichas por el asistente, para no repetirlas (ver RecentLines). */
+    var assistantRecentLines: String?
+        get() = prefs.getString("assistant_recent_lines", null)
+        set(value) = prefs.edit().putString("assistant_recent_lines", value).apply()
+
     /** Nombre de la voz del motor de la radio elegida en Diagnóstico; null = elegir sola. */
     var assistantVoiceName: String?
         get() = prefs.getString(KEY_ASSISTANT_VOICE, null)
