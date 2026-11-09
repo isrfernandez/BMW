@@ -37,6 +37,9 @@ class ConversationTest {
         assertEquals(Command.Info(InfoTopic.WEATHER), VoiceCommands.parse("¿Qué tiempo hace?"))
         assertEquals(Command.Navigate("plaza mayor de madrid"), VoiceCommands.parse("llévame a la plaza mayor de madrid"))
         assertEquals(Command.Cancel, VoiceCommands.parse("no"))
+        assertEquals(Command.Info(InfoTopic.FUEL_NEAR), VoiceCommands.parse("busca la gasolinera más cercana"))
+        assertEquals(Command.Navigate("restaurante"), VoiceCommands.parse("búscame un restaurante"))
+        assertTrue(VoiceCommands.parse("busca la") is Command.Unknown)
     }
 
     @Test

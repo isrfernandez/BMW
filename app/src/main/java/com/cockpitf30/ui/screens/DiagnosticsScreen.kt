@@ -479,6 +479,11 @@ fun DiagnosticsScreen() {
                         follow = it == 0
                         settings.assistantFollowUp = follow
                     }
+                    var sens by remember { mutableStateOf(settings.wakeSensitivity) }
+                    ChipRow(listOf("«Hola BMW»: sensibilidad baja", "Normal", "Alta"), 2 - sens) {
+                        sens = 2 - it
+                        settings.wakeSensitivity = sens
+                    }
                     ChipRow(listOf("Copiloto activado", "Copiloto desactivado", "Probar ahora"), if (copilot) 0 else 1) {
                         if (it == 2) assistant.copilotNow(context)
                         else {

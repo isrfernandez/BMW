@@ -114,9 +114,11 @@ object VoiceAssistant {
     /** Tiempo para decir la orden después de «Hola BMW». */
     private const val LISTEN_MS = 7_000L
     /** Tras responder, tiempo para seguir la conversación sin «Hola BMW». */
-    private const val FOLLOW_MS = 8_000L
+    private const val FOLLOW_MS = 12_000L
     /** Silencio tras la última palabra para dar la frase por terminada (Vosk corta en cada pausa). */
     private const val END_SILENCE_MS = 1_200L
+    /** Lo mismo cuando lo dicho hasta ahora todavía no se entiende (frase a medias). */
+    private const val END_SILENCE_UNSURE_MS = 2_500L
     /** Al empezar a hablar no se atiende a interrupciones (aún se oye el final de lo que dijo el conductor). */
     private const val BARGE_GRACE_MS = 1_000L
     /** Tras una pregunta del copiloto, algo más. */
@@ -306,7 +308,7 @@ object VoiceAssistant {
             ?: error("no se puede abrir el micrófono")
         // Dos reconocedores: uno restringido a la frase de activación (mucho más fiable que buscarla en
         // texto libre, porque el modelo no conoce «BMW») y otro libre para la orden.
-        val wakeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.WAKE_GRAMMAR)
+        val wakeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.WAKE_GRAMMAR).apply { setWords(true) }
         val cmdRec = Recognizer(m, RATE.toFloat())
         // Mientras habla la radio solo se escucha «Hola BMW» o «basta», para poder interrumpirla
         // (con gramática cerrada: su propia voz no se confunde con eso).
@@ -342,8 +344,10 @@ object VoiceAssistant {
                 for (i in 0 until n) if (buf[i].toInt() != 0) { allZero = false; break }
                 if (!allZero) { silentSince = 0L; if (!heardSomething) { heardSomething = true; onAudio() } }
                 else if (!muted) {
+                    // Solo esperando «Hola BMW»: en plena conversación no se reabre (cortaba la frase).
+                    // Windows/el emulador dan ceros exactos en silencio, así que se espera bastante.
                     if (silentSince == 0L) silentSince = now
-                    else if (heardSomething && now - silentSince > 4_000) throw MicLost("sin audio")
+                    else if (heardSomething && now - silentSince > 15_000 && _state.value.phase == AssistantPhase.WAITING) throw MicLost("sin audio")
                 }
                 if (now - lastLevel > 80) {
                     lastLevel = now
@@ -379,7 +383,8 @@ object VoiceAssistant {
                 }
                 val rec = if (usingCmd) cmdRec else wakeRec
                 if (rec.acceptWaveForm(buf, n)) {
-                    val text = JSONObject(rec.result).optString("text")
+                    val json = JSONObject(rec.result)
+                    val text = json.optString("text")
                     lastPartial = ""
                     speaking = false
                     val clean = text.replace("[unk]", "").trim()
@@ -389,8 +394,10 @@ object VoiceAssistant {
                             if (utterance.isNotEmpty()) utterance.append(' ')
                             utterance.append(clean)
                             utteranceAt = now
-                            if (listenUntil > 0) listenUntil = maxOf(listenUntil, now + END_SILENCE_MS + 1_000)
-                        } else withContext(Dispatchers.Main) { safely("onFinal") { onFinal(clean) } }
+                            if (listenUntil > 0) listenUntil = maxOf(listenUntil, now + END_SILENCE_UNSURE_MS + 1_000)
+                        } else if (wakeAccepted(json, clean, settings().wakeSensitivity)) {
+                            withContext(Dispatchers.Main) { safely("onFinal") { onFinal(clean) } }
+                        }
                     }
                 } else {
                     val partial = JSONObject(rec.partialResult).optString("partial")
@@ -405,7 +412,9 @@ object VoiceAssistant {
                     }
                 }
                 // Terminó de hablar: se entiende la frase entera.
-                if (utterance.isNotEmpty() && !speaking && (now - utteranceAt >= END_SILENCE_MS || listenUntil in 1 until now)) {
+                // Si lo dicho aún no tiene sentido («busca la…»), se espera más: estará pensando.
+                val endSilence = if (utterance.isNotEmpty() && VoiceCommands.parse(VoiceCommands.stripWakeWords(utterance.toString())) is Command.Unknown) END_SILENCE_UNSURE_MS else END_SILENCE_MS
+                if (utterance.isNotEmpty() && !speaking && (now - utteranceAt >= endSilence || listenUntil in 1 until now)) {
                     val whole = utterance.toString()
                     utterance.clear()
                     listenUntil = 0
@@ -441,6 +450,22 @@ object VoiceAssistant {
         }
     }
 
+    /**
+     * ¿Vale esta frase de activación? Mira la confianza de cada palabra que da Vosk y, en sensibilidad
+     * baja, exige la sigla entera («be eme uve doble»). 0 = baja, 1 = normal, 2 = alta.
+     */
+    private fun wakeAccepted(json: JSONObject, text: String, sensitivity: Int): Boolean {
+        if (VoiceCommands.afterWakeWord(text) == null) return false
+        val words = json.optJSONArray("result")
+        val minConf = if (words == null || words.length() == 0) 1.0
+        else (0 until words.length()).minOf { words.getJSONObject(it).optDouble("conf", 1.0) }
+        val needed = when (sensitivity) { 0 -> 0.85; 1 -> 0.6; else -> 0.0 }
+        val full = VoiceCommands.normalize(text).let { it.contains("eme uve doble") || it.contains("eme doble uve") }
+        val ok = minConf >= needed && (sensitivity > 0 || full)
+        _state.update { it.copy(lastText = "$text (confianza ${"%.2f".format(minConf)}${if (ok) "" else ", descartada"})") }
+        return ok
+    }
+
     private suspend fun coroutineScopeActive() = kotlin.coroutines.coroutineContext.isActive
 
     private fun rms(buf: ShortArray, n: Int): Float {
@@ -453,6 +478,8 @@ object VoiceAssistant {
     private fun onPartial(text: String) {
         when (_state.value.phase) {
             AssistantPhase.WAITING -> {
+                // Con resultados parciales se activaba sin decir «Hola BMW»: solo en sensibilidad alta.
+                if (settings().wakeSensitivity < 2) return
                 val rest = VoiceCommands.afterWakeWord(text) ?: return
                 wake()
                 if (rest.isNotBlank()) _state.update { it.copy(heard = rest) }
@@ -586,7 +613,9 @@ object VoiceAssistant {
         val waitingAnswer = conversation.pending != null
         val command = conversation.resolve(text, now)
         Log.i(TAG, "«$text» -> $command")
-        if (inFollowUp && !waitingAnswer && (command is Command.Unknown || command == Command.Yes || command == Command.Another)) {
+        val words = VoiceCommands.normalize(text).split(' ').count { it.isNotBlank() }
+        // En la escucha seguida se descarta lo suelto (ruido, la radio); una frase de verdad se contesta.
+        if (inFollowUp && !waitingAnswer && ((command is Command.Unknown && words < 3) || command == Command.Yes || command == Command.Another)) {
             // Sin «Hola BMW» y sin sentido: será la radio o alguien hablando. No se contesta.
             _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false) }
             return

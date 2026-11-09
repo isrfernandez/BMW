@@ -69,6 +69,11 @@ class AppSettings(context: Context) {
         get() = prefs.getInt(KEY_ASSISTANT_HUMOR, com.cockpitf30.assistant.Personality.DEFAULT_HUMOR)
         set(value) = prefs.edit().putInt(KEY_ASSISTANT_HUMOR, value.coerceIn(0, 100)).apply()
 
+    /** Sensibilidad de «Hola BMW»: 0 baja (sigla entera y muy clara), 1 normal, 2 alta (como antes). */
+    var wakeSensitivity: Int
+        get() = prefs.getInt("wake_sensitivity", 1)
+        set(value) = prefs.edit().putInt("wake_sensitivity", value.coerceIn(0, 2)).apply()
+
     /** Tras responder, seguir escuchando unos segundos sin «Hola BMW» (conversación seguida). */
     var assistantFollowUp: Boolean
         get() = prefs.getBoolean("assistant_follow_up", true)

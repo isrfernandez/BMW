@@ -205,6 +205,13 @@ object VoiceCommands {
             if (dest.isNotEmpty()) return Command.Navigate(dest)
         }
 
+        // «Busca la gasolinera más cercana», «búscame un restaurante».
+        Regex("^(?:busca|buscame|encuentra|encuentrame)(?: (?:la|el|los|las|una|un|unos|unas|algun|alguna))? (.+)").find(t)?.let { m ->
+            val what = m.groupValues[1].trim()
+            if (what.startsWith("gasolinera") || what == "donde repostar") return Command.Info(InfoTopic.FUEL_NEAR)
+            if (what.length >= 4 && what !in setOf("algo", "eso", "esto")) return Command.Navigate(what)
+        }
+
         // Preguntas: se contestan en voz alta (y se abre la pantalla que corresponda).
         if (question || has("autonomia", "cuanto queda")) {
             when {
