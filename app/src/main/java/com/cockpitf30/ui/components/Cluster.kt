@@ -484,27 +484,6 @@ private fun DrawScope.drawCar(
 
         // Punto de la escena (píxeles de home_car_scene) en pantalla.
         fun at(px: Float, py: Float) = Offset(bounds.left + (px - sl) * sc, top + (py - st0) * sc)
-        val d = state.doors
-        val red = Cockpit.Alert
-
-        // Rótulos de lo que está abierto, arriba en el centro.
-        val open = buildList {
-            if (d.driver == true) add("PUERTA CONDUCTOR")
-            if (d.passenger == true) add("PUERTA ACOMPAÑANTE")
-            if (d.rearLeft == true) add("PUERTA TRASERA IZQ.")
-            if (d.rearRight == true) add("PUERTA TRASERA DER.")
-            if (d.trunk == true) add("MALETERO ABIERTO")
-            if (d.hood == true) add("CAPÓ ABIERTO")
-        }
-        var y = top + g.dp(14f)
-        open.forEach { text ->
-            val l = tm.measure(text, st.alert)
-            val pad = g.dp(10f)
-            drawRoundRect(Color.Black.copy(alpha = 0.6f), Offset(g.w / 2 - l.size.width / 2f - pad, y - g.dp(3f)), Size(l.size.width + pad * 2, l.size.height + g.dp(6f)), CornerRadius(g.dp(6f)))
-            drawText(l, color = red, topLeft = Offset(g.w / 2 - l.size.width / 2f, y))
-            y += l.size.height + g.dp(12f)
-        }
-
         // Sin presiones de rueda: la caja CAN no las manda (se ven en el iDrive original).
         // Autonomía arriba a la derecha, sin línea.
         marker(tm, st, "AUTONOMÍA", state.rangeKm?.toString() ?: "--", " km", null, at(905f, 250f), alignRight = false)

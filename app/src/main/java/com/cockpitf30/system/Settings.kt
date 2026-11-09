@@ -116,6 +116,30 @@ class AppSettings(context: Context) {
             }.apply()
         }
 
+    /** Últimas localidades con previsión (elegidas o por GPS), la más reciente primero. */
+    val recentPlaces: List<Place>
+        get() = runCatching {
+            val arr = org.json.JSONArray(prefs.getString(KEY_W_RECENT, null) ?: return emptyList())
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                Place(o.getString("n"), o.optString("r").ifBlank { null }, o.optString("c").ifBlank { null }, o.getDouble("lat"), o.getDouble("lon"))
+            }
+        }.getOrDefault(emptyList())
+
+    /** Apunta [place] al principio del registro; quita duplicados (mismo nombre o a menos de 2 km). */
+    fun addRecentPlace(place: Place) {
+        val list = (listOf(place) + recentPlaces.filterNot { it.name.equals(place.name, true) || near(it, place) }).take(RECENT_PLACES)
+        val arr = org.json.JSONArray()
+        list.forEach { arr.put(org.json.JSONObject().put("n", it.name).put("r", it.region ?: "").put("c", it.country ?: "").put("lat", it.lat).put("lon", it.lon)) }
+        prefs.edit().putString(KEY_W_RECENT, arr.toString()).apply()
+    }
+
+    private fun near(a: Place, b: Place): Boolean {
+        val dLat = (a.lat - b.lat) * 111.0
+        val dLon = (a.lon - b.lon) * 111.0 * kotlin.math.cos(Math.toRadians(a.lat))
+        return dLat * dLat + dLon * dLon < 4.0
+    }
+
     /** Última previsión descargada, para mostrarla sin conexión. */
     var weatherCache: Triple<String, String, Long>?
         get() {
@@ -186,6 +210,8 @@ class AppSettings(context: Context) {
         const val KEY_W_COUNTRY = "weather_place_country"
         const val KEY_W_LAT = "weather_place_lat"
         const val KEY_W_LON = "weather_place_lon"
+        const val KEY_W_RECENT = "weather_recent_places"
+        const val RECENT_PLACES = 6
         const val KEY_W_JSON = "weather_cache_json"
         const val KEY_W_PLACE = "weather_cache_place"
         const val KEY_W_TIME = "weather_cache_time"

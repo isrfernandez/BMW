@@ -52,7 +52,6 @@ import com.cockpitf30.ui.screens.AppsScreen
 import com.cockpitf30.ui.screens.DiagnosticsScreen
 import com.cockpitf30.ui.screens.HomeScreen
 import com.cockpitf30.ui.screens.Screen
-import com.cockpitf30.ui.screens.VehicleScreen
 import com.cockpitf30.ui.screens.TripScreen
 import com.cockpitf30.ui.screens.Reorder
 import com.cockpitf30.ui.screens.WeatherScreen
@@ -371,7 +370,8 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
         ) { current ->
             when (current) {
                 Screen.HOME -> HomeScreen(onOpen = go)
-                Screen.VEHICLE -> VehicleScreen()
+                // Vehículo abre el iDrive original (no es una pantalla de la app).
+                Screen.VEHICLE -> HomeScreen(onOpen = go)
                 Screen.TRIP -> TripScreen()
                 Screen.APPS -> AppsScreen()
                 Screen.DIAGNOSTICS -> DiagnosticsScreen()

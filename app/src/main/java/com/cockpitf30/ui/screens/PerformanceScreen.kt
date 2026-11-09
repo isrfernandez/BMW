@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -95,8 +96,15 @@ private val es = Locale("es")
 @Composable
 fun PerformanceScreen() {
     val t by Telemetry.state.collectAsStateWithLifecycle()
+    val drag by com.cockpitf30.vehicle.telemetry.DragTimes.state.collectAsStateWithLifecycle()
+    var details by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+    androidx.activity.compose.BackHandler(enabled = details) { details = false }
     val first = remember { FocusRequester() }
     InitialFocus(first)
+    if (details) {
+        DragDetails(drag) { details = false }
+        return
+    }
 
     TriangleBackground(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
@@ -117,6 +125,7 @@ fun PerformanceScreen() {
                 }
                 Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     AltitudePanel(t, Modifier.weight(1f).fillMaxHeight())
+                    DragPanel(drag, Modifier.width(360.dp).fillMaxHeight()) { details = true }
                     AltitudeStats(t, Modifier.width(330.dp).fillMaxHeight())
                 }
             }
@@ -623,5 +632,110 @@ private fun DrawScope.slopeIcon(pct: Float, color: Color) {
     else {
         val down = Path().apply { moveTo(0f, h * 0.85f); lineTo(w, h * 0.85f); lineTo(0f, h * (0.5f + k * 0.4f)); close() }
         drawPath(down, color)
+    }
+}
+
+// ---------------------------------------------------------------- Cronómetro de aceleración
+
+private fun secs(v: Float) = "%.1f".format(es, v)
+
+/** Panel compacto: la prueba en marcha en grande o la última y mejor marca de cada prueba. */
+@Composable
+private fun DragPanel(d: com.cockpitf30.vehicle.telemetry.DragState, modifier: Modifier, onDetails: () -> Unit) {
+    Column(modifier.glassPanel(16.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        PanelTitle("Cronómetro", trailing = {
+            Text(
+                when {
+                    d.running.isNotEmpty() -> "MIDIENDO"
+                    d.armed -> "LISTO: SAL"
+                    else -> "AUTO"
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = if (d.running.isNotEmpty() || d.armed) Cockpit.Ok else Cockpit.TextDim,
+            )
+        })
+        val run = d.running.firstOrNull { it.test != com.cockpitf30.vehicle.telemetry.DragTest.QUARTER_400 } ?: d.running.firstOrNull()
+        if (run != null) {
+            Text(run.test.label, style = MaterialTheme.typography.labelLarge, color = Cockpit.BlueLight)
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(secs(run.elapsed), style = numeric(46, FontWeight.Medium))
+                Text(" s", style = numeric(18), color = Cockpit.TextDim, modifier = Modifier.padding(bottom = 8.dp))
+                Spacer(Modifier.weight(1f))
+                Text("${run.kmh.roundToInt()} km/h", style = numeric(20, FontWeight.Medium), color = Cockpit.TextDim, modifier = Modifier.padding(bottom = 8.dp))
+            }
+        } else {
+            com.cockpitf30.vehicle.telemetry.DragTest.entries.forEach { test ->
+                val best = d.best[test]
+                val fresh = d.fresh?.test == test
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(test.label, style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim, modifier = Modifier.width(118.dp))
+                    Text(
+                        d.last[test]?.let { secs(it.seconds) + " s" } ?: "--",
+                        style = numeric(22, FontWeight.Medium), color = if (fresh) Cockpit.Ok else Cockpit.Text,
+                        modifier = Modifier.width(90.dp),
+                    )
+                    Text(best?.let { "mejor " + secs(it.seconds) } ?: "", style = numeric(15), color = Cockpit.BlueLight)
+                }
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        SmallAction("Ver marcas", Modifier.fillMaxWidth().height(46.dp), onDetails)
+    }
+}
+
+/** Detalle: mejores marcas e historial de las últimas pruebas. */
+@Composable
+internal fun DragDetails(d: com.cockpitf30.vehicle.telemetry.DragState, onBack: () -> Unit) {
+    val back = remember { FocusRequester() }
+    InitialFocus(back)
+    val fmt = remember { java.time.format.DateTimeFormatter.ofPattern("d MMM HH:mm", es) }
+    fun date(ms: Long) = java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneId.systemDefault()).format(fmt)
+    TriangleBackground(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            TopBar("Cronómetro de aceleración") {
+                Text("Se mide solo: sal desde parado (0–100 y 0–400 m) o acelera pasando de 60 (60–120)", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
+            }
+            Row(Modifier.fillMaxSize().padding(start = 28.dp, end = 28.dp, bottom = 18.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Column(Modifier.width(560.dp).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    com.cockpitf30.vehicle.telemetry.DragTest.entries.forEach { test ->
+                        val b = d.best[test]
+                        Column(Modifier.fillMaxWidth().weight(1f).glassPanel(16.dp).padding(16.dp)) {
+                            Text("MEJOR ${test.label.uppercase()}", style = MaterialTheme.typography.labelLarge, color = Cockpit.TextDim)
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                Text(b?.let { secs(it.seconds) } ?: "--", style = numeric(52, FontWeight.Medium))
+                                Text(" s", style = numeric(20), color = Cockpit.TextDim, modifier = Modifier.padding(bottom = 10.dp))
+                                Spacer(Modifier.weight(1f))
+                                if (b != null) Text(
+                                    (if (test == com.cockpitf30.vehicle.telemetry.DragTest.QUARTER_400) "${b.endKmh.roundToInt()} km/h · " else "") + date(b.at),
+                                    style = MaterialTheme.typography.bodyMedium, color = Cockpit.BlueLight, modifier = Modifier.padding(bottom = 12.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+                Column(Modifier.weight(1f).fillMaxHeight().glassPanel(16.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PanelTitle("Últimas pruebas")
+                    if (d.history.isEmpty()) Text("Todavía no hay marcas", style = MaterialTheme.typography.bodyLarge, color = Cockpit.TextDim)
+                    androidx.compose.foundation.lazy.LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        items(d.history.size) { i ->
+                            val r = d.history[i]
+                            val isBest = d.best[r.test]?.at == r.at
+                            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(r.test.label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(200.dp))
+                                Text(secs(r.seconds) + " s", style = numeric(22, FontWeight.Medium), color = if (isBest) Cockpit.Ok else Cockpit.Text, modifier = Modifier.width(120.dp))
+                                Text(if (isBest) "MEJOR" else "", style = MaterialTheme.typography.labelMedium, color = Cockpit.Ok, modifier = Modifier.width(90.dp))
+                                Text(date(r.at), style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
+                            }
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth().height(56.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        FocusTile(onClick = onBack, modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(back)) {
+                            Text("‹  Volver", style = MaterialTheme.typography.titleMedium, modifier = Modifier.align(Alignment.Center))
+                        }
+                        SmallAction("Borrar marcas", Modifier.weight(1f).fillMaxHeight(), com.cockpitf30.vehicle.telemetry.DragTimes::clear)
+                    }
+                }
+            }
+        }
     }
 }

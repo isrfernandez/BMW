@@ -100,7 +100,10 @@ object DriveModes {
 
     fun load(context: Context) {
         val prefs = prefs(context)
-        selected = runCatching { DriveMode.valueOf(prefs.getString(KEY_MODE, null)!!) }.getOrDefault(DriveMode.NORMAL)
+        // Siempre se arranca en Normal (aunque se apagara en Sport o sea de noche). El Night
+        // automático vuelve a ponerse solo con el siguiente paso de luz a oscuridad.
+        selected = DriveMode.NORMAL
+        nightOverridden = true
         autoNight = prefs.getBoolean(KEY_AUTO_NIGHT, true)
         nightWithHeadlights = prefs.getBoolean(KEY_NIGHT_LIGHTS, true)
     }

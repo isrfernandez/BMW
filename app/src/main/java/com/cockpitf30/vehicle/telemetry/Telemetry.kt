@@ -130,6 +130,7 @@ object Telemetry {
         val ctx = context.applicationContext
         appContext = ctx
         gravity = loadGravity(ctx)
+        DragTimes.load(ctx)
         val sm = ctx.getSystemService(SensorManager::class.java)
         sensors = sm
         sm?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let { sm.registerListener(sensorListener, it, SensorManager.SENSOR_DELAY_GAME) }
@@ -237,6 +238,8 @@ object Telemetry {
         val vKmh = car.speedKmh?.toFloat() ?: gpsSpeed?.let { it * 3.6f }
         val v = vKmh?.div(3.6f)
         val t = (now - startAt) / 1000f
+        // Cronómetro de aceleración (0–100, 60–120, 0–400 m).
+        if (vKmh != null) DragTimes.feed(t, vKmh)
 
         // Aceleración por la velocidad (recta de los últimos 10 datos, ~1 s).
         var aSpeed: Float? = null

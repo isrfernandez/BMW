@@ -81,6 +81,8 @@ fun WeatherScreen() {
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<Place>>(emptyList()) }
     var searchMessage by remember { mutableStateOf<String?>(null) }
+    // Registro de las últimas ubicaciones: se relee cada vez que llega una previsión nueva.
+    val recent = remember(weather.updatedAtMillis) { settings.recentPlaces }
     // Día abierto en detalle por horas; Back vuelve a la vista de días.
     var selectedDay by remember { mutableStateOf<LocalDate?>(null) }
     BackHandler(enabled = selectedDay != null) { selectedDay = null }
@@ -147,7 +149,18 @@ fun WeatherScreen() {
                 // Hoy, desde la hora actual; otros días, las 24 horas.
                 val hours = forecast.hoursOf(openDay.date).filter { openDay.date != LocalDate.now() || !it.time.isBefore(now) }
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF06101E).copy(alpha = 0.72f), Color(0xFF06101E).copy(alpha = 0.85f))))) {
-                    HourlyDetail(openDay, hours, Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 8.dp))
+                    Column(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 8.dp)) {
+                        val back = remember { FocusRequester() }
+                        InitialFocus(back)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            FocusTile(onClick = { selectedDay = null }, modifier = Modifier.width(220.dp).height(56.dp).focusRequester(back)) {
+                                Text("‹  Volver a los días", Modifier.align(Alignment.Center), style = MaterialTheme.typography.titleMedium)
+                            }
+                            Text(weather.placeName ?: "", style = MaterialTheme.typography.titleMedium, color = Cockpit.TextDim)
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        HourlyDetail(openDay, hours, Modifier.fillMaxWidth().weight(1f))
+                    }
                 }
             } else
             Row(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(40.dp)) {
@@ -216,8 +229,11 @@ fun WeatherScreen() {
                         }
                     }
                     searchMessage?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim) }
+                    // Sin búsqueda en marcha se ven las últimas ubicaciones.
+                    val showRecent = results.isEmpty() && recent.isNotEmpty()
+                    if (showRecent) Text("ÚLTIMAS UBICACIONES", style = MaterialTheme.typography.labelLarge, color = Cockpit.BlueLight)
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
-                        items(results) { place ->
+                        items(if (showRecent) recent else results) { place ->
                             val selected = !usingGps && settings.weatherPlace?.let { it.lat == place.lat && it.lon == place.lon } == true
                             FocusTile(onClick = { select(place) }, selected = selected, modifier = Modifier.fillMaxWidth().height(72.dp)) {
                                 Column(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalArrangement = Arrangement.Center) {

@@ -12,7 +12,6 @@ import com.cockpitf30.vehicle.VehicleState
  */
 object RaiseBmwDecoder {
     const val TYPE_SPEED_RPM = 0x01
-    const val TYPE_DOORS = 0x02
 
     fun apply(frame: RaiseFrame, state: VehicleState): VehicleState = when (frame.type) {
         TYPE_SPEED_RPM -> {
@@ -24,21 +23,6 @@ object RaiseBmwDecoder {
                 speedKmh = speed ?: state.speedKmh,
             )
         }
-        TYPE_DOORS -> {
-            val bits = frame.u8(1)
-            if (bits == null) state else state.copy(
-                doors = state.doors.copy(
-                    driver = bits.bit(0),
-                    passenger = bits.bit(1),
-                    rearLeft = bits.bit(2),
-                    rearRight = bits.bit(3),
-                    trunk = bits.bit(4),
-                    hood = bits.bit(5),
-                )
-            )
-        }
         else -> state
     }
-
-    private fun Int.bit(n: Int) = (this shr n) and 1 == 1
 }

@@ -693,13 +693,8 @@ private fun buildReport(
     section("Bytes en crudo", bytes)
 }
 
-private fun vehicleSummary(v: com.cockpitf30.vehicle.VehicleState): String {
-    fun b(x: Boolean?) = when (x) { true -> "abierta"; false -> "cerrada"; null -> "?" }
-    fun p(x: Float?) = x?.let { "%.1f".format(it) } ?: "?"
-    return "velocidad ${v.speedKmh ?: "?"} km/h · rpm ${v.rpm ?: "?"} · exterior ${v.outsideTempC ?: "?"} °C · autonomía ${v.rangeKm ?: "?"} km · " +
-        "puertas: conductor ${b(v.doors.driver)}, acomp. ${b(v.doors.passenger)}, tras. izq. ${b(v.doors.rearLeft)}, tras. dch. ${b(v.doors.rearRight)}, maletero ${b(v.doors.trunk)}, capó ${b(v.doors.hood)} · " +
-        "ruedas ${p(v.tyres.frontLeft)} ${p(v.tyres.frontRight)} ${p(v.tyres.rearLeft)} ${p(v.tyres.rearRight)} bar"
-}
+private fun vehicleSummary(v: com.cockpitf30.vehicle.VehicleState): String =
+    "velocidad ${v.speedKmh ?: "?"} km/h · rpm ${v.rpm ?: "?"} · exterior ${v.outsideTempC ?: "?"} °C · autonomía ${v.rangeKm ?: "?"} km"
 
 /** Lo que dice la caja CAN y no cabe en VehicleState: freno de mano, cinturones, litros, kilometraje. */
 private fun canBoxSummary(values: Map<String, String>): String {
