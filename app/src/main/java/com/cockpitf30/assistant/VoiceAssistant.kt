@@ -117,6 +117,8 @@ object VoiceAssistant {
     private const val FOLLOW_MS = 8_000L
     /** Silencio tras la última palabra para dar la frase por terminada (Vosk corta en cada pausa). */
     private const val END_SILENCE_MS = 1_200L
+    /** Al empezar a hablar no se atiende a interrupciones (aún se oye el final de lo que dijo el conductor). */
+    private const val BARGE_GRACE_MS = 1_000L
     /** Tras una pregunta del copiloto, algo más. */
     private const val COPILOT_FOLLOW_MS = 9_000L
 
@@ -310,7 +312,6 @@ object VoiceAssistant {
         // (con gramática cerrada: su propia voz no se confunde con eso).
         val bargeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.BARGE_GRAMMAR)
         var usingCmd = false
-        var bargePartial = ""
         // Lo dicho hasta ahora en la orden: Vosk corta en cada pausa corta, y se espera a que el
         // conductor termine de verdad (END_SILENCE_MS sin hablar) antes de entenderla.
         val utterance = StringBuilder()
@@ -350,18 +351,23 @@ object VoiceAssistant {
                     _state.update { it.copy(level = lvl) }
                 }
                 if (resetRecognizer) {
-                    resetRecognizer = false; wakeRec.reset(); cmdRec.reset(); bargeRec.reset(); lastPartial = ""; bargePartial = ""
+                    resetRecognizer = false; wakeRec.reset(); cmdRec.reset(); bargeRec.reset(); lastPartial = ""
                     utterance.clear(); speaking = false
                 }
                 // Por si no llega el aviso de fin de la voz: nunca más de 30 s sordo.
                 if (muted) { if (mutedSince == 0L) mutedSince = now else if (now - mutedSince > 30_000) { muted = false; resetRecognizer = true } }
                 else mutedSince = 0L
                 if (muted) {
-                    // Hablando: solo se atiende a la interrupción.
-                    val text = if (bargeRec.acceptWaveForm(buf, n)) JSONObject(bargeRec.result).optString("text").also { bargePartial = "" }
-                    else JSONObject(bargeRec.partialResult).optString("partial").takeIf { it != bargePartial }?.also { bargePartial = it }
-                    val clean = text?.replace("[unk]", "")?.trim().orEmpty()
-                    if (clean.isNotBlank()) withContext(Dispatchers.Main) { safely("interrupción") { onBargeIn(clean) } }
+                    // Hablando: solo se atiende a la interrupción, y solo con frases completas (los
+                    // resultados parciales de la gramática se confundían con su propia voz y cortaban).
+                    if (mutedSince != 0L && now - mutedSince < BARGE_GRACE_MS) { bargeRec.reset(); continue }
+                    if (bargeRec.acceptWaveForm(buf, n)) {
+                        val clean = JSONObject(bargeRec.result).optString("text").replace("[unk]", "").trim()
+                        if (clean.isNotBlank()) {
+                            _state.update { it.copy(lastText = "(hablando) $clean") }
+                            withContext(Dispatchers.Main) { safely("interrupción") { onBargeIn(clean) } }
+                        }
+                    }
                     continue
                 }
                 val wantCmd = _state.value.phase == AssistantPhase.LISTENING
@@ -1210,7 +1216,8 @@ object VoiceAssistant {
     private fun onBargeIn(text: String) {
         if (_state.value.phase != AssistantPhase.ANSWERING || !muted) return
         val wake = VoiceCommands.afterWakeWord(text) != null
-        val stop = VoiceCommands.isStopWord(text) && !VoiceCommands.normalize(_state.value.reply.orEmpty()).contains(VoiceCommands.normalize(text))
+        val reply = VoiceCommands.normalize(_state.value.reply.orEmpty())
+        val stop = VoiceCommands.isStopWord(text) && !reply.contains(VoiceCommands.normalize(text))
         if (!wake && !stop) return
         Log.i(TAG, "Interrumpida: «$text»")
         unmuteJob?.cancel()
