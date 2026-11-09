@@ -88,7 +88,17 @@ class RadioCarSource(private val context: Context) : VehicleDataSource {
                     VehicleRepository.updateState { st ->
                         val mapped = CarKeyMapper.apply(st, all)
                         val liters = CarKeyMapper.toNumber(can["can.fuel_liters"])
-                        if (liters != null && liters > 0 && tank > 0) mapped.copy(fuelLevel = (liters / tank).toFloat().coerceIn(0f, 1f)) else mapped
+                        if (liters != null && liters > 0 && tank > 0) {
+                            // La caja del F30 no manda la autonomía (trama 0x27): se calcula con los
+                            // litros y el consumo medio del último viaje, o 5,5 l/100 km de un 320d.
+                            val trips = com.cockpitf30.vehicle.trip.TripComputer.state.value
+                            val cons = (trips.current?.avgConsumption(tank) ?: trips.last?.avgConsumption(tank))
+                                ?.takeIf { it in 3f..15f } ?: DEFAULT_L_100KM
+                            mapped.copy(
+                                fuelLevel = (liters / tank).toFloat().coerceIn(0f, 1f),
+                                rangeKm = mapped.rangeKm.takeIf { can["can.fuel_range"] != null } ?: (liters * 100 / cons).toInt(),
+                            )
+                        } else mapped
                     }
                     VehicleRepository.updateStatus { it.copy(framesReceived = it.framesReceived + 1) }
                 }
@@ -141,6 +151,7 @@ class RadioCarSource(private val context: Context) : VehicleDataSource {
     companion object {
         private const val POLL_MS = 300L
         private const val QUERY_MS = 100L
+        private const val DEFAULT_L_100KM = 5.5f
         private val BROADCASTS = listOf(
             "android.car.action.CANBUS_SPEED", "android.car.action.CANBUS_RPM", "android.car.action.OUT_TEMP",
             "android.car.action.OBD_STATE", "android.car.action.BRAKE_STATE",

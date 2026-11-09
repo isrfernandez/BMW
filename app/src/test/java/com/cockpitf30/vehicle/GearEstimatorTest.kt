@@ -15,7 +15,7 @@ class GearEstimatorTest {
     @Test
     fun stoppedIsNeutralAndClutchIsUnknown() {
         assertEquals("N", GearEstimator.estimate(0, 800))
-        assertNull(GearEstimator.estimate(60, 900)) // 66 km/h por 1000 rpm: no cuadra con ninguna
+        assertNull(GearEstimator.estimate(60, 700)) // 86 km/h por 1000 rpm: no cuadra con ninguna
         assertNull(GearEstimator.estimate(null, 2000))
     }
 

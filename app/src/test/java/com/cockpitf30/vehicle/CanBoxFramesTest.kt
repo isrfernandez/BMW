@@ -43,13 +43,6 @@ class CanBoxFramesTest {
         assertEquals(true, values["can.belt_driver"])
     }
 
-    @Test fun byteD8Bit0IsTheDriverDoor() {
-        // Mismo coche, mismo momento: solo cambió el último byte (bloque de 23 tramas seguidas).
-        val v = CanBoxFrames.decode(CanBoxFrames.split(hex("5A A5 09 12 01 00 00 01 00 12 00 28 01 57"))[0])
-        assertEquals(true, v["can.door_fl"])
-        assertEquals(false, v["can.door_fr"])
-    }
-
     @Test fun speedQueryIsTheSameTheRadioSends() {
         assertEquals("5A A5 01 90 16 A6", CanBoxFrames.query(0x16).joinToString(" ") { "%02X".format(it) })
     }

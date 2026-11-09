@@ -229,8 +229,10 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             drawCaption(geo, measurer, "1/min x 1000", mirrored = true, captionStyle)
 
             drawMiniBar(geo, measurer, state.fuelLevel, listOf("1", "1/2", "0"), mirrored = false, smallStyle)
-            val oil = state.oilTempC?.let { ((it - 50) / 100f).coerceIn(0f, 1f) }
-            drawMiniBar(geo, measurer, oil, listOf("150", "100", "50"), mirrored = true, smallStyle)
+            // Temperatura del aceite (50–150 °C): solo si llega el dato; la caja CAN del F30 no la manda.
+            state.oilTempC?.let { t ->
+                drawMiniBar(geo, measurer, ((t - 50) / 100f).coerceIn(0f, 1f), listOf("150", "100", "50"), mirrored = true, smallStyle)
+            }
         }
 
         // Velocidad y marcha en pestañas oscuras sobre el panel, con halo del color de su barra.
@@ -781,18 +783,33 @@ private fun DrawScope.drawMiniBar(g: GeoPx, tm: TextMeasurer, fraction: Float?, 
     val inset = g.band + g.dp(34f)
     val yTop = g.ym + g.dp(26f)
     val yBottom = g.y1 - g.dp(22f)
-    val blocks = 6
-    val bh = (yBottom - yTop) / blocks
     val bw = g.dp(10f)
-    for (i in 0 until blocks) {
-        val yb = yBottom - i * bh
-        val lit = fraction != null && fraction * blocks >= i + 0.5f
-        val x1 = g.chevronX(yb, inset); val x2 = g.chevronX(yb - bh + g.dp(3f), inset)
-        val seg = Path().apply {
-            moveTo(g.mirror(x1, mirrored), yb); lineTo(g.mirror(x1 + bw, mirrored), yb)
-            lineTo(g.mirror(x2 + bw, mirrored), yb - bh + g.dp(3f)); lineTo(g.mirror(x2, mirrored), yb - bh + g.dp(3f)); close()
-        }
-        drawPath(seg, if (lit) Color.White else Color.White.copy(alpha = 0.18f))
+    // Franja continua inclinada como el marco; se llena de forma progresiva hasta [fraction].
+    fun strip(from: Float, to: Float) = Path().apply {
+        val xa = g.chevronX(from, inset); val xb = g.chevronX(to, inset)
+        moveTo(g.mirror(xa, mirrored), from); lineTo(g.mirror(xa + bw, mirrored), from)
+        lineTo(g.mirror(xb + bw, mirrored), to); lineTo(g.mirror(xb, mirrored), to); close()
+    }
+    drawPath(strip(yBottom, yTop), Color.White.copy(alpha = 0.16f))
+    if (fraction != null && fraction > 0f) {
+        val yFill = yBottom - (yBottom - yTop) * fraction.coerceIn(0f, 1f)
+        val low = fraction < 0.15f
+        drawPath(
+            strip(yBottom, yFill),
+            Brush.verticalGradient(
+                if (low) listOf(Color(0xFFFFB347), Color(0xFFE5533D)) else listOf(Color.White, Color(0xFFBFD6EE)),
+                startY = yFill, endY = yBottom,
+            ),
+        )
+        // Filo de luz en el nivel.
+        val xl = g.chevronX(yFill, inset)
+        drawLine(Color.White, Offset(g.mirror(xl - g.dp(3f), mirrored), yFill), Offset(g.mirror(xl + bw + g.dp(3f), mirrored), yFill), g.dp(2f))
+    }
+    // Rayas de 1/4 y 3/4 entre las cifras.
+    listOf(0.25f, 0.75f).forEach { q ->
+        val y = yBottom - (yBottom - yTop) * q
+        val x = g.chevronX(y, inset)
+        drawLine(Color.Black.copy(alpha = 0.5f), Offset(g.mirror(x, mirrored), y), Offset(g.mirror(x + bw, mirrored), y), g.dp(1.5f))
     }
     labels.forEachIndexed { i, text ->
         val y = yTop + (yBottom - yTop) * i / (labels.size - 1)
@@ -826,8 +843,8 @@ private fun TabValue(value: String, caption: String, modifier: Modifier = Modifi
 }
 
 /**
- * Línea inferior: franjas M y hora, surtidor y autonomía a la izquierda; en el centro solo el
- * coche en rojo si hay una puerta abierta; estado y temperatura exterior a la derecha.
+ * Línea inferior: franjas M y hora, surtidor y autonomía a la izquierda; estado y temperatura
+ * exterior a la derecha.
  */
 @Composable
 private fun StatusLine(state: VehicleState, status: SourceStatus, modifier: Modifier = Modifier) {
@@ -840,8 +857,7 @@ private fun StatusLine(state: VehicleState, status: SourceStatus, modifier: Modi
         Spacer(Modifier.width(8.dp))
         Text(state.rangeKm?.let { "$it" } ?: "--", style = numeric(28, FontWeight.SemiBold), color = Cockpit.Text)
         Text(" km", style = numeric(18), color = Cockpit.TextDim)
-        Spacer(Modifier.weight(1f))
-        if (state.doors.anyOpen) CarIcon(state, Modifier.size(width = 60.dp, height = 26.dp))
+        // Sin coche rojo en el centro: con una puerta abierta ya se abre la pantalla Vehículo.
         Spacer(Modifier.weight(1f))
         Text(
             if (status.connected) "READY" else "SIN DATOS",
@@ -849,8 +865,11 @@ private fun StatusLine(state: VehicleState, status: SourceStatus, modifier: Modi
             color = if (status.connected) Cockpit.Text else Cockpit.Alert,
         )
         Spacer(Modifier.width(32.dp))
+        // La caja CAN del F30 no da la temperatura exterior: si no llega, la del tiempo de la zona.
+        val weather by com.cockpitf30.weather.WeatherRepository.state.collectAsStateWithLifecycle()
+        val outside = state.outsideTempC ?: weather.forecast?.tempC?.toFloat()
         Text(
-            state.outsideTempC?.let { "%+.1f".format(it) } ?: "--",
+            outside?.let { if (state.outsideTempC != null) "%+.1f".format(it) else "%+.0f".format(it) } ?: "--",
             style = numeric(28, FontWeight.SemiBold),
             color = Cockpit.Text,
         )
@@ -870,24 +889,3 @@ private fun FuelPump(modifier: Modifier = Modifier) {
     }
 }
 
-/** Coche visto desde arriba (morro a la derecha); puertas abiertas en rojo. */
-@Composable
-private fun CarIcon(state: VehicleState, modifier: Modifier = Modifier) {
-    Canvas(modifier) {
-        val body = Size(size.width, size.height * 0.8f)
-        val origin = Offset(0f, (size.height - body.height) / 2)
-        drawRoundRect(Cockpit.SurfaceHigh, origin, body, CornerRadius(body.height / 2.5f))
-        drawRoundRect(Cockpit.TextDim, origin, body, CornerRadius(body.height / 2.5f), style = Stroke(1.5.dp.toPx()))
-        fun door(open: Boolean?, x: Float, top: Boolean) {
-            if (open != true) return
-            val y = if (top) origin.y else origin.y + body.height
-            drawLine(Cockpit.Alert, Offset(x, y), Offset(x + size.width * 0.18f, y), 3.dp.toPx())
-        }
-        door(state.doors.driver, size.width * 0.5f, top = true)
-        door(state.doors.passenger, size.width * 0.5f, top = false)
-        door(state.doors.rearLeft, size.width * 0.28f, top = true)
-        door(state.doors.rearRight, size.width * 0.28f, top = false)
-        if (state.doors.trunk == true) drawLine(Cockpit.Alert, Offset(0f, origin.y + 4.dp.toPx()), Offset(0f, origin.y + body.height - 4.dp.toPx()), 3.dp.toPx())
-        if (state.doors.hood == true) drawLine(Cockpit.Alert, Offset(size.width, origin.y + 4.dp.toPx()), Offset(size.width, origin.y + body.height - 4.dp.toPx()), 3.dp.toPx())
-    }
-}

@@ -332,6 +332,21 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                DiagCard("Pantalla de inicio (lanzador)") {
+                    val isHome = remember { isDefaultHome(context) }
+                    Info(
+                        if (isHome) "Cockpit F30 es ahora la pantalla de inicio de la radio. Para volver a la de serie u otra, elige aquí."
+                        else "La pantalla de inicio de la radio es otra app. Puedes poner Cockpit F30 desde aquí.",
+                    )
+                    ChipRow(listOf("Elegir pantalla de inicio", "Abrir la de serie (BMW)"), -1) {
+                        when (it) {
+                            0 -> chooseHome(context)
+                            else -> openStockLauncher(context)
+                        }
+                    }
+                }
+            }
+            item {
                 DiagCard("Fuente de datos") {
                     ChipRow(SourceMode.entries.map { it.label }, SourceMode.entries.indexOf(mode)) {
                         mode = SourceMode.entries[it]
@@ -743,3 +758,40 @@ internal fun installedVersion(context: android.content.Context): String = runCat
     val code = if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
     "${info.versionName} (build $code)"
 }.getOrDefault("desconocida")
+
+/** ¿Es Cockpit la app de inicio (HOME) por defecto? */
+private fun isDefaultHome(context: android.content.Context): Boolean {
+    val home = android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_HOME)
+    return context.packageManager.resolveActivity(home, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName == context.packageName
+}
+
+/**
+ * Abre el ajuste de Android para elegir la app de inicio. Si la radio no lo tiene, los de apps
+ * por defecto, y como último recurso la ficha de Cockpit (allí «Borrar valores predeterminados»).
+ */
+private fun chooseHome(context: android.content.Context) {
+    val tries = listOf(
+        android.content.Intent(android.provider.Settings.ACTION_HOME_SETTINGS),
+        android.content.Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS),
+        android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:" + context.packageName)),
+    )
+    for (i in tries) {
+        if (runCatching { context.startActivity(i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess) return
+    }
+    android.widget.Toast.makeText(context, "La radio no deja abrir el ajuste de pantalla de inicio", android.widget.Toast.LENGTH_LONG).show()
+}
+
+/** Abre el lanzador BMW de serie de la radio (o cualquier otro lanzador instalado que no sea Cockpit). */
+private fun openStockLauncher(context: android.content.Context) {
+    val pm = context.packageManager
+    val home = android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_HOME)
+    val others = pm.queryIntentActivities(home, 0).map { it.activityInfo }.filter { it.packageName != context.packageName && it.packageName != "com.android.settings" }
+    val target = others.firstOrNull { it.packageName == "com.bmw1.launcher2" } ?: others.firstOrNull()
+    if (target == null) {
+        android.widget.Toast.makeText(context, "No hay otro lanzador instalado", android.widget.Toast.LENGTH_LONG).show()
+        return
+    }
+    runCatching {
+        context.startActivity(android.content.Intent(home).setClassName(target.packageName, target.name).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+}

@@ -66,16 +66,15 @@ object CanBoxFrames {
             put("can.central_lock", f.u(2) == 1)
             put("can.handbrake", f.u(3) == 1)
             val d = f.u(4)
-            // En el F30 d4 se queda a 0; en la prueba del 08/11 lo que cambió al abrir fue el
-            // bit 0 de d8 (un byte que la app de la radio ni lee). Suponemos d8 = puertas en orden
-            // conductor, acompañante, traseras, maletero, capó, hasta verlo puerta a puerta.
+            // En el F30 d4 se queda a 0. El bit 0 de d8 cambió una sola vez en cada prueba (no al
+            // abrir cada puerta), así que no son las puertas: se guarda en bruto y no se usa.
             val e = if (f.data.size > 8) f.u(8) else 0
-            put("can.door_fl", d and 0x80 != 0 || e and 0x01 != 0)
-            put("can.door_fr", d and 0x40 != 0 || e and 0x02 != 0)
-            put("can.door_rl", d and 0x20 != 0 || e and 0x04 != 0)
-            put("can.door_rr", d and 0x10 != 0 || e and 0x08 != 0)
-            put("can.door_back", d and 0x08 != 0 || e and 0x10 != 0)
-            put("can.door_front", d and 0x04 != 0 || e and 0x20 != 0)
+            put("can.door_fl", d and 0x80 != 0)
+            put("can.door_fr", d and 0x40 != 0)
+            put("can.door_rl", d and 0x20 != 0)
+            put("can.door_rr", d and 0x10 != 0)
+            put("can.door_back", d and 0x08 != 0)
+            put("can.door_front", d and 0x04 != 0)
             put("can.d8_raw", e)
             put("can.fuel_liters", f.u(5))
             put("can.belt_driver", (f.u(6) shr 6) and 0x03 == 1)
