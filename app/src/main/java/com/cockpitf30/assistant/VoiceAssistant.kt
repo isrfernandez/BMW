@@ -125,6 +125,8 @@ object VoiceAssistant {
     private const val END_SILENCE_UNSURE_MS = 2_500L
     /** Al empezar a hablar no se atiende a interrupciones (aún se oye el final de lo que dijo el conductor). */
     private const val BARGE_GRACE_MS = 1_000L
+    /** Tiempo que debe mantenerse en el parcial una orden de interrupción para hacerle caso. */
+    private const val BARGE_STABLE_MS = 300L
     /** Tras una pregunta del copiloto, algo más. */
     private const val COPILOT_FOLLOW_MS = 9_000L
 
@@ -315,6 +317,12 @@ object VoiceAssistant {
         // VOICE_RECOGNITION quita el control automático de ganancia; si la radio no lo tiene, el micro normal.
         val audio = open(MediaRecorder.AudioSource.VOICE_RECOGNITION) ?: open(MediaRecorder.AudioSource.MIC)
             ?: error("no se puede abrir el micrófono")
+        // Cancelador de eco del sistema, si lo hay: resta la voz del asistente para oír al conductor encima.
+        val echo = runCatching {
+            if (android.media.audiofx.AcousticEchoCanceler.isAvailable())
+                android.media.audiofx.AcousticEchoCanceler.create(audio.audioSessionId)?.apply { enabled = true }
+            else null
+        }.getOrNull()
         // Dos reconocedores: uno restringido a la frase de activación (mucho más fiable que buscarla en
         // texto libre, porque el modelo no conoce «BMW») y otro libre para la orden.
         val wakeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.WAKE_GRAMMAR).apply { setWords(true) }
@@ -323,6 +331,8 @@ object VoiceAssistant {
         // (con gramática cerrada: su propia voz no se confunde con eso).
         val bargeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.BARGE_GRAMMAR)
         var usingCmd = false
+        var bargeHit: String? = null
+        var bargeSince = 0L
         // Lo dicho hasta ahora en la orden: Vosk corta en cada pausa corta, y se espera a que el
         // conductor termine de verdad (END_SILENCE_MS sin hablar) antes de entenderla.
         val utterance = StringBuilder()
@@ -374,13 +384,19 @@ object VoiceAssistant {
                     // Hablando: solo se atiende a la interrupción, y solo con frases completas (los
                     // resultados parciales de la gramática se confundían con su propia voz y cortaban).
                     if (mutedSince != 0L && now - mutedSince < BARGE_GRACE_MS) { bargeRec.reset(); continue }
-                    if (bargeRec.acceptWaveForm(buf, n)) {
-                        val clean = JSONObject(bargeRec.result).optString("text").replace("[unk]", "").trim()
-                        if (clean.isNotBlank()) {
-                            _state.update { it.copy(lastText = "(hablando) $clean") }
-                            withContext(Dispatchers.Main) { safely("interrupción") { onBargeIn(clean) } }
-                        }
-                    }
+                    // Con la voz sonando casi nunca hay silencio, así que Vosk no cierra la frase: se mira
+                    // también el parcial, pero solo si termina en una orden de interrupción y se mantiene
+                    // BARGE_STABLE_MS (un parcial suelto de su propia voz no basta).
+                    val final = bargeRec.acceptWaveForm(buf, n)
+                    val raw = if (final) JSONObject(bargeRec.result).optString("text") else JSONObject(bargeRec.partialResult).optString("partial")
+                    val hit = VoiceCommands.bargePhraseAtEnd(raw)
+                    if (hit != bargeHit) { bargeHit = hit; bargeSince = now }
+                    if (hit != null && (final || now - bargeSince >= BARGE_STABLE_MS)) {
+                        bargeHit = null
+                        bargeRec.reset()
+                        _state.update { it.copy(lastText = "(hablando) $hit") }
+                        withContext(Dispatchers.Main) { safely("interrupción") { onBargeIn(hit) } }
+                    } else if (final) bargeHit = null
                     continue
                 }
                 val wantCmd = _state.value.phase == AssistantPhase.LISTENING
@@ -436,6 +452,7 @@ object VoiceAssistant {
             }
         } finally {
             runCatching { audio.stop() }
+            runCatching { echo?.release() }
             audio.release()
             wakeRec.close()
             cmdRec.close()

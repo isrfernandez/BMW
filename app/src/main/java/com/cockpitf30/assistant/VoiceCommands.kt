@@ -125,6 +125,18 @@ object VoiceCommands {
     val BARGE_GRAMMAR: String = (Regex("\"([^\"]+)\"").findAll(WAKE_GRAMMAR).map { it.groupValues[1] }.filter { it != "[unk]" }.toList() +
         STOP_WORDS + PAUSE_WORDS + HOLD_WORDS + RESUME_WORDS + "[unk]").distinct().joinToString(",", "[", "]") { "\"$it\"" }
 
+    private val BARGE_PHRASES: List<String> by lazy {
+        Regex("\"([^\"]+)\"").findAll(BARGE_GRAMMAR).map { normalize(it.groupValues[1]) }.filter { it.isNotBlank() && it != "unk" }
+            .distinct().sortedByDescending { it.length }.toList()
+    }
+
+    /** La orden de interrupción con la que termina [text] (resultado de la gramática), o null. */
+    fun bargePhraseAtEnd(text: String): String? {
+        val t = normalize(text.replace("[unk]", " "))
+        if (t.isEmpty()) return null
+        return BARGE_PHRASES.firstOrNull { t == it || t.endsWith(" $it") }
+    }
+
     /** Lo que pide una palabra dicha mientras habla el asistente. */
     enum class Barge { STOP, PAUSE, HOLD, RESUME }
 
