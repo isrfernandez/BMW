@@ -54,8 +54,18 @@ sealed interface Command {
     data class Chat(val key: String) : Command
     /** «Activa / desactiva el copiloto»; null = activar. */
     data class Copilot(val on: Boolean?) : Command
+    /** «Pausa»: se calla, pero recuerda dónde iba. */
+    data object Pause : Command
+    /** «Continúa», «sigue»: retoma lo que estaba diciendo. */
+    data object Resume : Command
     /** «Cállate un rato»: el copiloto no habla en media hora. */
     data object Quiet : Command
+    /** Activar o desactivar los avisos en ruta, todos ([category] null) o de un tipo. */
+    data class Alerts(val category: com.cockpitf30.nav.AlertCategory?, val on: Boolean) : Command
+    /** «¿Qué hay por aquí?»: sitios de interés cercanos. */
+    data object Nearby : Command
+    /** «Háblame de eso»: más del último sitio del que se avisó. */
+    data object AboutThat : Command
     /** Una de las gasolineras de las que se acaba de hablar (lo crea [Conversation]). */
     data class Station(val index: Int, val action: StationAction) : Command
 }
@@ -102,13 +112,47 @@ object VoiceCommands {
     ).joinToString(",", "[", "]") { "\"$it\"" }
 
     /** Palabras para cortar al asistente mientras habla. */
-    private val STOP_WORDS = listOf("basta", "calla", "callate", "cállate", "espera", "vale ya", "para ya", "stop", "silencio")
+    /** Cortar y callarse. */
+    private val STOP_WORDS = listOf("para", "para ya", "detente", "cancela", "silencio", "calla", "callate", "cállate", "basta", "vale ya", "stop")
+    /** Pausar para luego seguir («continúa»). */
+    private val PAUSE_WORDS = listOf("pausa", "haz una pausa")
+    /** Retomar lo que estaba diciendo. */
+    private val RESUME_WORDS = listOf("continua", "continúa", "sigue", "sigue hablando", "continua hablando", "continúa hablando", "sigue por favor")
+    /** Cortar sin perder el hilo y escuchar lo que viene («espera, ¿y mañana?»). */
+    private val HOLD_WORDS = listOf("espera", "un momento", "a ver", "aclarame", "aclárame", "aclarame esto", "aclárame esto", "perdona", "oye")
 
     /** Gramática mientras habla la radio: «Hola BMW» o una palabra para cortarla. */
     val BARGE_GRAMMAR: String = (Regex("\"([^\"]+)\"").findAll(WAKE_GRAMMAR).map { it.groupValues[1] }.filter { it != "[unk]" }.toList() +
-        STOP_WORDS + "[unk]").joinToString(",", "[", "]") { "\"$it\"" }
+        STOP_WORDS + PAUSE_WORDS + HOLD_WORDS + RESUME_WORDS + "[unk]").distinct().joinToString(",", "[", "]") { "\"$it\"" }
 
-    fun isStopWord(text: String): Boolean = normalize(text) in STOP_WORDS.map(::normalize)
+    private val BARGE_PHRASES: List<String> by lazy {
+        Regex("\"([^\"]+)\"").findAll(BARGE_GRAMMAR).map { normalize(it.groupValues[1]) }.filter { it.isNotBlank() && it != "unk" }
+            .distinct().sortedByDescending { it.length }.toList()
+    }
+
+    /** La orden de interrupción con la que termina [text] (resultado de la gramática), o null. */
+    fun bargePhraseAtEnd(text: String): String? {
+        val t = normalize(text.replace("[unk]", " "))
+        if (t.isEmpty()) return null
+        return BARGE_PHRASES.firstOrNull { t == it || t.endsWith(" $it") }
+    }
+
+    /** Lo que pide una palabra dicha mientras habla el asistente. */
+    enum class Barge { STOP, PAUSE, HOLD, RESUME }
+
+    fun bargeAction(text: String): Barge? {
+        val t = normalize(text)
+        fun inList(l: List<String>) = l.any { normalize(it) == t }
+        return when {
+            inList(STOP_WORDS) -> Barge.STOP
+            inList(PAUSE_WORDS) -> Barge.PAUSE
+            inList(HOLD_WORDS) -> Barge.HOLD
+            inList(RESUME_WORDS) -> Barge.RESUME
+            else -> null
+        }
+    }
+
+    fun isStopWord(text: String): Boolean = bargeAction(text) == Barge.STOP
 
     private val HELLO = setOf("hola", "ola", "hello", "oye")
 
@@ -147,6 +191,9 @@ object VoiceCommands {
         fun has(vararg keys: String) = keys.any { k -> if (' ' in k) t.contains(k) else words.any { it.startsWith(k) } }
         val question = words.any { it in QUESTION }
 
+        if (t in setOf("pausa", "haz una pausa")) return Command.Pause
+        if (t in setOf("continua", "sigue", "sigue hablando", "continua hablando", "sigue por favor", "continua por favor", "por donde ibas", "donde te habias quedado")) return Command.Resume
+        if (t in setOf("para", "para ya", "detente", "parate", "stop", "basta", "vale ya")) return Command.Cancel
         if (t in setOf("nada", "no", "no gracias", "cancelar", "cancela", "olvidalo", "salir", "adios", "hasta luego", "nada mas") || has("cancela", "olvidalo")) return Command.Cancel
         if (has("gracias") && words.size <= 4) return Command.Thanks
         if (t in YES || (words.size <= 3 && t.startsWith("si "))) return Command.Yes
@@ -167,6 +214,23 @@ object VoiceCommands {
         if (has("copiloto")) {
             return Command.Copilot(if (has("desactiva", "quita", "apaga", "para ", "deja", "fuera", "sin copiloto")) false else true)
         }
+        // Avisos en ruta: «desactiva los avisos», «quita los avisos turísticos», «activa avisos de radares».
+        val alertWords = has("aviso", "avisos", "puntos de interes", "informacion turistica", "turistic", "turismo")
+        val toggle = has("activa", "desactiva", "quita", "apaga", "enciende", "pon ", "quiero", "sin ", "no quiero", "deja de", "para de", "vuelve a")
+        if (alertWords && toggle) {
+            val off = has("desactiva", "quita", "apaga", "sin ", "no quiero", "deja de", "para de", "no me avises")
+            val cat = when {
+                has("radar") -> com.cockpitf30.nav.AlertCategory.RADAR
+                has("turistic", "turismo", "monumento", "puntos de interes", "lugares", "sitios") -> com.cockpitf30.nav.AlertCategory.TOURISM
+                has("seguridad", "peligro", "paso a nivel", "pasos a nivel") -> com.cockpitf30.nav.AlertCategory.SAFETY
+                has("gasolin", "combustible", "gasoil", "repostar", "autonomia") -> com.cockpitf30.nav.AlertCategory.FUEL
+                has("descanso", "area", "areas", "parar") -> com.cockpitf30.nav.AlertCategory.REST
+                else -> null
+            }
+            return Command.Alerts(cat, !off)
+        }
+        if (has("que hay por aqui", "que hay cerca", "que hay por la zona", "que ver por aqui", "que se puede ver", "algo que ver", "sitios de interes", "lugares de interes", "puntos de interes", "que hay interesante")) return Command.Nearby
+        if (has("hablame de eso", "hablame de ese", "hablame de esa", "cuentame mas", "que es eso", "que es ese", "que es esa", "mas informacion", "cuentame de eso", "dime mas")) return Command.AboutThat
         if (has("callate", "silencio", "no hables", "deja de hablar")) return Command.Quiet
         if (Regex("^(?:llevame|llevanos|vamos|ve|navega|ir|guiame)(?: (?:alli|ahi|alla|hasta alli|hacia alli|para alla|a ella|a esa))?$").matches(t)) return Command.GoThere
         if (!has("google") && has("cuanto cuesta", "precio", "a cuanto esta", "cuanto vale", "a como esta")) return Command.Price

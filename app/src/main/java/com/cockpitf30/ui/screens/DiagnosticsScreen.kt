@@ -507,6 +507,45 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                // Avisos en ruta: radares, peligros, combustible, áreas de descanso y sitios turísticos.
+                val pois by com.cockpitf30.nav.RoutePois.state.collectAsStateWithLifecycle()
+                val alertScope = androidx.compose.runtime.rememberCoroutineScope()
+                var alertsOn by remember { mutableStateOf(settings.routeAlerts) }
+                var cats by remember { mutableStateOf(com.cockpitf30.nav.AlertCategory.entries.filter { settings.alertCategory(it) }.toSet()) }
+                DiagCard("Avisos en ruta y puntos de interés") {
+                    ChipRow(listOf("Activados", "Desactivados", "Probar ahora"), if (alertsOn) 0 else 1) {
+                        if (it == 2) com.cockpitf30.nav.RouteAlerts.test(alertScope)
+                        else {
+                            alertsOn = it == 0
+                            settings.routeAlerts = alertsOn
+                            if (!alertsOn) com.cockpitf30.nav.RouteAlerts.hide()
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        com.cockpitf30.nav.AlertCategory.entries.forEach { c ->
+                            val on = c in cats
+                            FocusTile(onClick = {
+                                cats = if (on) cats - c else cats + c
+                                settings.setAlertCategory(c, !on)
+                            }, selected = on && alertsOn) {
+                                Text((if (on) "✓ " else "✗ ") + c.label, Modifier.padding(horizontal = 20.dp, vertical = 12.dp), style = MaterialTheme.typography.bodyLarge,
+                                    color = if (on) Cockpit.Text else Cockpit.TextDim)
+                            }
+                        }
+                    }
+                    Info(
+                        when {
+                            pois.loading -> "Descargando puntos de interés…"
+                            pois.error != null && pois.pois.isEmpty() -> "Puntos de interés: sin conexión (${pois.error})"
+                            else -> "${pois.pois.size} puntos en 15 km (OpenStreetMap) · ${pois.near.size} a menos de 5 km"
+                        }, Cockpit.TextDim,
+                    )
+                    Info("El asistente avisa de radares, peligros señalizados y pasos a nivel, áreas de descanso (tras hora y media al volante), " +
+                        "gasolinera más cercana con poca autonomía y monumentos, miradores o pueblos con artículo en Wikipedia (con foto en una ventanita). " +
+                        "Por voz: «desactiva los avisos», «quita los avisos turísticos», «activa los avisos de radares», «¿qué hay por aquí?», «háblame de eso».", Cockpit.TextDim)
+                }
+            }
+            item {
                 // Asistente «Hola BMW»: activar, voz en alto y estado del micrófono y del modelo.
                 val voice by com.cockpitf30.assistant.VoiceAssistant.state.collectAsStateWithLifecycle()
                 var voiceOn by remember { mutableStateOf(settings.assistantEnabled) }

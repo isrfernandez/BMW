@@ -97,6 +97,8 @@ data class AssistantState(
     val lastText: String? = null,
     /** Escuchando sin «Hola BMW» justo después de responder (conversación seguida). */
     val followUp: Boolean = false,
+    /** En pausa («pausa»): «sigue» retoma lo que estaba diciendo. */
+    val paused: Boolean = false,
 )
 
 /**
@@ -117,10 +119,14 @@ object VoiceAssistant {
     private const val FOLLOW_MS = 12_000L
     /** Silencio tras la última palabra para dar la frase por terminada (Vosk corta en cada pausa). */
     private const val END_SILENCE_MS = 1_200L
+    /** Tras «pausa», tiempo para decir «sigue» sin «Hola BMW». */
+    private const val PAUSE_MS = 30_000L
     /** Lo mismo cuando lo dicho hasta ahora todavía no se entiende (frase a medias). */
     private const val END_SILENCE_UNSURE_MS = 2_500L
     /** Al empezar a hablar no se atiende a interrupciones (aún se oye el final de lo que dijo el conductor). */
     private const val BARGE_GRACE_MS = 1_000L
+    /** Tiempo que debe mantenerse en el parcial una orden de interrupción para hacerle caso. */
+    private const val BARGE_STABLE_MS = 300L
     /** Tras una pregunta del copiloto, algo más. */
     private const val COPILOT_FOLLOW_MS = 9_000L
 
@@ -165,6 +171,11 @@ object VoiceAssistant {
     private var followUp = false
     /** Abrir la escucha sin «Hola BMW» al terminar de hablar (y durante cuánto). */
     private var listenAfterReply = 0L
+    /** Por dónde va hablando (carácter de la respuesta, lo dice el motor de voz). */
+    @Volatile private var spokenPos = 0
+    /** Lo que quedó por decir al interrumpirla con «pausa» o «espera» (para «sigue»). */
+    private var pausedText: String? = null
+    private var pausedAt = 0L
     /** Gasolineras de la última respuesta, de la más cercana a la más lejana. */
     private var nearStations: List<com.cockpitf30.fuel.NearStation> = emptyList()
 
@@ -306,6 +317,12 @@ object VoiceAssistant {
         // VOICE_RECOGNITION quita el control automático de ganancia; si la radio no lo tiene, el micro normal.
         val audio = open(MediaRecorder.AudioSource.VOICE_RECOGNITION) ?: open(MediaRecorder.AudioSource.MIC)
             ?: error("no se puede abrir el micrófono")
+        // Cancelador de eco del sistema, si lo hay: resta la voz del asistente para oír al conductor encima.
+        val echo = runCatching {
+            if (android.media.audiofx.AcousticEchoCanceler.isAvailable())
+                android.media.audiofx.AcousticEchoCanceler.create(audio.audioSessionId)?.apply { enabled = true }
+            else null
+        }.getOrNull()
         // Dos reconocedores: uno restringido a la frase de activación (mucho más fiable que buscarla en
         // texto libre, porque el modelo no conoce «BMW») y otro libre para la orden.
         val wakeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.WAKE_GRAMMAR).apply { setWords(true) }
@@ -314,6 +331,8 @@ object VoiceAssistant {
         // (con gramática cerrada: su propia voz no se confunde con eso).
         val bargeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.BARGE_GRAMMAR)
         var usingCmd = false
+        var bargeHit: String? = null
+        var bargeSince = 0L
         // Lo dicho hasta ahora en la orden: Vosk corta en cada pausa corta, y se espera a que el
         // conductor termine de verdad (END_SILENCE_MS sin hablar) antes de entenderla.
         val utterance = StringBuilder()
@@ -365,13 +384,19 @@ object VoiceAssistant {
                     // Hablando: solo se atiende a la interrupción, y solo con frases completas (los
                     // resultados parciales de la gramática se confundían con su propia voz y cortaban).
                     if (mutedSince != 0L && now - mutedSince < BARGE_GRACE_MS) { bargeRec.reset(); continue }
-                    if (bargeRec.acceptWaveForm(buf, n)) {
-                        val clean = JSONObject(bargeRec.result).optString("text").replace("[unk]", "").trim()
-                        if (clean.isNotBlank()) {
-                            _state.update { it.copy(lastText = "(hablando) $clean") }
-                            withContext(Dispatchers.Main) { safely("interrupción") { onBargeIn(clean) } }
-                        }
-                    }
+                    // Con la voz sonando casi nunca hay silencio, así que Vosk no cierra la frase: se mira
+                    // también el parcial, pero solo si termina en una orden de interrupción y se mantiene
+                    // BARGE_STABLE_MS (un parcial suelto de su propia voz no basta).
+                    val final = bargeRec.acceptWaveForm(buf, n)
+                    val raw = if (final) JSONObject(bargeRec.result).optString("text") else JSONObject(bargeRec.partialResult).optString("partial")
+                    val hit = VoiceCommands.bargePhraseAtEnd(raw)
+                    if (hit != bargeHit) { bargeHit = hit; bargeSince = now }
+                    if (hit != null && (final || now - bargeSince >= BARGE_STABLE_MS)) {
+                        bargeHit = null
+                        bargeRec.reset()
+                        _state.update { it.copy(lastText = "(hablando) $hit") }
+                        withContext(Dispatchers.Main) { safely("interrupción") { onBargeIn(hit) } }
+                    } else if (final) bargeHit = null
                     continue
                 }
                 val wantCmd = _state.value.phase == AssistantPhase.LISTENING
@@ -427,6 +452,7 @@ object VoiceAssistant {
             }
         } finally {
             runCatching { audio.stop() }
+            runCatching { echo?.release() }
             audio.release()
             wakeRec.close()
             cmdRec.close()
@@ -446,7 +472,7 @@ object VoiceAssistant {
             followUp = false
             muted = false
             resetRecognizer = true
-            _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, reply = "Algo ha fallado. Vuelve a intentarlo", replyAt = System.currentTimeMillis(), error = "$what: ${e.message ?: e.javaClass.simpleName}") }
+            _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, paused = false, reply = "Algo ha fallado. Vuelve a intentarlo", replyAt = System.currentTimeMillis(), error = "$what: ${e.message ?: e.javaClass.simpleName}") }
         }
     }
 
@@ -508,7 +534,7 @@ object VoiceAssistant {
         if (followUp) {
             // Fin de la conversación seguida: sin «No te he oído», que no se ha preguntado nada.
             followUp = false
-            _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, engine = null, followUp = false) }
+            _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, engine = null, followUp = false, paused = false) }
             return
         }
         _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, reply = "No te he oído", replyAt = System.currentTimeMillis(), engine = null) }
@@ -518,7 +544,7 @@ object VoiceAssistant {
     private fun wake() {
         followUp = false
         listenUntil = System.currentTimeMillis() + LISTEN_MS
-        _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, reply = null, engine = "Vosk", followUp = false) }
+        _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, reply = null, engine = "Vosk", followUp = false, paused = false) }
         beep()
     }
 
@@ -547,7 +573,7 @@ object VoiceAssistant {
                 listenUntil = 0
                 followUp = false
                 stopGoogle()
-                _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, reply = null, followUp = false) }
+                _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, reply = null, followUp = false, paused = false) }
                 refresh()
             }
             AssistantPhase.NO_PERMISSION -> permissionRequester?.invoke()
@@ -617,10 +643,10 @@ object VoiceAssistant {
         // En la escucha seguida se descarta lo suelto (ruido, la radio); una frase de verdad se contesta.
         if (inFollowUp && !waitingAnswer && ((command is Command.Unknown && words < 3) || command == Command.Yes || command == Command.Another)) {
             // Sin «Hola BMW» y sin sentido: será la radio o alguien hablando. No se contesta.
-            _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false) }
+            _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, paused = false) }
             return
         }
-        _state.update { it.copy(heard = text, followUp = false) }
+        _state.update { it.copy(heard = text, followUp = false, paused = false) }
         lastActivityAt = now
         var reply = perform(command, now)
         val repeatable = command is Command.Info || command is Command.WeatherDay
@@ -685,6 +711,17 @@ object VoiceAssistant {
         }
     }
 
+    /**
+     * Aviso en ruta: como [announce], pero si el asistente está escuchando o hablando devuelve false
+     * para que se intente un poco después (y no corte lo que se está diciendo).
+     */
+    fun announceIfFree(text: String): Boolean {
+        val phase = _state.value.phase
+        if (phase == AssistantPhase.LISTENING || phase == AssistantPhase.ANSWERING) return false
+        announce(text)
+        return true
+    }
+
     /** La agenda leída (se relee al reanudar la app, por si se conectó otro móvil). */
     @Volatile private var contactsCache: List<com.cockpitf30.system.Contact>? = null
 
@@ -729,7 +766,7 @@ object VoiceAssistant {
         Command.Help -> "Puedo abrir gasolineras, viaje, tiempo, teléfono o apps; decirte la autonomía, el tiempo de hoy o de mañana " +
             "y la gasolinera más cercana; llevarte a un sitio, llamar a alguien, contarte un chiste o preguntar a Google. " +
             "Después de contestarte sigo escuchando unos segundos, así que puedes seguir: otra, y mañana, llévame. " +
-            "Y puedes ajustar mi humor, o decir activa el copiloto."
+            "Y puedes ajustar mi humor, decir activa el copiloto, qué hay por aquí, o desactiva los avisos turísticos."
         Command.Cancel -> joke(Personality.line("cancel"), "cancel")
         Command.Thanks -> joke(Personality.line("thanks"), "thanks")
         Command.No -> Personality.line("no")
@@ -763,6 +800,15 @@ object VoiceAssistant {
                 "Modo copiloto activado. Te daré conversación cada ${settings().copilotMinutes} minutos más o menos. Si molesto, di cállate un rato."
             } else joke("Modo copiloto desactivado", "cancel")
         }
+        Command.Pause -> if (pausedText != null) "Sigo en pausa. Di sigue cuando quieras" else Personality.line("ack")
+        Command.Resume -> {
+            val rest = pausedText?.takeIf { now - pausedAt < 10 * 60_000L }
+            pausedText = null
+            rest ?: "No me había quedado a medias. Pregúntame lo que quieras"
+        }
+        is Command.Alerts -> alerts(c)
+        Command.Nearby -> com.cockpitf30.nav.RouteAlerts.nearby(scope)
+        Command.AboutThat -> com.cockpitf30.nav.RouteAlerts.more() ?: "Todavía no te he hablado de ningún sitio. Pregúntame qué hay por aquí."
         Command.Quiet -> {
             copilotSnoozeUntil = now + 30 * 60_000L
             joke("Vale, me callo media hora", "cancel")
@@ -895,6 +941,21 @@ object VoiceAssistant {
         }
     }
 
+    /** «Desactiva los avisos», «activa los avisos turísticos»… */
+    private fun alerts(c: Command.Alerts): String {
+        val st = settings()
+        val cat = c.category
+        if (cat == null) {
+            st.routeAlerts = c.on
+            if (!c.on) com.cockpitf30.nav.RouteAlerts.hide()
+            return if (c.on) "Avisos en ruta activados: radares, seguridad, combustible, descanso y sitios turísticos. Puedes quitar uno, por ejemplo: desactiva los avisos turísticos."
+            else joke("Vale, sin avisos en ruta. Si los quieres otra vez, di activa los avisos", "cancel")
+        }
+        st.setAlertCategory(cat, c.on)
+        if (c.on && !st.routeAlerts) st.routeAlerts = true
+        return if (c.on) "Avisos ${cat.spoken} activados" else joke("Avisos ${cat.spoken} desactivados", "cancel")
+    }
+
     // ---------------------------------------------------------------- copiloto
 
     private fun startCopilot() {
@@ -976,6 +1037,8 @@ object VoiceAssistant {
             tempC = f?.tempC ?: car.outsideTempC?.let { kotlin.math.round(it).toInt() },
             rainAheadKm = rainAhead,
             camerasNear = com.cockpitf30.nav.SpeedCameras.state.value.near.size,
+            sightsNear = if (settings().alertOn(com.cockpitf30.nav.AlertCategory.TOURISM)) com.cockpitf30.nav.RoutePois.state.value.near
+                .filter { it.poi.category == com.cockpitf30.nav.AlertCategory.TOURISM && it.poi.kind != "place" }.mapNotNull { it.poi.name }.take(2) else emptyList(),
         )
     }
 
@@ -1040,6 +1103,8 @@ object VoiceAssistant {
             applyVoice()
             t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) { ttsLastError = null }
+                // Palabra que está diciendo: para saber dónde seguir tras «pausa» y no confundir su voz con una orden.
+                override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) { spokenPos = start }
                 override fun onError(utteranceId: String?, errorCode: Int) {
                     ttsLastError = "error $errorCode al hablar"
                     @Suppress("DEPRECATION") onError(utteranceId)
@@ -1152,7 +1217,8 @@ object VoiceAssistant {
 
     private fun say(text: String, listenAfter: Long = 0L) {
         listenAfterReply = listenAfter
-        _state.update { it.copy(phase = AssistantPhase.ANSWERING, reply = text, replyAt = System.currentTimeMillis(), engine = null) }
+        spokenPos = 0
+        _state.update { it.copy(phase = AssistantPhase.ANSWERING, reply = text, replyAt = System.currentTimeMillis(), engine = null, paused = false) }
         unmuteJob?.cancel()
         stopPlayer()
         val t = tts
@@ -1239,27 +1305,59 @@ object VoiceAssistant {
     }
 
     /**
-     * Mientras habla: «Hola BMW» la corta y escucha una orden nueva; «basta», «calla», «espera»
-     * la corta y queda escuchando (sin «Hola BMW»).
+     * Mientras habla se le puede interrumpir:
+     * - «Hola BMW»: corta y escucha una orden nueva.
+     * - «para», «cancela», «silencio», «basta»…: corta y se calla.
+     * - «pausa»: corta y espera a «sigue» / «continúa» para retomar donde iba.
+     * - «espera», «un momento», «a ver»…: corta y escucha sin perder el hilo («sigue» también retoma).
      */
     private fun onBargeIn(text: String) {
         if (_state.value.phase != AssistantPhase.ANSWERING || !muted) return
         val wake = VoiceCommands.afterWakeWord(text) != null
-        val reply = VoiceCommands.normalize(_state.value.reply.orEmpty())
-        val stop = VoiceCommands.isStopWord(text) && !reply.contains(VoiceCommands.normalize(text))
-        if (!wake && !stop) return
-        Log.i(TAG, "Interrumpida: «$text»")
+        val action = if (wake) null else VoiceCommands.bargeAction(text)
+        if (!wake && (action == null || action == VoiceCommands.Barge.RESUME)) return
+        // Si esa palabra la está diciendo ella misma ahora («para llegar…»), es su eco: no se corta.
+        if (!wake && saysItNow(text)) return
+        Log.i(TAG, "Interrumpida ($action): «$text»")
+        val reply = _state.value.reply.orEmpty()
+        val rest = remainingText(reply, spokenPos)
         unmuteJob?.cancel()
         listenAfterReply = 0
         stopSpeaking()
         muted = false
         resetRecognizer = true
-        if (wake) wake()
-        else {
-            followUp = true
-            listenUntil = System.currentTimeMillis() + FOLLOW_MS
-            _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, engine = "Vosk", followUp = true, level = 0f) }
+        val now = System.currentTimeMillis()
+        if (action != VoiceCommands.Barge.STOP && rest != null) { pausedText = rest; pausedAt = now } else pausedText = null
+        when (action) {
+            null -> wake()
+            VoiceCommands.Barge.STOP -> _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, paused = false) }
+            VoiceCommands.Barge.PAUSE -> listenFollowUp(PAUSE_MS, paused = rest != null)
+            else -> listenFollowUp(FOLLOW_MS, paused = false)
         }
+    }
+
+    private fun listenFollowUp(ms: Long, paused: Boolean) {
+        followUp = true
+        listenUntil = System.currentTimeMillis() + ms
+        _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, engine = "Vosk", followUp = true, paused = paused, level = 0f) }
+    }
+
+    /** ¿Está diciendo [word] justo ahora? Mira el trozo de la respuesta alrededor de la palabra en curso. */
+    private fun saysItNow(word: String): Boolean {
+        val reply = _state.value.reply.orEmpty()
+        val w = VoiceCommands.normalize(word)
+        val pos = spokenPos
+        // Sin posición (voz con filtro, o el motor no la da) se mira la frase entera.
+        val window = if (pos <= 0) reply else reply.substring((pos - 30).coerceAtLeast(0), (pos + 40).coerceAtMost(reply.length))
+        return " ${VoiceCommands.normalize(window)} ".contains(" $w ")
+    }
+
+    /** Lo que falta por decir desde el principio de la frase (o trozo entre comas) en curso; null si nada. */
+    private fun remainingText(reply: String, pos: Int): String? {
+        if (reply.isBlank()) return null
+        if (pos <= 0) return reply
+        val cut = reply.lastIndexOfAny(charArrayOf('.', ',', ';', ':', '?', '!'), (pos - 1).coerceAtLeast(0))
+        return reply.substring(cut + 1).trim().takeIf { it.length > 2 }
     }
 
     private fun doneSpeaking() {

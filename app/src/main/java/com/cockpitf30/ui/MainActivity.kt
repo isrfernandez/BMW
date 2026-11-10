@@ -21,6 +21,8 @@ import com.cockpitf30.assistant.VoiceAssistant
 import com.cockpitf30.ui.components.AssistantOverlay
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -307,13 +309,19 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     // Radares: aviso hablado al acercarse a uno que queda delante. Tiempo en ruta: se recalcula solo.
     DisposableEffect(Unit) {
         com.cockpitf30.nav.SpeedCameras.onAlert = { v ->
-            if (AppSettings(ctx).radarVoice) {
+            if (AppSettings(ctx).alertOn(com.cockpitf30.nav.AlertCategory.RADAR)) {
                 val limit = v.camera.maxspeed?.let { ", límite $it" } ?: ""
                 val what = if (v.camera.kind == "Tramo") "Tramo de radar" else "Radar"
                 VoiceAssistant.announce("$what a ${com.cockpitf30.ui.components.radarDistance(v.meters).replace(" m", " metros").replace(" km", " kilómetros")}$limit")
             }
         }
         onDispose { com.cockpitf30.nav.SpeedCameras.onAlert = null }
+    }
+    // Avisos en ruta (peligros, descanso, turismo, combustible): los dice el asistente.
+    DisposableEffect(Unit) {
+        val deliver: (com.cockpitf30.nav.RouteAlert) -> Boolean = { VoiceAssistant.announceIfFree(it.speech) }
+        com.cockpitf30.nav.RouteAlerts.deliver = deliver
+        onDispose { if (com.cockpitf30.nav.RouteAlerts.deliver === deliver) com.cockpitf30.nav.RouteAlerts.deliver = null }
     }
     LaunchedEffect(Unit) {
         com.cockpitf30.weather.RouteWeather.load(ctx)
@@ -382,6 +390,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 Screen.ROUTE -> com.cockpitf30.ui.screens.RouteScreen()
             }
         }
+            com.cockpitf30.ui.components.RouteAlertPopup(Modifier.align(androidx.compose.ui.Alignment.TopEnd).padding(top = 20.dp, end = 24.dp))
             AssistantOverlay()
         }
     }
