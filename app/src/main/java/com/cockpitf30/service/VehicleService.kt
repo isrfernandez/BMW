@@ -44,6 +44,7 @@ class VehicleService : LifecycleService() {
         TripComputer.start(this, tripScope)
         com.cockpitf30.vehicle.telemetry.Telemetry.start(this, tripScope)
         com.cockpitf30.nav.SpeedCameras.start(this, tripScope)
+        com.cockpitf30.nav.RoutePois.start(this, tripScope)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -58,6 +59,7 @@ class VehicleService : LifecycleService() {
         TripComputer.stop()
         com.cockpitf30.vehicle.telemetry.Telemetry.stop()
         com.cockpitf30.nav.SpeedCameras.stop()
+        com.cockpitf30.nav.RoutePois.stop()
         super.onDestroy()
     }
 

@@ -108,6 +108,22 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean("radar_voice", true)
         set(value) = prefs.edit().putBoolean("radar_voice", value).apply()
 
+    /** Interruptor general de los avisos en ruta (radares, seguridad, combustible, descanso y turismo). */
+    var routeAlerts: Boolean
+        get() = prefs.getBoolean("route_alerts", true)
+        set(value) = prefs.edit().putBoolean("route_alerts", value).apply()
+
+    /** Si se avisa de [c]: interruptor general y el de la categoría (radares = [radarVoice]). */
+    fun alertOn(c: com.cockpitf30.nav.AlertCategory): Boolean = routeAlerts && alertCategory(c)
+
+    fun alertCategory(c: com.cockpitf30.nav.AlertCategory): Boolean =
+        if (c == com.cockpitf30.nav.AlertCategory.RADAR) radarVoice else prefs.getBoolean("alert_" + c.name.lowercase(), true)
+
+    fun setAlertCategory(c: com.cockpitf30.nav.AlertCategory, on: Boolean) {
+        if (c == com.cockpitf30.nav.AlertCategory.RADAR) radarVoice = on
+        else prefs.edit().putBoolean("alert_" + c.name.lowercase(), on).apply()
+    }
+
     var askedContacts: Boolean
         get() = prefs.getBoolean("asked_contacts", false)
         set(value) = prefs.edit().putBoolean("asked_contacts", value).apply()

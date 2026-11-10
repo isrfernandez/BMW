@@ -694,6 +694,17 @@ object VoiceAssistant {
         }
     }
 
+    /**
+     * Aviso en ruta: como [announce], pero si el asistente está escuchando o hablando devuelve false
+     * para que se intente un poco después (y no corte lo que se está diciendo).
+     */
+    fun announceIfFree(text: String): Boolean {
+        val phase = _state.value.phase
+        if (phase == AssistantPhase.LISTENING || phase == AssistantPhase.ANSWERING) return false
+        announce(text)
+        return true
+    }
+
     /** La agenda leída (se relee al reanudar la app, por si se conectó otro móvil). */
     @Volatile private var contactsCache: List<com.cockpitf30.system.Contact>? = null
 
@@ -738,7 +749,7 @@ object VoiceAssistant {
         Command.Help -> "Puedo abrir gasolineras, viaje, tiempo, teléfono o apps; decirte la autonomía, el tiempo de hoy o de mañana " +
             "y la gasolinera más cercana; llevarte a un sitio, llamar a alguien, contarte un chiste o preguntar a Google. " +
             "Después de contestarte sigo escuchando unos segundos, así que puedes seguir: otra, y mañana, llévame. " +
-            "Y puedes ajustar mi humor, o decir activa el copiloto."
+            "Y puedes ajustar mi humor, decir activa el copiloto, qué hay por aquí, o desactiva los avisos turísticos."
         Command.Cancel -> joke(Personality.line("cancel"), "cancel")
         Command.Thanks -> joke(Personality.line("thanks"), "thanks")
         Command.No -> Personality.line("no")
@@ -778,6 +789,9 @@ object VoiceAssistant {
             pausedText = null
             rest ?: "No me había quedado a medias. Pregúntame lo que quieras"
         }
+        is Command.Alerts -> alerts(c)
+        Command.Nearby -> com.cockpitf30.nav.RouteAlerts.nearby(scope)
+        Command.AboutThat -> com.cockpitf30.nav.RouteAlerts.more() ?: "Todavía no te he hablado de ningún sitio. Pregúntame qué hay por aquí."
         Command.Quiet -> {
             copilotSnoozeUntil = now + 30 * 60_000L
             joke("Vale, me callo media hora", "cancel")
@@ -910,6 +924,21 @@ object VoiceAssistant {
         }
     }
 
+    /** «Desactiva los avisos», «activa los avisos turísticos»… */
+    private fun alerts(c: Command.Alerts): String {
+        val st = settings()
+        val cat = c.category
+        if (cat == null) {
+            st.routeAlerts = c.on
+            if (!c.on) com.cockpitf30.nav.RouteAlerts.hide()
+            return if (c.on) "Avisos en ruta activados: radares, seguridad, combustible, descanso y sitios turísticos. Puedes quitar uno, por ejemplo: desactiva los avisos turísticos."
+            else joke("Vale, sin avisos en ruta. Si los quieres otra vez, di activa los avisos", "cancel")
+        }
+        st.setAlertCategory(cat, c.on)
+        if (c.on && !st.routeAlerts) st.routeAlerts = true
+        return if (c.on) "Avisos ${cat.spoken} activados" else joke("Avisos ${cat.spoken} desactivados", "cancel")
+    }
+
     // ---------------------------------------------------------------- copiloto
 
     private fun startCopilot() {
@@ -991,6 +1020,8 @@ object VoiceAssistant {
             tempC = f?.tempC ?: car.outsideTempC?.let { kotlin.math.round(it).toInt() },
             rainAheadKm = rainAhead,
             camerasNear = com.cockpitf30.nav.SpeedCameras.state.value.near.size,
+            sightsNear = if (settings().alertOn(com.cockpitf30.nav.AlertCategory.TOURISM)) com.cockpitf30.nav.RoutePois.state.value.near
+                .filter { it.poi.category == com.cockpitf30.nav.AlertCategory.TOURISM && it.poi.kind != "place" }.mapNotNull { it.poi.name }.take(2) else emptyList(),
         )
     }
 
