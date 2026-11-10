@@ -59,6 +59,7 @@ import com.cockpitf30.vehicle.source.CarPropertySource
 import com.cockpitf30.vehicle.source.SerialSource
 import com.cockpitf30.ui.theme.DESIGN_HEIGHT_DP
 import com.cockpitf30.ui.theme.DESIGN_WIDTH_DP
+import com.cockpitf30.ui.theme.appliedBandsPx
 import com.cockpitf30.ui.theme.appliedDesignDensity
 
 /**
@@ -451,7 +452,7 @@ fun DiagnosticsScreen() {
                 val cfg = context.resources.configuration
                 DiagCard("Pantalla") {
                     Info("${dm.widthPixels} x ${dm.heightPixels} px · ${dm.densityDpi} dpi · densidad ${"%.2f".format(dm.density)} · letra x${"%.2f".format(cfg.fontScale)}")
-                    Info("Escala aplicada: ${"%.3f".format(appliedDesignDensity)} (lienzo ${DESIGN_WIDTH_DP.toInt()}x${DESIGN_HEIGHT_DP.toInt()})")
+                    Info("Escala aplicada: ${"%.3f".format(appliedDesignDensity)} (lienzo ${DESIGN_WIDTH_DP.toInt()}x${DESIGN_HEIGHT_DP.toInt()}) · bandas ${appliedBandsPx.first} px lados, ${appliedBandsPx.second} px arriba/abajo")
                     Info("Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT}) · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
                 }
             }
