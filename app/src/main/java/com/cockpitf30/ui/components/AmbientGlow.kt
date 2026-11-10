@@ -45,7 +45,7 @@ internal fun glowMood(longG: Float, radarAhead: Boolean): Pair<GlowMood, Float> 
 
 /**
  * Luz ambiente: un halo fino en los bordes de la pantalla, del color del modo de conducción.
- * Se aviva al acelerar, se vuelve rojo al frenar fuerte y late en rojo con un radar delante.
+ * Rodea los cuatro bordes. Se aviva al acelerar, se vuelve rojo al frenar fuerte y late en rojo con un radar delante.
  * Va en su propia capa (graphicsLayer) y solo cambia por pasos de 0,05 g.
  */
 @Composable
@@ -71,7 +71,8 @@ fun AmbientGlow(modifier: Modifier = Modifier) {
     Canvas(modifier.fillMaxSize().graphicsLayer { alpha = (strength * pulse.value).coerceIn(0f, 1f) }) {
         val edge = 22.dp.toPx()
         val c = color
-        // Bordes izquierdo, derecho e inferior; arriba queda limpio para la barra.
+        // Los cuatro bordes: envuelve la pantalla.
+        drawRect(Brush.verticalGradient(listOf(c, Color.Transparent), endY = edge), size = Size(size.width, edge), blendMode = BlendMode.Plus)
         drawRect(Brush.horizontalGradient(listOf(c, Color.Transparent), endX = edge), size = Size(edge, size.height), blendMode = BlendMode.Plus)
         drawRect(
             Brush.horizontalGradient(listOf(Color.Transparent, c), startX = size.width - edge, endX = size.width),

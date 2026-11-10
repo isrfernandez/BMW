@@ -260,6 +260,14 @@ class AppSettings(context: Context) {
         prefs.edit().putLong(k + "_km", r?.doneAtKm ?: -1L).putLong(k + "_at", r?.doneAtMillis ?: -1L).apply()
     }
 
+    /** Cada cuántos km se hace [item] (el usuario puede cambiar el de fábrica). */
+    fun serviceEveryKm(item: com.cockpitf30.vehicle.ServiceItem): Int? =
+        item.everyKm?.let { prefs.getInt("service_" + item.name.lowercase() + "_every_km", it) }
+
+    fun setServiceEveryKm(item: com.cockpitf30.vehicle.ServiceItem, km: Int) {
+        prefs.edit().putInt("service_" + item.name.lowercase() + "_every_km", km.coerceIn(1_000, 60_000)).apply()
+    }
+
     /** Fecha de la próxima ITV (día de la época), o null. */
     var itvDate: java.time.LocalDate?
         get() = prefs.getLong("itv_epoch_day", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }?.let { java.time.LocalDate.ofEpochDay(it) }

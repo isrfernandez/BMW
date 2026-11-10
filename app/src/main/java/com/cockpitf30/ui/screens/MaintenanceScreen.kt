@@ -14,7 +14,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -68,7 +74,7 @@ fun serviceColor(level: ServiceLevel): Color = when (level) {
 /** Estado de todas las tareas con los ajustes guardados. */
 fun serviceStatuses(settings: AppSettings, now: Long = System.currentTimeMillis()): List<ServiceStatus> {
     val odo = TripComputer.odometerKm()
-    return ServiceItem.entries.map { Maintenance.status(it, settings.serviceRecord(it), odo, settings.itvDate, now) }
+    return ServiceItem.entries.map { Maintenance.status(it, settings.serviceRecord(it), odo, settings.itvDate, now, everyKm = settings.serviceEveryKm(it)) }
 }
 
 /**
@@ -111,18 +117,26 @@ fun MaintenanceScreen() {
                         }
                     }
                     Text(
-                        "Ponlo igual que el cuadro del coche; la app suma lo que recorres.",
+                        "Escríbelo igual que el cuadro del coche; la app suma lo que recorres.",
                         style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim, modifier = Modifier.weight(1f).padding(end = 16.dp), maxLines = 2,
                     )
-                    listOf(-1000L, -100L, 100L, 1000L).forEachIndexed { i, step ->
-                        val mod = if (i == 0) Modifier.focusRequester(first) else Modifier
-                        FocusTile(onClick = {
-                            val base = odo ?: if (step > 0) 100_000L else 100_000L
-                            TripComputer.setOdometerKm((base + if (odo == null) 0 else step).coerceAtLeast(0))
-                            changed()
-                        }, modifier = mod.padding(start = 10.dp)) {
-                            Text(if (odo == null && i == 0) "Poner 100.000" else (if (step > 0) "+" else "−") + "%,d".format(es, kotlin.math.abs(step)).replace(',', '.'), Modifier.padding(horizontal = 18.dp, vertical = 14.dp), style = MaterialTheme.typography.titleMedium)
-                        }
+                    var typed by remember(version) { mutableStateOf(odo?.toString() ?: "") }
+                    val parsed = typed.filter(Char::isDigit).toLongOrNull()?.takeIf { it in 1..2_000_000 }
+                    fun save() { if (parsed != null) { TripComputer.setOdometerKm(parsed); changed() } }
+                    OutlinedTextField(
+                        value = typed, onValueChange = { v -> typed = v.filter(Char::isDigit).take(7) }, singleLine = true,
+                        placeholder = { Text("Km del coche", style = numeric(26)) },
+                        textStyle = numeric(30, FontWeight.Medium),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { save() }),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Cockpit.BlueLight, unfocusedBorderColor = Cockpit.GlassBorder,
+                            focusedTextColor = Cockpit.Text, unfocusedTextColor = Cockpit.Text, cursorColor = Cockpit.BlueLight,
+                        ),
+                        modifier = Modifier.width(260.dp).focusRequester(first),
+                    )
+                    FocusTile(onClick = { save() }, selected = parsed != null && parsed != odo, modifier = Modifier.padding(start = 12.dp)) {
+                        Text("Guardar", Modifier.padding(horizontal = 26.dp, vertical = 16.dp), style = MaterialTheme.typography.titleMedium)
                     }
                 }
                 Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -152,6 +166,17 @@ private fun ServiceCard(st: ServiceStatus, modifier: Modifier, settings: AppSett
             val date = settings.itvDate
             Text(date?.let { "Próxima: ${it.format(DATE)}" } ?: "Sin fecha", style = MaterialTheme.typography.bodyLarge)
         } else {
+            settings.serviceEveryKm(st.item)?.let { every ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Cada ${"%,d".format(es, every).replace(',', '.')} km", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                    FocusTile(onClick = { settings.setServiceEveryKm(st.item, every - 1_000); onChange() }) {
+                        Text("−1.000", Modifier.padding(horizontal = 14.dp, vertical = 8.dp), style = MaterialTheme.typography.titleMedium)
+                    }
+                    FocusTile(onClick = { settings.setServiceEveryKm(st.item, every + 1_000); onChange() }) {
+                        Text("+1.000", Modifier.padding(horizontal = 14.dp, vertical = 8.dp), style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+            }
             val r = settings.serviceRecord(st.item)
             Text(
                 r?.let { listOfNotNull(it.doneAtMillis?.let { at -> "Hecho el " + java.time.Instant.ofEpochMilli(at).atZone(java.time.ZoneId.systemDefault()).toLocalDate().format(DATE) }, it.doneAtKm?.let { km -> "a los ${"%,d".format(es, km).replace(',', '.')} km" }).joinToString(" ") } ?: "Sin registrar",

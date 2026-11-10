@@ -16,8 +16,8 @@ enum class ServiceItem(
     val everyMonths: Int?,
     val hint: String,
 ) {
-    OIL("Aceite y filtro", "el cambio de aceite", 25_000, 24, "BMW Longlife: 25.000 km o 2 años"),
-    TYRES("Neumáticos", "la revisión de neumáticos", 10_000, 6, "Presión, desgaste y rotación cada 10.000 km o 6 meses"),
+    OIL("Aceite y filtro", "el cambio de aceite", 25_000, 24, "BMW Longlife recomienda 25.000 km o 2 años"),
+    TYRES("Neumáticos", "la revisión de neumáticos", 10_000, 6, "Presión, desgaste y rotación; también cada 6 meses"),
     ITV("ITV", "la ITV", null, null, "Fecha de la próxima inspección"),
 }
 
@@ -47,6 +47,7 @@ object Maintenance {
     fun status(
         item: ServiceItem, record: ServiceRecord?, odometerKm: Long?, itvDate: LocalDate?, now: Long,
         zone: ZoneId = ZoneId.systemDefault(),
+        everyKm: Int? = item.everyKm,
     ): ServiceStatus {
         val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
         if (item == ServiceItem.ITV) {
@@ -65,12 +66,12 @@ object Maintenance {
         if (record == null || (record.doneAtKm == null && record.doneAtMillis == null)) {
             return ServiceStatus(item, ServiceLevel.UNKNOWN, 0f, null, null, "Marca «Hecho» la próxima vez que lo hagas")
         }
-        val kmLeft = if (item.everyKm != null && record.doneAtKm != null && odometerKm != null) (record.doneAtKm + item.everyKm - odometerKm).toInt() else null
+        val kmLeft = if (everyKm != null && record.doneAtKm != null && odometerKm != null) (record.doneAtKm + everyKm - odometerKm).toInt() else null
         val daysLeft = if (item.everyMonths != null && record.doneAtMillis != null) {
             val done = Instant.ofEpochMilli(record.doneAtMillis).atZone(zone).toLocalDate()
             ChronoUnit.DAYS.between(today, done.plusMonths(item.everyMonths.toLong())).toInt()
         } else null
-        val usedKm = if (kmLeft != null) 1f - kmLeft.toFloat() / item.everyKm!! else 0f
+        val usedKm = if (kmLeft != null) 1f - kmLeft.toFloat() / everyKm!! else 0f
         val usedTime = if (daysLeft != null) 1f - daysLeft / (item.everyMonths!! * 30.44f) else 0f
         val used = maxOf(usedKm, usedTime).coerceIn(0f, 1.2f)
         val due = (kmLeft != null && kmLeft <= 0) || (daysLeft != null && daysLeft <= 0)
