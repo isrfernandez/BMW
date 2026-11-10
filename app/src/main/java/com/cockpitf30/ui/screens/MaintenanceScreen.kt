@@ -107,36 +107,53 @@ fun MaintenanceScreen() {
                 )
             }
             Column(Modifier.fillMaxSize().padding(start = 32.dp, end = 32.dp, bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                // Cuentakilómetros.
+                // Cuentakilómetros: tocar la cifra abre la edición; al guardar se cierra.
+                var editing by remember { mutableStateOf(odo == null) }
+                val field = remember { FocusRequester() }
                 Row(Modifier.fillMaxWidth().height(120.dp).glassPanel(16.dp).padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.width(430.dp)) {
-                        PanelTitle("Kilómetros del coche")
-                        Row(verticalAlignment = Alignment.Bottom) {
-                            Text(odo?.let { "%,d".format(es, it).replace(',', '.') } ?: "Sin poner", style = numeric(46, FontWeight.Medium), maxLines = 1)
-                            if (odo != null) Text(" km", style = numeric(20), color = Cockpit.TextDim, modifier = Modifier.padding(bottom = 8.dp))
+                    FocusTile(onClick = { editing = true }, modifier = Modifier.width(430.dp).focusRequester(first)) {
+                        Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
+                            PanelTitle("Kilómetros del coche", trailing = { if (!editing) Text("  · tocar para cambiar", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim) })
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                Text(odo?.let { "%,d".format(es, it).replace(',', '.') } ?: "Sin poner", style = numeric(46, FontWeight.Medium), maxLines = 1)
+                                if (odo != null) Text(" km", style = numeric(20), color = Cockpit.TextDim, modifier = Modifier.padding(bottom = 8.dp))
+                            }
                         }
                     }
-                    Text(
-                        "Escríbelo igual que el cuadro del coche; la app suma lo que recorres.",
-                        style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim, modifier = Modifier.weight(1f).padding(end = 16.dp), maxLines = 2,
-                    )
-                    var typed by remember(version) { mutableStateOf(odo?.toString() ?: "") }
-                    val parsed = typed.filter(Char::isDigit).toLongOrNull()?.takeIf { it in 1..2_000_000 }
-                    fun save() { if (parsed != null) { TripComputer.setOdometerKm(parsed); changed() } }
-                    OutlinedTextField(
-                        value = typed, onValueChange = { v -> typed = v.filter(Char::isDigit).take(7) }, singleLine = true,
-                        placeholder = { Text("Km del coche", style = numeric(26)) },
-                        textStyle = numeric(30, FontWeight.Medium),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { save() }),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Cockpit.BlueLight, unfocusedBorderColor = Cockpit.GlassBorder,
-                            focusedTextColor = Cockpit.Text, unfocusedTextColor = Cockpit.Text, cursorColor = Cockpit.BlueLight,
-                        ),
-                        modifier = Modifier.width(260.dp).focusRequester(first),
-                    )
-                    FocusTile(onClick = { save() }, selected = parsed != null && parsed != odo, modifier = Modifier.padding(start = 12.dp)) {
-                        Text("Guardar", Modifier.padding(horizontal = 26.dp, vertical = 16.dp), style = MaterialTheme.typography.titleMedium)
+                    if (editing) {
+                        Spacer(Modifier.weight(1f))
+                        var typed by remember { mutableStateOf(odo?.toString() ?: "") }
+                        val parsed = typed.toLongOrNull()?.takeIf { it in 1..2_000_000 }
+                        fun save() { if (parsed != null) { TripComputer.setOdometerKm(parsed); editing = false; changed() } }
+                        androidx.compose.runtime.LaunchedEffect(Unit) { runCatching { field.requestFocus() } }
+                        OutlinedTextField(
+                            value = typed, onValueChange = { v -> typed = v.filter(Char::isDigit).take(7) }, singleLine = true,
+                            placeholder = { Text("Km del coche", style = numeric(26)) },
+                            textStyle = numeric(30, FontWeight.Medium),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { save() }),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Cockpit.BlueLight, unfocusedBorderColor = Cockpit.TextDim,
+                                focusedTextColor = Cockpit.Text, unfocusedTextColor = Cockpit.Text, cursorColor = Cockpit.BlueLight,
+                            ),
+                            modifier = Modifier.width(260.dp).focusRequester(field),
+                        )
+                        FocusTile(onClick = { save() }, selected = parsed != null, modifier = Modifier.padding(start = 12.dp)) {
+                            Text("Guardar", Modifier.padding(horizontal = 26.dp, vertical = 16.dp), style = MaterialTheme.typography.titleMedium)
+                        }
+                        if (odo != null) FocusTile(onClick = { editing = false }, modifier = Modifier.padding(start = 12.dp)) {
+                            Text("Cancelar", Modifier.padding(horizontal = 22.dp, vertical = 16.dp), style = MaterialTheme.typography.titleMedium)
+                        }
+                    } else {
+                        Text(
+                            "Si no coincide con el cuadro del coche, ajústalo de 100 en 100; la app suma lo que recorres.",
+                            style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim, modifier = Modifier.weight(1f).padding(horizontal = 16.dp), maxLines = 2,
+                        )
+                        listOf(-100L, 100L).forEach { step ->
+                            FocusTile(onClick = { odo?.let { TripComputer.setOdometerKm((it + step).coerceAtLeast(0)); changed() } }, modifier = Modifier.padding(start = 12.dp)) {
+                                Text(if (step > 0) "+100" else "−100", Modifier.padding(horizontal = 26.dp, vertical = 16.dp), style = MaterialTheme.typography.titleMedium)
+                            }
+                        }
                     }
                 }
                 Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
