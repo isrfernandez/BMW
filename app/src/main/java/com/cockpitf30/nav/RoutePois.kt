@@ -57,6 +57,8 @@ data class PoiState(
     val loading: Boolean = false,
     val error: String? = null,
     val updatedAt: Long = 0,
+    /** Última posición usada (GPS o, si no hay, la última conocida de la radio). */
+    val position: GeoPoint? = null,
 )
 
 /**
@@ -66,7 +68,7 @@ data class PoiState(
  * 8 km. Cada segundo se recalcula qué hay cerca y [RouteAlerts] decide si avisar.
  */
 object RoutePois {
-    private const val RADIUS_M = 15_000
+    private const val RADIUS_M = 12_000
     private const val REFETCH_M = 8_000.0
     private const val MAX_AGE_MS = 3L * 24 * 3600 * 1000
     private const val NEAR_M = 5000.0
@@ -78,6 +80,9 @@ object RoutePois {
     private var job: Job? = null
     private var center: GeoPoint? = null
     private var lastFail = 0L
+    @Volatile private var forceFetch = false
+    /** Sin datos (o Overpass devolvió vacío): reintentar al cabo de este tiempo. */
+    private const val EMPTY_RETRY_MS = 10 * 60_000L
 
     fun start(context: Context, scope: CoroutineScope) {
         if (job != null) return
@@ -86,8 +91,12 @@ object RoutePois {
         job = scope.launch {
             while (isActive) {
                 val route = RouteTracker.state.value
-                val pos = route.position
+                // Sin fijo de GPS (parado, en garaje, emulador): la última posición conocida de la radio.
+                val pos = route.position ?: runCatching {
+                    com.cockpitf30.weather.WeatherRepository.lastKnownLocation(ctx)?.let { GeoPoint(it.latitude, it.longitude) }
+                }.getOrNull()
                 if (pos != null) {
+                    if (_state.value.position != pos) _state.value = _state.value.copy(position = pos)
                     runCatching {
                         maybeFetch(ctx, pos)
                         update(pos, route.bearing)
@@ -101,13 +110,19 @@ object RoutePois {
 
     fun stop() { job?.cancel(); job = null }
 
+    /** Volver a pedir los puntos ya (p. ej. al preguntar «¿qué hay por aquí?» sin datos). */
+    fun requestRefresh() { forceFetch = true }
+
     private suspend fun maybeFetch(ctx: Context, pos: GeoPoint) {
         val s = _state.value
         val c = center
-        val stale = System.currentTimeMillis() - s.updatedAt > MAX_AGE_MS
+        val age = System.currentTimeMillis() - s.updatedAt
+        val stale = age > MAX_AGE_MS || (s.pois.isEmpty() && age > EMPTY_RETRY_MS)
         val far = c == null || RouteTracker.distance(c, pos) > REFETCH_M
-        if (!(stale || far) || s.loading) return
-        if (System.currentTimeMillis() - lastFail < 120_000) return
+        val force = forceFetch
+        if (!(stale || far || force) || s.loading) return
+        if (!force && System.currentTimeMillis() - lastFail < 120_000) return
+        forceFetch = false
         _state.value = s.copy(loading = true)
         val result = withContext(Dispatchers.IO) { runCatching { fetch(pos) } }
         result.onSuccess { pois ->
@@ -141,7 +156,7 @@ object RoutePois {
     private val HISTORIC = "castle|monument|ruins|archaeological_site|monastery|fort|city_gate|aqueduct|bridge|tower|palace|church|cathedral"
 
     fun query(lat: String, lon: String) = """
-        [out:json][timeout:30];
+        [out:json][timeout:90];
         (
           node["hazard"](around:$RADIUS_M,$lat,$lon);
           node["railway"="level_crossing"](around:$RADIUS_M,$lat,$lon);
@@ -168,7 +183,7 @@ object RoutePois {
 
     private fun post(url: String, body: String): String {
         val c = URL(url).openConnection() as HttpURLConnection
-        c.connectTimeout = 15_000; c.readTimeout = 40_000
+        c.connectTimeout = 15_000; c.readTimeout = 100_000
         c.requestMethod = "POST"; c.doOutput = true
         c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
         c.setRequestProperty("User-Agent", "CockpitF30/1.0")
@@ -183,7 +198,10 @@ object RoutePois {
 
     /** Respuesta de Overpass («out center tags»): nodos con lat/lon, vías y relaciones con center. */
     fun parse(json: String): List<Poi> {
-        val elements = JSONObject(json).optJSONArray("elements") ?: return emptyList()
+        val root = JSONObject(json)
+        // Si la consulta se pasa de tiempo o de memoria, Overpass contesta 200 con un «remark» y sin elementos.
+        root.optString("remark").takeIf { it.contains("error", ignoreCase = true) }?.let { error("Overpass: " + it.take(80)) }
+        val elements = root.optJSONArray("elements") ?: return emptyList()
         val out = ArrayList<Poi>()
         for (i in 0 until elements.length()) {
             val e = elements.getJSONObject(i)

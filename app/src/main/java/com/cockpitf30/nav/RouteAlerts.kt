@@ -233,7 +233,7 @@ object RouteAlerts {
     /** Lo que hay cerca, para «¿qué hay por aquí?». */
     fun nearbyText(near: List<PoiView>): String {
         val tourism = near.filter { it.poi.category == AlertCategory.TOURISM && it.poi.kind != "place" }.take(3)
-        val rest = near.firstOrNull { it.poi.category == AlertCategory.REST }
+        val rest = near.firstOrNull { it.poi.category == AlertCategory.REST && it.meters < 5000 }
         if (tourism.isEmpty() && rest == null) return "No veo nada especial por aquí cerca."
         val parts = tourism.map { v -> "${v.poi.name ?: v.poi.what} a ${spokenDistance(v.meters)} ${side(v.relBearing).second}" }
         val sb = StringBuilder()
@@ -275,7 +275,13 @@ object RouteAlerts {
 
     /** «¿Qué hay por aquí?»: la lista hablada, y en la ventanita el sitio más cercano. */
     fun nearby(scope: CoroutineScope): String {
-        val near = RoutePois.state.value.near
+        val s = RoutePois.state.value
+        val pos = s.position
+        // Para la pregunta vale todo lo descargado (12 km), no solo lo de menos de 5 km.
+        val bearing = RouteTracker.state.value.bearing
+        val near = if (pos == null) s.near else s.pois.map {
+            PoiView(it, RouteTracker.distance(pos, it.point), RoutePois.relative(RouteTracker.bearingBetween(pos, it.point), bearing))
+        }.sortedBy { it.meters }
         near.firstOrNull { it.poi.category == AlertCategory.TOURISM && it.poi.kind != "place" }?.let { v ->
             scope.launch(Dispatchers.IO) {
                 val a = build(v, null, Wiki.load(v.poi))
@@ -283,8 +289,16 @@ object RouteAlerts {
                 lastTourism = _current.value
             }
         }
-        val s = RoutePois.state.value
-        if (s.pois.isEmpty()) return if (s.loading) "Estoy descargando los puntos de interés de la zona. Pregúntame en un momento." else "Todavía no tengo los puntos de interés de esta zona. Necesito conexión."
+        if (s.pois.isEmpty()) {
+            if (!s.loading) RoutePois.requestRefresh()
+            return when {
+                pos == null -> "No sé dónde estamos: la radio aún no tiene posición GPS."
+                s.loading -> "Estoy descargando los puntos de interés de la zona. Pregúntame en un momento."
+                s.error != null -> "No he podido descargar los puntos de interés (${s.error}). Lo vuelvo a intentar ahora; pregúntame en un minuto."
+                s.updatedAt > 0 -> "En el mapa no aparece nada por aquí. Lo vuelvo a mirar ahora."
+                else -> "Ahora mismo descargo los puntos de interés de la zona. Pregúntame en un minuto."
+            }
+        }
         return nearbyText(near)
     }
 

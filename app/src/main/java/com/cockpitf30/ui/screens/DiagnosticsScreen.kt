@@ -538,7 +538,7 @@ fun DiagnosticsScreen() {
                         when {
                             pois.loading -> "Descargando puntos de interés…"
                             pois.error != null && pois.pois.isEmpty() -> "Puntos de interés: sin conexión (${pois.error})"
-                            else -> "${pois.pois.size} puntos en 15 km (OpenStreetMap) · ${pois.near.size} a menos de 5 km"
+                            else -> "${pois.pois.size} puntos en 12 km (OpenStreetMap) · ${pois.near.size} a menos de 5 km"
                         }, Cockpit.TextDim,
                     )
                     Info("El asistente avisa de radares, peligros señalizados y pasos a nivel, áreas de descanso (tras hora y media al volante), " +
