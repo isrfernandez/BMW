@@ -71,7 +71,7 @@ fun assistantStatus(s: AssistantState, now: Long): String = when (s.phase) {
     AssistantPhase.DOWNLOADING -> "Descargando la voz (${VoiceModel.SIZE_MB} MB)… ${((s.progress ?: 0f) * 100).toInt()} %"
     AssistantPhase.NO_MODEL -> "Sin voz sin conexión" + (s.error?.let { " ($it)" } ?: "") + " · toca para hablar"
     AssistantPhase.LOADING -> "Preparando el reconocimiento…"
-    AssistantPhase.LISTENING -> s.heard?.let { "«$it»" } ?: "Te escucho…"
+    AssistantPhase.LISTENING -> s.heard?.let { "«$it»" } ?: if (s.followUp) "Sigo escuchando…" else "Te escucho…"
     AssistantPhase.ANSWERING -> s.reply ?: ""
     AssistantPhase.WAITING, AssistantPhase.PAUSED ->
         s.reply?.takeIf { now - s.replyAt < REPLY_VISIBLE_MS } ?: "Di «Hola BMW» o toca aquí"
@@ -175,8 +175,8 @@ fun BoxScope.AssistantOverlay() {
             Column(Modifier.weight(1f)) {
                 val heard = s.heard
                 if (s.phase == AssistantPhase.LISTENING) {
-                    Text(if (heard.isNullOrBlank()) "Te escucho…" else "«$heard»", style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(if (s.engine == "Google") "Con el reconocedor de Google" else "Di qué quieres: gasolineras, vehículo, tiempo…", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
+                    Text(if (heard.isNullOrBlank()) (if (s.followUp) "Sigo escuchando…" else "Te escucho…") else "«$heard»", style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(if (s.engine == "Google") "Con el reconocedor de Google" else if (s.followUp) "Puedes seguir sin decir «Hola BMW»" else "Di qué quieres: gasolineras, vehículo, tiempo…", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
                 } else {
                     if (!heard.isNullOrBlank()) Text("«$heard»", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(s.reply.orEmpty(), Modifier.fillMaxWidth(), style = MaterialTheme.typography.headlineSmall, maxLines = 3, overflow = TextOverflow.Ellipsis)

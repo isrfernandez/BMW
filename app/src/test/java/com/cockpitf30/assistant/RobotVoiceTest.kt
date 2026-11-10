@@ -52,9 +52,9 @@ class RobotVoiceTest {
     fun humorChance() {
         assertEquals(0.0, Personality.jokeChance(0), 0.0)
         assertEquals(1.0, Personality.jokeChance(100), 0.0)
-        assertEquals("Vale", Personality.spice("Vale", 0, "Broma."))
-        assertEquals("Vale. Broma.", Personality.spice("Vale", 100, "Broma."))
-        assertEquals("Otra cosa", Personality.spice("Vale", 100, "=Otra cosa", random = Random(1)))
+        assertEquals("Vale", Personality.spice("Vale", 0, null, "Broma."))
+        assertEquals("Vale. Broma.", Personality.spice("Vale", 100, null, "Broma."))
+        assertEquals("Otra cosa", Personality.spice("Vale", 100, null, "=Otra cosa", random = Random(1)))
     }
 
     @Test

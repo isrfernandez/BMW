@@ -22,7 +22,7 @@ object Images {
     private val cache = ConcurrentHashMap<Int, ImageBitmap>()
 
     /** Las de uso frecuente, para decodificarlas en segundo plano al arrancar. */
-    val COMMON = listOf(R.drawable.bg_triangles, R.drawable.home_car_scene, R.drawable.car_34_closed, R.drawable.car_rear_scene, R.drawable.car_top_cutout)
+    val COMMON = listOf(R.drawable.bg_triangles, R.drawable.home_car_scene, R.drawable.car_34_closed, R.drawable.car_rear_scene)
 
     fun get(context: Context, @DrawableRes id: Int): ImageBitmap = cache.getOrPut(id) {
         BitmapFactory.decodeResource(context.resources, id, BitmapFactory.Options().apply { inScaled = false }).asImageBitmap()

@@ -45,6 +45,7 @@ import com.cockpitf30.weather.WeatherRepository
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -130,6 +131,10 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
             Card("assistant", "Hola BMW", "Asistente de voz", CardTheme.ASSIST, { VoiceAssistant.tap(it) }),
             // Antes "Navegación" (repetida en la barra lateral): ahora la gasolinera más cercana.
             Card("fuel", "Gasolinera", "La más cercana", CardTheme.FUEL, { onOpen(Screen.FUEL) }),
+            // Modo de conducción: cada pulsación pasa al siguiente (Normal → Sport → Night).
+            // Radares cercanos (barrido) y el tiempo en ruta.
+            Card("radar", "Radares", "", CardTheme.RADAR, { onOpen(Screen.ROUTE) }),
+            Card("mode", "Modo", "", CardTheme.MODE, { com.cockpitf30.ui.theme.DriveModes.cycle(it) }),
             Card("trip", "Datos de viaje", "Duración, km y consumo", CardTheme.TRIP, { onOpen(Screen.TRIP) }, Alignment.BottomStart) { TripBody(it) },
             Card("weather", "Tiempo", "", CardTheme.WEATHER, { onOpen(Screen.WEATHER) }),
             Card("vehicle", "Vehículo", "iDrive original del coche", CardTheme.VEHICLE, { onOpen(Screen.VEHICLE) }),
@@ -267,6 +272,16 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0f)
                             }) { CardArt(card.theme) }
                             AssistantCardBody()
+                        } else if (card.id == "radar") {
+                            RadarCardBody()
+                        } else if (card.id == "mode") {
+                            val mode = com.cockpitf30.ui.theme.DriveModes.current
+                            Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
+                                Text("MODO DE CONDUCCIÓN", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
+                                Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 8.dp)) {
+                                    ModeFace(mode, active = true, lit = true, glow = 0.6f, hint = "OK: siguiente modo")
+                                }
+                            }
                         } else if (card.id == "fuel") {
                             Box(Modifier.matchParentSize().graphicsLayer {
                                 scaleX = 0.66f; scaleY = 0.66f
@@ -292,6 +307,36 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                 }
             }
         }
+    }
+}
+
+/**
+ * Tarjeta de radares: barrido a la derecha y, a la izquierda, el aviso (distancia y límite) o
+ * cuántos hay cerca y el resumen del tiempo en ruta.
+ */
+@Composable
+private fun RadarCardBody() {
+    val cams by com.cockpitf30.nav.SpeedCameras.state.collectAsStateWithLifecycle()
+    val route by com.cockpitf30.weather.RouteWeather.state.collectAsStateWithLifecycle()
+    val ahead = cams.ahead
+    Row(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).fillMaxHeight()) {
+            Text(if (ahead != null) "RADAR DELANTE" else "RADARES", style = MaterialTheme.typography.labelMedium, color = if (ahead != null) com.cockpitf30.ui.components.RadarAlert else Cockpit.TextDim)
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.BottomStart) {
+                if (ahead != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(com.cockpitf30.ui.components.radarDistance(ahead.meters), style = numeric(30, FontWeight.Medium), maxLines = 1)
+                        ahead.camera.maxspeed?.let { Spacer(Modifier.width(8.dp)); com.cockpitf30.ui.components.SpeedSign(it, 40.dp) }
+                    }
+                }
+            }
+            Text(
+                if (ahead == null) cams.near.firstOrNull()?.let { "A ${com.cockpitf30.ui.components.radarDistance(it.meters)}" } ?: "Ninguno cerca" else (ahead.camera.kind ?: "Radar fijo"),
+                style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            Text(route.summary ?: "Tiempo en ruta", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        com.cockpitf30.ui.components.RadarScope(cams, Modifier.size(104.dp), rangeM = 2000f, rings = listOf(1000f, 2000f), labels = false)
     }
 }
 
@@ -419,4 +464,4 @@ internal fun launch(context: Context, intent: Intent) {
     }
 }
 
-enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, WEATHER, PHONE, FUEL }
+enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, WEATHER, PHONE, FUEL, PERFORMANCE, ROUTE }

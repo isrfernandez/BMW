@@ -95,6 +95,8 @@ data class AssistantState(
     val engine: String? = null,
     /** Último texto reconocido, también mientras espera «Hola BMW» (para Diagnóstico). */
     val lastText: String? = null,
+    /** Escuchando sin «Hola BMW» justo después de responder (conversación seguida). */
+    val followUp: Boolean = false,
 )
 
 /**
@@ -111,6 +113,16 @@ object VoiceAssistant {
     private const val RATE = 16_000
     /** Tiempo para decir la orden después de «Hola BMW». */
     private const val LISTEN_MS = 7_000L
+    /** Tras responder, tiempo para seguir la conversación sin «Hola BMW». */
+    private const val FOLLOW_MS = 12_000L
+    /** Silencio tras la última palabra para dar la frase por terminada (Vosk corta en cada pausa). */
+    private const val END_SILENCE_MS = 1_200L
+    /** Lo mismo cuando lo dicho hasta ahora todavía no se entiende (frase a medias). */
+    private const val END_SILENCE_UNSURE_MS = 2_500L
+    /** Al empezar a hablar no se atiende a interrupciones (aún se oye el final de lo que dijo el conductor). */
+    private const val BARGE_GRACE_MS = 1_000L
+    /** Tras una pregunta del copiloto, algo más. */
+    private const val COPILOT_FOLLOW_MS = 9_000L
 
     private val _humor = MutableStateFlow(Personality.DEFAULT_HUMOR)
     /** Nivel de humor, 0..100 % (se guarda en Ajustes). */
@@ -147,6 +159,22 @@ object VoiceAssistant {
     @Volatile private var resetRecognizer = false
     @Volatile private var listenUntil = 0L
 
+    /** Memoria de la conversación en curso. */
+    private val conversation = Conversation()
+    /** Escuchando sin «Hola BMW» tras una respuesta. */
+    private var followUp = false
+    /** Abrir la escucha sin «Hola BMW» al terminar de hablar (y durante cuánto). */
+    private var listenAfterReply = 0L
+    /** Gasolineras de la última respuesta, de la más cercana a la más lejana. */
+    private var nearStations: List<com.cockpitf30.fuel.NearStation> = emptyList()
+
+    // Copiloto
+    private var copilotJob: Job? = null
+    private val copilotMemory = Copilot.Memory()
+    private var lastActivityAt = 0L
+    private var lastCopilotAt = 0L
+    private var copilotSnoozeUntil = 0L
+
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var google: SpeechRecognizer? = null
@@ -160,16 +188,27 @@ object VoiceAssistant {
 
     /** La app vuelve a estar en pantalla (o ha cambiado un ajuste / el permiso). */
     fun resume(context: Context) {
+        contactsCache = null
         app = context.applicationContext
+        scope.launch(Dispatchers.IO) { contactsCache = com.cockpitf30.system.Contacts.load(app).takeIf { it.isNotEmpty() } }
         resumed = true
         _humor.value = settings().assistantHumor
+        if (Personality.userName == null) Personality.userName = settings().assistantUserName
+        if (!recentLoaded) { recentLoaded = true; Personality.recent.load(settings().assistantRecentLines) }
+        lastActivityAt = System.currentTimeMillis()
         initTts()
         refresh()
+        startCopilot()
     }
+
+    private var recentLoaded = false
 
     /** La app sale de pantalla: suelta el micrófono para no molestar a Maps, llamadas, etc. */
     fun pause() {
         resumed = false
+        muted = false
+        copilotJob?.cancel()
+        copilotJob = null
         stopAudio()
         stopGoogle()
         stopSpeaking()
@@ -229,7 +268,20 @@ object VoiceAssistant {
                     LibVosk.setLogLevel(LogLevel.WARNINGS)
                     Model(VoiceModel.dir(app).absolutePath).also { model = it }
                 }
-                listen(m)
+                // Si el micrófono deja de dar audio (pasa en el emulador al hablar la voz), se vuelve a abrir.
+                var failures = 0
+                while (coroutineScopeActive()) {
+                    try {
+                        listen(m) { failures = 0 }
+                        break
+                    } catch (e: MicLost) {
+                        failures++
+                        Log.w(TAG, "Micrófono perdido (${e.message}); se reabre ($failures)")
+                        _state.update { it.copy(error = "Micrófono reabierto $failures ${if (failures == 1) "vez" else "veces"}: ${e.message}") }
+                        if (failures > 20) throw e
+                        delay(500L * failures.coerceAtMost(6))
+                    }
+                }
             } catch (e: Throwable) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.w(TAG, "Vosk", e)
@@ -244,7 +296,10 @@ object VoiceAssistant {
     }
 
     @SuppressLint("MissingPermission") // Se comprueba en refresh().
-    private suspend fun listen(m: Model) {
+    /** El micrófono ha dejado de dar audio: hay que cerrarlo y abrirlo otra vez. */
+    private class MicLost(msg: String) : Exception(msg)
+
+    private suspend fun listen(m: Model, onAudio: () -> Unit) {
         val minBuf = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         fun open(source: Int) = AudioRecord(source, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuf, RATE))
             .takeIf { it.state == AudioRecord.STATE_INITIALIZED }
@@ -253,9 +308,17 @@ object VoiceAssistant {
             ?: error("no se puede abrir el micrófono")
         // Dos reconocedores: uno restringido a la frase de activación (mucho más fiable que buscarla en
         // texto libre, porque el modelo no conoce «BMW») y otro libre para la orden.
-        val wakeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.WAKE_GRAMMAR)
+        val wakeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.WAKE_GRAMMAR).apply { setWords(true) }
         val cmdRec = Recognizer(m, RATE.toFloat())
+        // Mientras habla la radio solo se escucha «Hola BMW» o «basta», para poder interrumpirla
+        // (con gramática cerrada: su propia voz no se confunde con eso).
+        val bargeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.BARGE_GRAMMAR)
         var usingCmd = false
+        // Lo dicho hasta ahora en la orden: Vosk corta en cada pausa corta, y se espera a que el
+        // conductor termine de verdad (END_SILENCE_MS sin hablar) antes de entenderla.
+        val utterance = StringBuilder()
+        var utteranceAt = 0L
+        var speaking = false
         try {
             audio.startRecording()
             if (audio.recordingState != AudioRecord.RECORDSTATE_RECORDING) error("el micrófono está ocupado")
@@ -263,42 +326,103 @@ object VoiceAssistant {
             val buf = ShortArray(RATE / 10) // 100 ms
             var lastPartial = ""
             var lastLevel = 0L
+            var badReads = 0
+            var silentSince = 0L
+            var heardSomething = false
+            var mutedSince = 0L
             while (coroutineScopeActive()) {
                 val n = audio.read(buf, 0, buf.size)
-                if (n <= 0) { delay(50); continue }
+                if (n <= 0) {
+                    // Un error de lectura seguido (p. ej. ERROR_DEAD_OBJECT) no se arregla solo.
+                    if (++badReads > 20) throw MicLost("error de lectura $n")
+                    delay(50); continue
+                }
+                badReads = 0
                 val now = System.currentTimeMillis()
+                // Ceros exactos durante mucho rato (sin estar callado) = el micrófono se ha quedado mudo.
+                var allZero = true
+                for (i in 0 until n) if (buf[i].toInt() != 0) { allZero = false; break }
+                if (!allZero) { silentSince = 0L; if (!heardSomething) { heardSomething = true; onAudio() } }
+                else if (!muted) {
+                    // Solo esperando «Hola BMW»: en plena conversación no se reabre (cortaba la frase).
+                    // Windows/el emulador dan ceros exactos en silencio, así que se espera bastante.
+                    if (silentSince == 0L) silentSince = now
+                    else if (heardSomething && now - silentSince > 15_000 && _state.value.phase == AssistantPhase.WAITING) throw MicLost("sin audio")
+                }
                 if (now - lastLevel > 80) {
                     lastLevel = now
                     val lvl = if (muted) 0f else rms(buf, n)
                     _state.update { it.copy(level = lvl) }
                 }
-                if (resetRecognizer) { resetRecognizer = false; wakeRec.reset(); cmdRec.reset(); lastPartial = "" }
-                if (muted) continue
+                if (resetRecognizer) {
+                    resetRecognizer = false; wakeRec.reset(); cmdRec.reset(); bargeRec.reset(); lastPartial = ""
+                    utterance.clear(); speaking = false
+                }
+                // Por si no llega el aviso de fin de la voz: nunca más de 30 s sordo.
+                if (muted) { if (mutedSince == 0L) mutedSince = now else if (now - mutedSince > 30_000) { muted = false; resetRecognizer = true } }
+                else mutedSince = 0L
+                if (muted) {
+                    // Hablando: solo se atiende a la interrupción, y solo con frases completas (los
+                    // resultados parciales de la gramática se confundían con su propia voz y cortaban).
+                    if (mutedSince != 0L && now - mutedSince < BARGE_GRACE_MS) { bargeRec.reset(); continue }
+                    if (bargeRec.acceptWaveForm(buf, n)) {
+                        val clean = JSONObject(bargeRec.result).optString("text").replace("[unk]", "").trim()
+                        if (clean.isNotBlank()) {
+                            _state.update { it.copy(lastText = "(hablando) $clean") }
+                            withContext(Dispatchers.Main) { safely("interrupción") { onBargeIn(clean) } }
+                        }
+                    }
+                    continue
+                }
                 val wantCmd = _state.value.phase == AssistantPhase.LISTENING
                 if (wantCmd != usingCmd) {
                     usingCmd = wantCmd
                     (if (wantCmd) cmdRec else wakeRec).reset()
                     lastPartial = ""
+                    utterance.clear(); speaking = false
                 }
                 val rec = if (usingCmd) cmdRec else wakeRec
                 if (rec.acceptWaveForm(buf, n)) {
-                    val text = JSONObject(rec.result).optString("text")
+                    val json = JSONObject(rec.result)
+                    val text = json.optString("text")
                     lastPartial = ""
+                    speaking = false
                     val clean = text.replace("[unk]", "").trim()
                     if (text.isNotBlank()) _state.update { it.copy(lastText = text) }
-                    if (clean.isNotBlank()) withContext(Dispatchers.Main) { onFinal(clean) }
+                    if (clean.isNotBlank()) {
+                        if (usingCmd) {
+                            if (utterance.isNotEmpty()) utterance.append(' ')
+                            utterance.append(clean)
+                            utteranceAt = now
+                            if (listenUntil > 0) listenUntil = maxOf(listenUntil, now + END_SILENCE_UNSURE_MS + 1_000)
+                        } else if (wakeAccepted(json, clean, settings().wakeSensitivity)) {
+                            withContext(Dispatchers.Main) { safely("onFinal") { onFinal(clean) } }
+                        }
+                    }
                 } else {
                     val partial = JSONObject(rec.partialResult).optString("partial")
                     if (partial != lastPartial) {
                         lastPartial = partial
                         if (listenUntil > 0) listenUntil = maxOf(listenUntil, now + 2_500)
                         val clean = partial.replace("[unk]", "").trim()
-                        if (clean.isNotBlank()) withContext(Dispatchers.Main) { onPartial(clean) }
+                        speaking = clean.isNotBlank()
+                        if (speaking) utteranceAt = now
+                        val shown = listOf(utterance.toString(), clean).filter { it.isNotBlank() }.joinToString(" ")
+                        if (shown.isNotBlank()) withContext(Dispatchers.Main) { safely("onPartial") { onPartial(shown) } }
                     }
                 }
-                if (listenUntil in 1 until now) {
+                // Terminó de hablar: se entiende la frase entera.
+                // Si lo dicho aún no tiene sentido («busca la…»), se espera más: estará pensando.
+                val endSilence = if (utterance.isNotEmpty() && VoiceCommands.parse(VoiceCommands.stripWakeWords(utterance.toString())) is Command.Unknown) END_SILENCE_UNSURE_MS else END_SILENCE_MS
+                if (utterance.isNotEmpty() && !speaking && (now - utteranceAt >= endSilence || listenUntil in 1 until now)) {
+                    val whole = utterance.toString()
+                    utterance.clear()
                     listenUntil = 0
-                    withContext(Dispatchers.Main) { onListenTimeout() }
+                    withContext(Dispatchers.Main) { safely("onFinal") { onFinal(whole) } }
+                }
+                if (listenUntil in 1 until now && !speaking) {
+                    listenUntil = 0
+                    withContext(Dispatchers.Main) { safely("timeout") { onListenTimeout() } }
                 }
             }
         } finally {
@@ -306,7 +430,40 @@ object VoiceAssistant {
             audio.release()
             wakeRec.close()
             cmdRec.close()
+            bargeRec.close()
         }
+    }
+
+    /**
+     * Un fallo al ejecutar una orden no debe matar la escucha (antes, tras un error, «Hola BMW» dejaba
+     * de funcionar hasta reiniciar la app): se avisa y se vuelve a esperar.
+     */
+    private inline fun safely(what: String, block: () -> Unit) {
+        try { block() } catch (e: Throwable) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w(TAG, "Fallo en $what", e)
+            listenUntil = 0
+            followUp = false
+            muted = false
+            resetRecognizer = true
+            _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, reply = "Algo ha fallado. Vuelve a intentarlo", replyAt = System.currentTimeMillis(), error = "$what: ${e.message ?: e.javaClass.simpleName}") }
+        }
+    }
+
+    /**
+     * ¿Vale esta frase de activación? Mira la confianza de cada palabra que da Vosk y, en sensibilidad
+     * baja, exige la sigla entera («be eme uve doble»). 0 = baja, 1 = normal, 2 = alta.
+     */
+    private fun wakeAccepted(json: JSONObject, text: String, sensitivity: Int): Boolean {
+        if (VoiceCommands.afterWakeWord(text) == null) return false
+        val words = json.optJSONArray("result")
+        val minConf = if (words == null || words.length() == 0) 1.0
+        else (0 until words.length()).minOf { words.getJSONObject(it).optDouble("conf", 1.0) }
+        val needed = when (sensitivity) { 0 -> 0.85; 1 -> 0.6; else -> 0.0 }
+        val full = VoiceCommands.normalize(text).let { it.contains("eme uve doble") || it.contains("eme doble uve") }
+        val ok = minConf >= needed && (sensitivity > 0 || full)
+        _state.update { it.copy(lastText = "$text (confianza ${"%.2f".format(minConf)}${if (ok) "" else ", descartada"})") }
+        return ok
     }
 
     private suspend fun coroutineScopeActive() = kotlin.coroutines.coroutineContext.isActive
@@ -321,6 +478,8 @@ object VoiceAssistant {
     private fun onPartial(text: String) {
         when (_state.value.phase) {
             AssistantPhase.WAITING -> {
+                // Con resultados parciales se activaba sin decir «Hola BMW»: solo en sensibilidad alta.
+                if (settings().wakeSensitivity < 2) return
                 val rest = VoiceCommands.afterWakeWord(text) ?: return
                 wake()
                 if (rest.isNotBlank()) _state.update { it.copy(heard = rest) }
@@ -338,7 +497,7 @@ object VoiceAssistant {
             }
             AssistantPhase.LISTENING -> {
                 val rest = VoiceCommands.stripWakeWords(VoiceCommands.afterWakeWord(text) ?: text)
-                if (rest.isNotBlank()) execute(rest)
+                if (rest.isNotBlank()) execute(rest, followUp)
             }
             else -> Unit
         }
@@ -346,13 +505,20 @@ object VoiceAssistant {
 
     private fun onListenTimeout() {
         if (_state.value.phase != AssistantPhase.LISTENING) return
+        if (followUp) {
+            // Fin de la conversación seguida: sin «No te he oído», que no se ha preguntado nada.
+            followUp = false
+            _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, engine = null, followUp = false) }
+            return
+        }
         _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, reply = "No te he oído", replyAt = System.currentTimeMillis(), engine = null) }
     }
 
     /** «Hola BMW»: pitido y a escuchar la orden. */
     private fun wake() {
+        followUp = false
         listenUntil = System.currentTimeMillis() + LISTEN_MS
-        _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, reply = null, engine = "Vosk") }
+        _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, reply = null, engine = "Vosk", followUp = false) }
         beep()
     }
 
@@ -379,8 +545,9 @@ object VoiceAssistant {
             AssistantPhase.LISTENING -> {
                 // Segundo toque: cancelar.
                 listenUntil = 0
+                followUp = false
                 stopGoogle()
-                _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, reply = null) }
+                _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, reply = null, followUp = false) }
                 refresh()
             }
             AssistantPhase.NO_PERMISSION -> permissionRequester?.invoke()
@@ -439,77 +606,246 @@ object VoiceAssistant {
 
     // ---------------------------------------------------------------- órdenes y respuestas
 
-    private fun execute(text: String) {
+    private fun execute(text: String, inFollowUp: Boolean = false) {
         listenUntil = 0
-        val command = VoiceCommands.parse(text)
+        followUp = false
+        val now = System.currentTimeMillis()
+        val waitingAnswer = conversation.pending != null
+        val command = conversation.resolve(text, now)
         Log.i(TAG, "«$text» -> $command")
-        _state.update { it.copy(heard = text) }
-        say(perform(command))
+        val words = VoiceCommands.normalize(text).split(' ').count { it.isNotBlank() }
+        // En la escucha seguida se descarta lo suelto (ruido, la radio); una frase de verdad se contesta.
+        if (inFollowUp && !waitingAnswer && ((command is Command.Unknown && words < 3) || command == Command.Yes || command == Command.Another)) {
+            // Sin «Hola BMW» y sin sentido: será la radio o alguien hablando. No se contesta.
+            _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false) }
+            return
+        }
+        _state.update { it.copy(heard = text, followUp = false) }
+        lastActivityAt = now
+        var reply = perform(command, now)
+        val repeatable = command is Command.Info || command is Command.WeatherDay
+        if (repeatable && conversation.askedRecently(command, now) && kotlin.random.Random.nextDouble() < Personality.jokeChance(humor())) {
+            reply = Personality.line("again") + " " + reply
+        }
+        conversation.record(text, command, reply, now)
+        saveRecent()
+        val ends = command == Command.Cancel || command == Command.Thanks || command == Command.No || command == Command.Quiet ||
+            command is Command.Navigate || command is Command.Call || command == Command.Maps || command == Command.Music ||
+            command is Command.AskGoogle || (command is Command.Station && command.action == StationAction.GO)
+        say(reply, listenAfter = if (ends || !settings().assistantFollowUp) 0L else FOLLOW_MS)
     }
+
+    private fun saveRecent() { runCatching { settings().assistantRecentLines = Personality.recent.save() } }
 
     private fun open(screen: Screen) = navigator?.invoke(screen)
 
+    /**
+     * Busca en la agenda y llama. Con un único contacto que encaja llama al terminar de decirlo;
+     * con varios pide nombre y apellido; un número dictado se marca tal cual.
+     */
+    private fun callContact(who: String): String {
+        val number = com.cockpitf30.system.VoiceMatch.spokenNumber(who)
+        if (number != null) {
+            scope.launch { delay(2200); com.cockpitf30.system.Contacts.call(app, number) }
+            return "Llamando al ${number.chunked(3).joinToString(" ")}"
+        }
+        val book = contactsCache ?: com.cockpitf30.system.Contacts.load(app).also { if (it.isNotEmpty()) contactsCache = it }
+        if (book.isEmpty()) {
+            open(Screen.PHONE)
+            return if (!com.cockpitf30.system.Contacts.canRead(app)) "No tengo permiso para ver tus contactos. Te abro el teléfono"
+            else "No veo la agenda. ¿Está el móvil conectado por Bluetooth?"
+        }
+        val found = com.cockpitf30.system.VoiceMatch.match(who, book) { it.name }
+        val people = found.distinctBy { com.cockpitf30.system.VoiceMatch.normalize(it.name) }
+        return when {
+            found.isEmpty() -> joke("No encuentro a $who en tus contactos", "call.notfound")
+            people.size == 1 -> {
+                val c = found.first()
+                scope.launch { delay(2200); com.cockpitf30.system.Contacts.call(app, c.number) }
+                joke("Llamando a ${c.name}", "call.found")
+            }
+            else -> {
+                val names = people.take(3).map { it.name }
+                conversation.ask(Pending.ChooseContact(names), System.currentTimeMillis())
+                "Tengo ${people.size}: " + names.joinToString(", ") + ". ¿Cuál? Dime nombre y apellido, o el primero, el segundo…"
+            }
+        }
+    }
+
+    /**
+     * Aviso hablado que no viene de una orden (p. ej. un radar): solo con la app en pantalla y si
+     * no se está escuchando al conductor en ese momento.
+     */
+    fun announce(text: String) {
+        scope.launch {
+            val phase = _state.value.phase
+            if (!resumed || phase == AssistantPhase.LISTENING) return@launch
+            conversation.record(null, null, text, System.currentTimeMillis())
+            say(text)
+        }
+    }
+
+    /** La agenda leída (se relee al reanudar la app, por si se conectó otro móvil). */
+    @Volatile private var contactsCache: List<com.cockpitf30.system.Contact>? = null
+
     private fun humor() = settings().assistantHumor
 
-    /** Respuesta con o sin broma según el nivel de humor. */
-    private fun joke(plain: String, vararg quips: String) = Personality.spice(plain, humor(), *quips)
+    /** Respuesta con o sin broma según el nivel de humor; [key] es el tipo de broma de [Lines.QUIPS]. */
+    private fun joke(plain: String, key: String?) = Personality.spice(plain, humor(), key)
 
-    private fun perform(c: Command): String = when (c) {
+    private fun perform(c: Command, now: Long = System.currentTimeMillis()): String = when (c) {
         is Command.Open -> {
             open(c.screen)
             when (c.screen) {
-                Screen.FUEL -> joke("Te enseño las gasolineras", "Prometo no comentar tu consumo.", "Yo funciono con electricidad, por cierto.")
-                Screen.VEHICLE -> joke("Te paso al iDrive original del coche", "Allí manda él. Yo espero aquí.")
-                Screen.TRIP -> joke("Datos de viaje", "Sin juzgar.", "Los números no mienten. Yo tampoco, casi nunca.")
-                Screen.WEATHER -> joke("Este es el tiempo", "Yo no me mojo. Literalmente.")
-                Screen.PHONE -> joke("Abro el teléfono", "No escucharé. Mucho.")
-                Screen.APPS -> joke("Tus aplicaciones", "Ninguna tan útil como yo.")
-                Screen.DIAGNOSTICS -> joke("Abro los ajustes", "Procura no tocar mi nivel de humor.")
-                Screen.HOME -> joke("Vuelvo al inicio", "Hogar, dulce hogar.")
+                Screen.FUEL -> joke("Te enseño las gasolineras", "open.fuel")
+                Screen.VEHICLE -> joke("Te paso al iDrive original del coche", "open.vehicle")
+                Screen.TRIP -> joke("Datos de viaje", "open.trip")
+                Screen.WEATHER -> joke("Este es el tiempo", "open.weather")
+                Screen.PHONE -> joke("Abro el teléfono", "open.phone")
+                Screen.APPS -> joke("Tus aplicaciones", "open.apps")
+                Screen.DIAGNOSTICS -> joke("Abro los ajustes", "open.settings")
+                Screen.HOME -> joke("Vuelvo al inicio", "open.home")
+                Screen.ROUTE -> joke("Radares y tiempo en ruta", "open.route")
+                Screen.PERFORMANCE -> joke("Rendimiento", "open.performance")
             }
         }
-        is Command.Info -> info(c.topic)
-        is Command.Navigate -> {
-            val nav = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=" + Uri.encode(c.destination))).setPackage(GOOGLE_MAPS)
-            if (nav.resolveActivity(app.packageManager) != null) launch(app, nav)
-            else launch(app, Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(c.destination))))
-            joke("Vamos a ${c.destination}", "Ningún agujero negro en la ruta.", "Rumbo fijado. Sin maniobras de acoplamiento, espero.")
+        is Command.Info -> info(c.topic, now)
+        is Command.Call -> callContact(c.who)
+        is Command.Mode -> {
+            com.cockpitf30.ui.theme.DriveModes.select(app, c.mode)
+            when (c.mode) {
+                com.cockpitf30.ui.theme.DriveMode.SPORT -> joke("Modo Sport", "mode.sport")
+                com.cockpitf30.ui.theme.DriveMode.NIGHT -> joke("Modo noche", "mode.night")
+                com.cockpitf30.ui.theme.DriveMode.NORMAL -> joke("Modo normal", "mode.normal")
+            }
         }
-        Command.Music -> { openMusic(app); joke("Abro la música", "Tus gustos no son asunto mío.") }
-        Command.Maps -> { openMaps(app); joke("Abro el mapa", "Sin agujeros de gusano a la vista.") }
-        is Command.AskGoogle -> if (openGoogleAssistant(c.query)) joke("Se lo pregunto a Google", "Me duele, pero lo hago.") else "La radio no tiene la app de Google"
-        Command.Help -> "Puedo abrir gasolineras, vehículo, viaje, tiempo, teléfono o apps; decirte la autonomía, " +
-            "la presión de las ruedas o el tiempo; llevarte a un sitio, o preguntar a Google. " +
-            "Y puedes ajustar mi humor: di humor al cincuenta por ciento."
-        Command.Cancel -> joke("Vale", "Vuelvo a mi rincón.", "Me quedo aquí, vigilando.")
+        is Command.Navigate -> {
+            navigateTo(c.destination)
+            joke("Vamos a ${c.destination}", "nav")
+        }
+        Command.Music -> { openMusic(app); joke("Abro la música", "music") }
+        Command.Maps -> { openMaps(app); joke("Abro el mapa", "maps") }
+        is Command.AskGoogle -> if (openGoogleAssistant(c.query)) joke("Se lo pregunto a Google", "google") else "La radio no tiene la app de Google"
+        Command.Help -> "Puedo abrir gasolineras, viaje, tiempo, teléfono o apps; decirte la autonomía, el tiempo de hoy o de mañana " +
+            "y la gasolinera más cercana; llevarte a un sitio, llamar a alguien, contarte un chiste o preguntar a Google. " +
+            "Después de contestarte sigo escuchando unos segundos, así que puedes seguir: otra, y mañana, llévame. " +
+            "Y puedes ajustar mi humor, o decir activa el copiloto."
+        Command.Cancel -> joke(Personality.line("cancel"), "cancel")
+        Command.Thanks -> joke(Personality.line("thanks"), "thanks")
+        Command.No -> Personality.line("no")
+        Command.Yes -> Personality.line("yes.nocontext")
+        Command.Another -> Personality.line("another.nocontext")
+        Command.GoThere -> Personality.line("nothere")
+        Command.Price -> info(InfoTopic.FUEL_NEAR, now)
+        Command.Repeat -> conversation.lastReply ?: Personality.line("repeat.none")
+        Command.Recap -> conversation.recap(now) ?: Personality.chat("recap.none", humor())
+        Command.Joke -> if (humor() <= 0) Personality.line("joke.nohumor") else Personality.joke()
+        is Command.Chat -> {
+            when (c.key) {
+                // Lo que proponen estas respuestas se puede aceptar con un «sí».
+                "tired" -> conversation.ask(Pending.Confirm(Command.Info(InfoTopic.FUEL_NEAR)), now)
+                "bored" -> conversation.ask(Pending.Confirm(Command.Joke), now)
+            }
+            Personality.chat(c.key, humor())
+        }
+        is Command.SetName -> {
+            Personality.userName = c.name
+            settings().assistantUserName = c.name
+            Personality.chat("name.set", humor())
+        }
+        Command.AskName -> Personality.chat(if (Personality.userName.isNullOrBlank()) "name.unknown" else "name.ask", humor())
+        is Command.Copilot -> {
+            val on = c.on ?: true
+            settings().copilotEnabled = on
+            copilotSnoozeUntil = 0
+            if (on) {
+                startCopilot()
+                "Modo copiloto activado. Te daré conversación cada ${settings().copilotMinutes} minutos más o menos. Si molesto, di cállate un rato."
+            } else joke("Modo copiloto desactivado", "cancel")
+        }
+        Command.Quiet -> {
+            copilotSnoozeUntil = now + 30 * 60_000L
+            joke("Vale, me callo media hora", "cancel")
+        }
+        is Command.Station -> station(c, now)
+        is Command.WeatherDay -> weatherDay(c.offset)
         is Command.Humor -> {
-            val now = humor()
+            val level = humor()
             if (c.set == null && c.delta == 0) {
-                "Mi nivel de humor está al $now por ciento"
+                "Mi nivel de humor está al $level por ciento"
             } else {
-                val level = (c.set ?: (now + c.delta)).coerceIn(0, 100)
-                setHumor(app, level)
-                Personality.humorReply(level)
+                val l = (c.set ?: (level + c.delta)).coerceIn(0, 100)
+                setHumor(app, l)
+                Personality.humorReply(l)
             }
         }
         Command.Honesty -> "Sinceridad al noventa por ciento. El diez restante es por tu bien."
-        is Command.Unknown -> joke(
-            "No te he entendido. Prueba con: qué tiempo hace, o pregunta a Google y tu pregunta.",
-            "=No te he entendido. Y mira que lo he intentado. Prueba con: qué tiempo hace.",
-            "=Eso no está en mi programación. Prueba con: qué tiempo hace, o pregunta a Google.",
-        )
+        is Command.Unknown -> Personality.line(if (kotlin.random.Random.nextDouble() < Personality.jokeChance(humor())) "unknown.funny" else "unknown")
     }
 
-    private fun info(topic: InfoTopic): String {
+    private fun navigateTo(q: String) {
+        val nav = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=" + Uri.encode(q))).setPackage(GOOGLE_MAPS)
+        if (nav.resolveActivity(app.packageManager) != null) launch(app, nav)
+        else launch(app, Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(q))))
+    }
+
+    /** Una de las gasolineras de las que se acaba de hablar: describirla, su precio o ir. */
+    private fun station(c: Command.Station, now: Long): String {
+        val n = nearStations.getOrNull(c.index) ?: return Personality.line("nostations")
+        conversation.setStations(nearStations.size, c.index)
+        val s = n.station
+        return when (c.action) {
+            StationAction.DESCRIBE -> {
+                open(Screen.FUEL)
+                conversation.ask(Pending.Confirm(Command.Station(c.index, StationAction.GO)), now)
+                (if (c.index == 0) "La más cercana es " else "La siguiente es ") +
+                    "${s.brand}, a ${FuelStations.formatDistance(n.meters)}, en ${place(s)}" +
+                    (s.diesel?.let { ". El diésel, a ${FuelStations.formatPrice(it)} euros" } ?: "") +
+                    ". " + Personality.line("ask.go")
+            }
+            StationAction.PRICE -> {
+                conversation.ask(Pending.Confirm(Command.Station(c.index, StationAction.GO)), now)
+                when {
+                    s.diesel != null -> "En ${s.brand} el diésel está a ${FuelStations.formatPrice(s.diesel)} euros" +
+                        (s.gasoline95?.let { " y la gasolina 95 a ${FuelStations.formatPrice(it)}" } ?: "") + ". " + Personality.line("ask.go")
+                    s.gasoline95 != null -> "En ${s.brand} no hay diésel; la gasolina 95 está a ${FuelStations.formatPrice(s.gasoline95)} euros"
+                    else -> "No tengo los precios de ${s.brand}"
+                }
+            }
+            StationAction.GO -> {
+                navigateTo("${s.lat},${s.lon}")
+                joke("Vamos a ${s.brand}, en ${place(s)}", "station.go")
+            }
+        }
+    }
+
+    private fun weatherDay(offset: Int): String {
+        open(Screen.WEATHER)
+        val f = WeatherRepository.state.value.forecast ?: return "Todavía no tengo el tiempo"
+        val d = f.days.getOrNull(offset) ?: return "No tengo previsión para ese día"
+        val es = Locale("es", "ES")
+        val label = when (offset) {
+            0 -> "Hoy"
+            1 -> "Mañana"
+            2 -> "Pasado mañana"
+            else -> "El " + d.date.dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, es)
+        }
+        val rain = d.precipProbMax?.takeIf { it >= 30 }?.let { ". Probabilidad de lluvia del $it por ciento" } ?: ""
+        return joke("$label, ${wmoCondition(d.code).text.lowercase(es)}, entre ${d.minC} y ${d.maxC} grados$rain", "weather")
+    }
+
+    private fun info(topic: InfoTopic, now: Long = System.currentTimeMillis()): String {
         val car = VehicleRepository.state.value
         val es = Locale("es", "ES")
         return when (topic) {
             InfoTopic.RANGE -> {
                 val range = car.rangeKm?.let { "Te quedan unos $it kilómetros de autonomía" }
                 val level = car.fuelLevel?.let { "el depósito está al ${(it * 100).toInt()} por ciento" }
+                val key = if ((car.rangeKm ?: 999) < 80) "range.low" else "range"
+                if ((car.rangeKm ?: 999) < 80) conversation.ask(Pending.Confirm(Command.Info(InfoTopic.FUEL_NEAR)), now)
                 when {
-                    range != null && level != null -> joke("$range y $level", "Suficiente para llegar. No para salir del sistema solar.")
-                    range != null -> joke(range, "Suficiente para llegar. No para salir del sistema solar.")
+                    range != null && level != null -> joke("$range y $level", key)
+                    range != null -> joke(range, key)
                     level != null -> level.replaceFirstChar { it.uppercase() }
                     else -> "Todavía no me llega la autonomía del coche"
                 }
@@ -522,10 +858,9 @@ object VoiceAssistant {
                     "No sé dónde estamos todavía; te abro las gasolineras"
                 } else {
                     val list = if (!route.live) FuelRepository.demoStations(DEMO_CENTER) else FuelRepository.state.value.stations
-                    val n = FuelStations.nearest(list, pos, limit = 1).firstOrNull()
-                    if (n == null) "No tengo gasolineras cerca"
-                    else "La más cercana es ${n.station.brand}, a ${FuelStations.formatDistance(n.meters)}, en ${place(n.station)}" +
-                        (n.station.diesel?.let { ". El diésel está a ${FuelStations.formatPrice(it)} euros" } ?: "")
+                    nearStations = FuelStations.nearest(list, pos, limit = 5)
+                    if (nearStations.isEmpty()) "No tengo gasolineras cerca"
+                    else station(Command.Station(0, StationAction.DESCRIBE), now)
                 }
             }
             InfoTopic.TYRES -> {
@@ -534,14 +869,14 @@ object VoiceAssistant {
             }
             InfoTopic.DOORS -> {
                 open(Screen.VEHICLE)
-                joke("No puedo ver las puertas. Te abro el iDrive original", "Si oyes corriente de aire, mala señal.")
+                joke("No puedo ver las puertas. Te abro el iDrive original", "doors")
             }
             InfoTopic.TRIP -> {
                 open(Screen.TRIP)
                 val trips = TripComputer.state.value
                 val trip = trips.current ?: trips.last
                 if (trip == null) "Aún no hay ningún viaje"
-                else "${if (trips.current != null) "Llevas" else "En el último viaje hiciste"} ${km(trip.distanceKm)} kilómetros en ${hm(trip.durationMillis)}"
+                else joke("${if (trips.current != null) "Llevas" else "En el último viaje hiciste"} ${km(trip.distanceKm)} kilómetros en ${Copilot.duration(trip.durationMillis)}", "trip")
             }
             InfoTopic.WEATHER -> {
                 open(Screen.WEATHER)
@@ -551,15 +886,97 @@ object VoiceAssistant {
                 else {
                     val today = f.days.firstOrNull()
                     val rain = today?.precipProbMax?.takeIf { it >= 30 }?.let { ". Probabilidad de lluvia del $it por ciento" } ?: ""
-                    (w.placeName?.let { "En $it, " } ?: "") + "${f.tempC} grados y ${wmoCondition(f.code).text.lowercase(es)}" +
-                        (today?.let { ". Hoy entre ${it.minC} y ${it.maxC}" } ?: "") + rain
+                    joke((w.placeName?.let { "En $it, " } ?: "") + "${f.tempC} grados y ${wmoCondition(f.code).text.lowercase(es)}" +
+                        (today?.let { ". Hoy entre ${it.minC} y ${it.maxC}" } ?: "") + rain, "weather")
                 }
             }
-            InfoTopic.TIME -> LocalTime.now().let {
-                joke("Son las ${it.hour}:${"%02d".format(it.minute)}", "Aquí. Cerca de un agujero negro serían otras.", "Hora de la Tierra, claro.")
-            }
-            InfoTopic.SPEED -> car.speedKmh?.let { joke("Vas a $it kilómetros por hora", "Algo por debajo de la velocidad de la luz.") } ?: "No me llega la velocidad"
+            InfoTopic.TIME -> LocalTime.now().let { joke("Son las ${it.hour}:${"%02d".format(it.minute)}", "time") }
+            InfoTopic.SPEED -> car.speedKmh?.let { joke("Vas a $it kilómetros por hora", "speed") } ?: "No me llega la velocidad"
         }
+    }
+
+    // ---------------------------------------------------------------- copiloto
+
+    private fun startCopilot() {
+        if (copilotJob?.isActive == true || !resumed) return
+        copilotJob = scope.launch {
+            while (isActive) {
+                delay(15_000)
+                runCatching { copilotTick(force = false) }.onFailure { Log.w(TAG, "Copiloto", it) }
+            }
+        }
+    }
+
+    /** Diagnóstico: olvidar el nombre del conductor, la conversación y las frases ya dichas. */
+    fun forgetMemory(context: Context) {
+        app = context.applicationContext
+        Personality.userName = null
+        Personality.recent.clear()
+        conversation.forget()
+        settings().assistantUserName = null
+        settings().assistantRecentLines = null
+    }
+
+    /** Diagnóstico: que el copiloto diga algo ya. */
+    fun copilotNow(context: Context) {
+        app = context.applicationContext
+        copilotTick(force = true)
+    }
+
+    private fun isDemo() = VehicleRepository.status.value.sourceName == "Demo"
+
+    private fun copilotTick(force: Boolean) {
+        val st = settings()
+        val phase = _state.value.phase
+        val now = System.currentTimeMillis()
+        if (!force) {
+            if (!resumed || !st.copilotEnabled || !st.assistantEnabled) return
+            if (phase != AssistantPhase.WAITING && phase != AssistantPhase.NO_MODEL) return
+            if (now < copilotSnoozeUntil) return
+            val demo = isDemo()
+            // Solo con el coche en marcha (en demo, siempre).
+            if (!demo && TripComputer.state.value.current == null) return
+            if (now - maxOf(lastActivityAt, lastCopilotAt) < Copilot.intervalMs(st.copilotMinutes, demo)) return
+        } else if (phase == AssistantPhase.LISTENING || phase == AssistantPhase.ANSWERING) return
+        val line = Copilot.next(copilotSnapshot(now), copilotMemory, knowsName = !Personality.userName.isNullOrBlank()) ?: return
+        lastCopilotAt = now
+        val question = line.text.contains('?')
+        val text = if (question) line.text else Personality.spice(line.text, humor(), "copilot")
+        conversation.ask(line.yes?.let { Pending.Confirm(it) }, now)
+        conversation.record(null, null, text, now)
+        saveRecent()
+        say(text, listenAfter = if (question && st.assistantFollowUp) COPILOT_FOLLOW_MS else 0L)
+    }
+
+    private fun copilotSnapshot(now: Long): CopilotSnapshot {
+        val car = VehicleRepository.state.value
+        val trips = TripComputer.state.value
+        val trip = trips.current
+        val route = RouteTracker.state.value
+        val rw = com.cockpitf30.weather.RouteWeather.state.value
+        val dest = rw.destination
+        val pos = route.position
+        val destKm = if (dest != null && pos != null) RouteTracker.distance(pos, com.cockpitf30.nav.GeoPoint(dest.lat, dest.lon)) / 1000.0 else null
+        val f = WeatherRepository.state.value.forecast
+        val cond = f?.code?.let(::wmoCondition)
+        val rainAhead = rw.points.firstOrNull { (it.precipProb ?: 0) >= 50 || (it.precipMm ?: 0f) >= 0.5f }?.km
+        val t = LocalTime.now()
+        return CopilotSnapshot(
+            now = now, hour = t.hour, minute = t.minute, demo = isDemo(),
+            speedKmh = car.speedKmh,
+            movingMs = trip?.movingMillis,
+            tripKm = trip?.distanceKm,
+            tripAvgKmh = trip?.avgSpeedKmh,
+            rangeKm = car.rangeKm,
+            avgConsumption = car.avgConsumption ?: trip?.avgConsumption(trips.tankLiters),
+            destName = dest?.name,
+            destKm = destKm,
+            weatherKind = cond?.kind,
+            weatherText = cond?.text,
+            tempC = f?.tempC ?: car.outsideTempC?.let { kotlin.math.round(it).toInt() },
+            rainAheadKm = rainAhead,
+            camerasNear = com.cockpitf30.nav.SpeedCameras.state.value.near.size,
+        )
     }
 
     /** Abre la app de Google con la pregunta, o el asistente de Google si no hay pregunta. */
@@ -727,13 +1144,14 @@ object VoiceAssistant {
         applyVoice()
         say(
             Personality.spice(
-                "Hola. Soy el asistente del coche. Humor al ${humor()} por ciento.", humor(),
+                "Hola. Soy el asistente del coche. Humor al ${humor()} por ciento.", humor(), null,
                 "Todo listo para el despegue.", "Prometo no abrir ninguna escotilla.",
             ),
         )
     }
 
-    private fun say(text: String) {
+    private fun say(text: String, listenAfter: Long = 0L) {
+        listenAfterReply = listenAfter
         _state.update { it.copy(phase = AssistantPhase.ANSWERING, reply = text, replyAt = System.currentTimeMillis(), engine = null) }
         unmuteJob?.cancel()
         stopPlayer()
@@ -746,7 +1164,8 @@ object VoiceAssistant {
                 unmuteJob = scope.launch { delay(6_000L + text.length * 120L); doneSpeaking() }
             } else {
                 t.speak(text, TextToSpeech.QUEUE_FLUSH, null, "reply")
-                unmuteJob = scope.launch { delay(2_000L + text.length * 90L); doneSpeaking() }
+                // El aviso real es onDone; esto es solo por si el motor no lo manda.
+                unmuteJob = scope.launch { delay(4_000L + text.length * 140L); doneSpeaking() }
             }
         } else {
             if (settings().assistantSpeaks) {
@@ -819,12 +1238,45 @@ object VoiceAssistant {
         stopPlayer()
     }
 
+    /**
+     * Mientras habla: «Hola BMW» la corta y escucha una orden nueva; «basta», «calla», «espera»
+     * la corta y queda escuchando (sin «Hola BMW»).
+     */
+    private fun onBargeIn(text: String) {
+        if (_state.value.phase != AssistantPhase.ANSWERING || !muted) return
+        val wake = VoiceCommands.afterWakeWord(text) != null
+        val reply = VoiceCommands.normalize(_state.value.reply.orEmpty())
+        val stop = VoiceCommands.isStopWord(text) && !reply.contains(VoiceCommands.normalize(text))
+        if (!wake && !stop) return
+        Log.i(TAG, "Interrumpida: «$text»")
+        unmuteJob?.cancel()
+        listenAfterReply = 0
+        stopSpeaking()
+        muted = false
+        resetRecognizer = true
+        if (wake) wake()
+        else {
+            followUp = true
+            listenUntil = System.currentTimeMillis() + FOLLOW_MS
+            _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, engine = "Vosk", followUp = true, level = 0f) }
+        }
+    }
+
     private fun doneSpeaking() {
         unmuteJob?.cancel()
         muted = false
-        resetRecognizer = true
+        // Si ya se interrumpió y está escuchando, no se borra lo que se está oyendo.
         if (_state.value.phase != AssistantPhase.ANSWERING) return
+        resetRecognizer = true
+        val follow = listenAfterReply
+        listenAfterReply = 0
         when {
+            audioJob?.isActive == true && resumed && follow > 0 -> {
+                // Conversación seguida: se puede contestar sin volver a decir «Hola BMW».
+                followUp = true
+                listenUntil = System.currentTimeMillis() + follow
+                _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, engine = "Vosk", followUp = true, level = 0f) }
+            }
             audioJob?.isActive == true -> set(AssistantPhase.WAITING)
             installJob?.isActive == true -> set(AssistantPhase.DOWNLOADING)
             else -> {

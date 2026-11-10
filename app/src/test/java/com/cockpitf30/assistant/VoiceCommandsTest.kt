@@ -3,6 +3,7 @@ package com.cockpitf30.assistant
 import com.cockpitf30.ui.screens.Screen
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class VoiceCommandsTest {
@@ -73,6 +74,30 @@ class VoiceCommandsTest {
         assertEquals(Command.AskGoogle(null), VoiceCommands.parse("abre Google"))
         assertEquals(Command.Cancel, VoiceCommands.parse("nada"))
         assertEquals(Command.Help, VoiceCommands.parse("qué puedes hacer"))
-        assertEquals(Command.Unknown("cuentame un chiste"), VoiceCommands.parse("cuéntame un chiste"))
+        assertEquals(Command.Joke, VoiceCommands.parse("cuéntame un chiste"))
+    }
+
+    @Test
+    fun callContact() {
+        assertEquals(Command.Call("manuel"), VoiceCommands.parse("llama a Manuel"))
+        assertEquals(Command.Call("manuel garcia"), VoiceCommands.parse("Llama a Manuel García"))
+        assertEquals(Command.Call("mama"), VoiceCommands.parse("llamar a mamá"))
+        assertEquals(Command.Open(Screen.PHONE), VoiceCommands.parse("teléfono"))
+    }
+
+    @Test
+    fun driveModes() {
+        assertEquals(Command.Mode(com.cockpitf30.ui.theme.DriveMode.SPORT), VoiceCommands.parse("modo sport"))
+        assertEquals(Command.Mode(com.cockpitf30.ui.theme.DriveMode.NIGHT), VoiceCommands.parse("pon el modo noche"))
+        assertEquals(Command.Open(Screen.PERFORMANCE), VoiceCommands.parse("abre rendimiento"))
+    }
+
+    @Test
+    fun bargeInWords() {
+        assertTrue(VoiceCommands.isStopWord("basta"))
+        assertTrue(VoiceCommands.isStopWord("Cállate"))
+        assertTrue(!VoiceCommands.isStopWord("para descansar"))
+        assertTrue(VoiceCommands.BARGE_GRAMMAR.contains("\"hola be eme uve doble\""))
+        assertTrue(VoiceCommands.BARGE_GRAMMAR.contains("\"basta\""))
     }
 }

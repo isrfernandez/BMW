@@ -27,6 +27,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.cockpitf30.R
 import com.cockpitf30.ui.theme.Cockpit
+import com.cockpitf30.ui.theme.DriveModes
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 
 /**
  * Fondo de triángulos facetados (imagen del usuario) para las pantallas secundarias: la foto a
@@ -38,12 +42,18 @@ fun TriangleBackground(modifier: Modifier = Modifier, dim: Float = 0.12f, conten
     Box(modifier.background(Cockpit.Background)) {
         Image(
             com.cockpitf30.ui.components.cachedPainter(R.drawable.bg_triangles), null,
-            Modifier.fillMaxSize(),
+            Modifier.fillMaxSize()
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                .drawWithContent {
+                    drawContent()
+                    // Modos Sport y Night: la malla toma el color del modo.
+                    DriveModes.palette.tint?.let { drawRect(it, alpha = 0.9f, blendMode = BlendMode.Hue) }
+                },
             contentScale = ContentScale.Crop,
         )
         Box(
             Modifier.fillMaxSize().drawBehind {
-                drawRect(Color.Black.copy(alpha = dim))
+                drawRect(Color.Black.copy(alpha = dim + DriveModes.palette.dim))
                 drawRect(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.45f), 0.14f to Color.Transparent, 0.85f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.35f)))
                 drawRect(
                     Brush.radialGradient(
@@ -103,11 +113,4 @@ fun PanelTitle(text: String, modifier: Modifier = Modifier, accent: Color = Cock
         Spacer(Modifier.weight(1f))
         trailing()
     }
-}
-
-/** Presión razonable en un 320d: verde entre 1,9 y 3,2 bar, rojo fuera de ese margen, gris sin dato. */
-fun tyreStatusColor(v: Float?): Color = when {
-    v == null -> Cockpit.TextDim
-    v < 1.9f || v > 3.2f -> Cockpit.Alert
-    else -> Cockpit.Ok
 }

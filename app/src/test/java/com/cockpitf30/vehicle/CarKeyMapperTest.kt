@@ -23,23 +23,5 @@ class CarKeyMapperTest {
         assertEquals(50, s.speedKmh)
     }
 
-    @Test
-    fun doorsByName() {
-        val s = CarKeyMapper.apply(
-            VehicleState(),
-            mapOf("canbus.info.door_fl" to 1, "canbus.info.doorRF" to 0, "canbus.state.door_back" to 1, "data.factory.wy.door_alarm" to 1, "canbus.info.doorFront" to 0),
-        )
-        assertEquals(true, s.doors.driver)
-        assertEquals(false, s.doors.passenger)
-        assertEquals(true, s.doors.trunk)
-        assertEquals(false, s.doors.hood)
-        assertNull(s.doors.rearLeft)
-    }
 
-    @Test
-    fun tyresInKpaOrTenths() {
-        val s = CarKeyMapper.apply(VehicleState(), mapOf("canbus.info.tpms_fl" to 240, "canbus.info.tpms_rr" to 23, "canbus.info.tpms_temp_fl" to 30))
-        assertEquals(2.4f, s.tyres.frontLeft!!, 0.001f)
-        assertEquals(2.3f, s.tyres.rearRight!!, 0.001f)
-    }
 }

@@ -62,6 +62,7 @@ object WeatherRepository {
             val forecast = parseForecast(json)
             val now = System.currentTimeMillis()
             settings.weatherCache = Triple(json, place.name, now)
+            settings.addRecentPlace(place)
             Triple(forecast, place.name, now)
         }
         result.onSuccess { (f, name, time) ->

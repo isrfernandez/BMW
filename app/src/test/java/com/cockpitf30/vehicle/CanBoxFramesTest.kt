@@ -29,7 +29,7 @@ class CanBoxFramesTest {
         assertEquals(1, bad)
     }
 
-    @Test fun doorsAndDynamicInfoGoIntoTheState() {
+    @Test fun dynamicInfoGoesIntoTheState() {
         val doors = CanBoxFrames.make(0x12, hex("01 00 00 00 A8 20 40 95"))  // conductor, tras. izq., maletero
         val dyn = CanBoxFrames.make(0x16, hex("00 32 03 20"))               // 50 km/h, 800 rpm
         val travel = CanBoxFrames.make(0x27, hex("01 E2 40 01 F4"))          // 123456 km, 500 km
@@ -38,7 +38,6 @@ class CanBoxFramesTest {
         assertEquals(50, s.speedKmh)
         assertEquals(800, s.rpm)
         assertEquals(500, s.rangeKm)
-        assertEquals(Doors(driver = true, passenger = false, rearLeft = true, rearRight = false, trunk = true, hood = false), s.doors)
         assertEquals(123456, values["can.mileage"])
         assertEquals(true, values["can.belt_driver"])
     }
