@@ -6,6 +6,7 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Looper
+import android.os.SystemClock
 import com.cockpitf30.weather.WeatherRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,6 +25,20 @@ data class RouteState(
     /** true mientras llegan posiciones reales (no la simulación del modo Demo). */
     val live: Boolean = false,
     val time: Long = 0,
+    /** Datos de la última posición real, para el ordenador de viaje. */
+    val fix: GpsFix? = null,
+)
+
+/**
+ * Una posición real: de qué proveedor viene, su precisión, la velocidad que mide el propio GPS
+ * (efecto Doppler, mucho más fiable que derivarla de dos posiciones) y cuándo llegó según el reloj
+ * de arranque, que no salta cuando la radio pone en hora el reloj del sistema.
+ */
+data class GpsFix(
+    val fromGps: Boolean,
+    val accuracyM: Float?,
+    val speedKmh: Float?,
+    val elapsedMs: Long,
 )
 
 /**
@@ -56,15 +71,27 @@ object RouteTracker {
 
     private fun onLocation(loc: Location) {
         // El GPS manda frente a la red: si hay un GPS reciente, ignoramos las posiciones de red.
+        // Se compara con el reloj de arranque: loc.time del GPS viene de los satélites y el de la red
+        // del reloj de la radio, que puede ir desfasado; antes eso dejaba pasar posiciones de red
+        // entre las del GPS y el recorrido iba dando saltos.
         val s = _state.value
-        if (loc.provider == LocationManager.NETWORK_PROVIDER && s.live && loc.time - s.time < 10_000) return
+        val now = SystemClock.elapsedRealtime()
+        val fromGps = loc.provider == LocationManager.GPS_PROVIDER
+        val lastGps = s.fix?.takeIf { it.fromGps }
+        if (!fromGps && s.live && lastGps != null && now - lastGps.elapsedMs < 10_000) return
         val p = GeoPoint(loc.latitude, loc.longitude)
         val bearing = when {
             loc.hasBearing() && loc.hasSpeed() && loc.speed > 1.5f -> loc.bearing
             else -> s.position?.takeIf { distance(it, p) > 8 }?.let { bearingBetween(it, p) } ?: s.bearing
         }
         // Al pasar de la simulación a datos reales se empieza un recorrido nuevo.
-        push(p, bearing, live = true, time = loc.time, reset = !s.live)
+        val fix = GpsFix(
+            fromGps = fromGps,
+            accuracyM = if (loc.hasAccuracy()) loc.accuracy else null,
+            speedKmh = if (fromGps && loc.hasSpeed()) loc.speed * 3.6f else null,
+            elapsedMs = now,
+        )
+        push(p, bearing, live = true, time = loc.time, reset = !s.live, fix = fix)
     }
 
     /** Modo Demo: avanza por un recorrido de ejemplo mientras no haya GPS real. */
@@ -78,13 +105,13 @@ object RouteTracker {
 
     private var demoMeters = 0.0
 
-    private fun push(p: GeoPoint, bearing: Float, live: Boolean, time: Long, reset: Boolean) {
+    private fun push(p: GeoPoint, bearing: Float, live: Boolean, time: Long, reset: Boolean, fix: GpsFix? = null) {
         val s = _state.value
         val base = if (reset) emptyList() else s.track
         val track = if (base.isEmpty() || distance(base.last(), p) >= MIN_STEP_M) {
             (base + p).let { if (it.size > MAX_POINTS) it.drop(it.size - MAX_POINTS) else it }
         } else base
-        _state.value = RouteState(p, bearing, track, live, time)
+        _state.value = RouteState(p, bearing, track, live, time, fix ?: s.fix.takeIf { live })
     }
 
     fun distance(a: GeoPoint, b: GeoPoint): Double {

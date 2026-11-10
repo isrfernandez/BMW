@@ -6,6 +6,7 @@ import com.cockpitf30.weather.Place
 
 enum class SourceMode(val label: String) {
     AUTO("Auto"),
+    RADIO("Radio CAN"),
     SERIAL("Serie"),
     CAR_PROPERTY("CarProperty"),
     DEMO("Demo"),
@@ -16,7 +17,16 @@ class AppSettings(context: Context) {
     private val prefs = context.getSharedPreferences("cockpit", Context.MODE_PRIVATE)
 
     var sourceMode: SourceMode
-        get() = runCatching { SourceMode.valueOf(prefs.getString(KEY_SOURCE, null)!!) }.getOrDefault(SourceMode.AUTO)
+        get() {
+            // 0.9.20: el puerto serie no se puede abrir en esta radio; quien lo tenía elegido pasa a Auto
+            // (que ahora usa los datos de la propia radio). Solo una vez.
+            if (!prefs.getBoolean(KEY_MIGRATED_RADIO, false)) {
+                val e = prefs.edit().putBoolean(KEY_MIGRATED_RADIO, true)
+                if (prefs.getString(KEY_SOURCE, null) == SourceMode.SERIAL.name) e.putString(KEY_SOURCE, SourceMode.AUTO.name)
+                e.apply()
+            }
+            return runCatching { SourceMode.valueOf(prefs.getString(KEY_SOURCE, null)!!) }.getOrDefault(SourceMode.AUTO)
+        }
         set(value) = prefs.edit().putString(KEY_SOURCE, value.name).apply()
 
     var serialPath: String
@@ -32,6 +42,79 @@ class AppSettings(context: Context) {
     var knobKeys: Map<Int, Int>
         get() = IDriveInput.decode(prefs.getString(KEY_KNOB_KEYS, null))
         set(value) = prefs.edit().putString(KEY_KNOB_KEYS, IDriveInput.encode(value)).apply()
+
+    /** Asistente de voz: escuchar «Hola BMW» mientras la app está en pantalla. */
+    var assistantEnabled: Boolean
+        get() = prefs.getBoolean(KEY_ASSISTANT, true)
+        set(value) = prefs.edit().putBoolean(KEY_ASSISTANT, value).apply()
+
+    /** Responder también en voz alta (si la radio tiene motor de voz). */
+    var assistantSpeaks: Boolean
+        get() = prefs.getBoolean(KEY_ASSISTANT_TTS, true)
+        set(value) = prefs.edit().putBoolean(KEY_ASSISTANT_TTS, value).apply()
+
+    /** Voz al estilo TARS: hombre adulto, grave y pausada (false = voz normal de la radio, sin cambios). */
+    var assistantRobotVoice: Boolean
+        get() = prefs.getBoolean(KEY_ASSISTANT_ROBOT, true)
+        set(value) = prefs.edit().putBoolean(KEY_ASSISTANT_ROBOT, value).apply()
+
+    /** Estilo de la voz TARS: natural (por defecto), con timbre de máquina o robot. */
+    var assistantRobotStrength: com.cockpitf30.assistant.RobotVoice.Strength
+        get() = runCatching { com.cockpitf30.assistant.RobotVoice.Strength.valueOf(prefs.getString(KEY_ASSISTANT_STRENGTH, null)!!) }
+            .getOrDefault(com.cockpitf30.assistant.RobotVoice.Strength.NATURAL)
+        set(value) = prefs.edit().putString(KEY_ASSISTANT_STRENGTH, value.name).apply()
+
+    /** Nivel de humor del asistente, 0..100 %. */
+    var assistantHumor: Int
+        get() = prefs.getInt(KEY_ASSISTANT_HUMOR, com.cockpitf30.assistant.Personality.DEFAULT_HUMOR)
+        set(value) = prefs.edit().putInt(KEY_ASSISTANT_HUMOR, value.coerceIn(0, 100)).apply()
+
+    /** Sensibilidad de «Hola BMW»: 0 baja (sigla entera y muy clara), 1 normal, 2 alta (como antes). */
+    var wakeSensitivity: Int
+        get() = prefs.getInt("wake_sensitivity", 1)
+        set(value) = prefs.edit().putInt("wake_sensitivity", value.coerceIn(0, 2)).apply()
+
+    /** Tras responder, seguir escuchando unos segundos sin «Hola BMW» (conversación seguida). */
+    var assistantFollowUp: Boolean
+        get() = prefs.getBoolean("assistant_follow_up", true)
+        set(value) = prefs.edit().putBoolean("assistant_follow_up", value).apply()
+
+    /** Modo copiloto: el asistente habla por su cuenta cada [copilotMinutes] (cada 2 min en demo). */
+    var copilotEnabled: Boolean
+        get() = prefs.getBoolean("copilot_enabled", true)
+        set(value) = prefs.edit().putBoolean("copilot_enabled", value).apply()
+
+    var copilotMinutes: Int
+        get() = prefs.getInt("copilot_minutes", com.cockpitf30.assistant.Copilot.DEFAULT_MINUTES)
+        set(value) = prefs.edit().putInt("copilot_minutes", value.coerceIn(2, 60)).apply()
+
+    /** Nombre del conductor («me llamo Israel»). */
+    var assistantUserName: String?
+        get() = prefs.getString("assistant_user_name", null)
+        set(value) = prefs.edit().putString("assistant_user_name", value).apply()
+
+    /** Últimas frases dichas por el asistente, para no repetirlas (ver RecentLines). */
+    var assistantRecentLines: String?
+        get() = prefs.getString("assistant_recent_lines", null)
+        set(value) = prefs.edit().putString("assistant_recent_lines", value).apply()
+
+    /** Nombre de la voz del motor de la radio elegida en Diagnóstico; null = elegir sola. */
+    var assistantVoiceName: String?
+        get() = prefs.getString(KEY_ASSISTANT_VOICE, null)
+        set(value) = prefs.edit().putString(KEY_ASSISTANT_VOICE, value).apply()
+
+    /** Decir en voz alta «Radar a 400 metros». */
+    var radarVoice: Boolean
+        get() = prefs.getBoolean("radar_voice", true)
+        set(value) = prefs.edit().putBoolean("radar_voice", value).apply()
+
+    var askedContacts: Boolean
+        get() = prefs.getBoolean("asked_contacts", false)
+        set(value) = prefs.edit().putBoolean("asked_contacts", value).apply()
+
+    var askedMicrophone: Boolean
+        get() = prefs.getBoolean(KEY_ASKED_MIC, false)
+        set(value) = prefs.edit().putBoolean(KEY_ASKED_MIC, value).apply()
 
     var askedBatteryExemption: Boolean
         get() = prefs.getBoolean(KEY_ASKED_BATTERY, false)
@@ -61,6 +144,30 @@ class AppSettings(context: Context) {
                 }
             }.apply()
         }
+
+    /** Últimas localidades con previsión (elegidas o por GPS), la más reciente primero. */
+    val recentPlaces: List<Place>
+        get() = runCatching {
+            val arr = org.json.JSONArray(prefs.getString(KEY_W_RECENT, null) ?: return emptyList())
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                Place(o.getString("n"), o.optString("r").ifBlank { null }, o.optString("c").ifBlank { null }, o.getDouble("lat"), o.getDouble("lon"))
+            }
+        }.getOrDefault(emptyList())
+
+    /** Apunta [place] al principio del registro; quita duplicados (mismo nombre o a menos de 2 km). */
+    fun addRecentPlace(place: Place) {
+        val list = (listOf(place) + recentPlaces.filterNot { it.name.equals(place.name, true) || near(it, place) }).take(RECENT_PLACES)
+        val arr = org.json.JSONArray()
+        list.forEach { arr.put(org.json.JSONObject().put("n", it.name).put("r", it.region ?: "").put("c", it.country ?: "").put("lat", it.lat).put("lon", it.lon)) }
+        prefs.edit().putString(KEY_W_RECENT, arr.toString()).apply()
+    }
+
+    private fun near(a: Place, b: Place): Boolean {
+        val dLat = (a.lat - b.lat) * 111.0
+        val dLon = (a.lon - b.lon) * 111.0 * kotlin.math.cos(Math.toRadians(a.lat))
+        return dLat * dLat + dLon * dLon < 4.0
+    }
 
     /** Última previsión descargada, para mostrarla sin conexión. */
     var weatherCache: Triple<String, String, Long>?
@@ -106,7 +213,20 @@ class AppSettings(context: Context) {
         get() = prefs.getFloat(KEY_TANK, 57f)
         set(value) = prefs.edit().putFloat(KEY_TANK, value).apply()
 
+    /** Pedir a la caja CAN la velocidad y las rpm cada 100 ms (la app de la radio lo hace cada 500 ms). */
+    var canAskSpeed: Boolean
+        get() = prefs.getBoolean(KEY_CAN_ASK_SPEED, true)
+        set(value) = prefs.edit().putBoolean(KEY_CAN_ASK_SPEED, value).apply()
+
     private companion object {
+        const val KEY_CAN_ASK_SPEED = "can_ask_speed"
+        const val KEY_ASSISTANT = "assistant_enabled"
+        const val KEY_ASSISTANT_TTS = "assistant_tts"
+        const val KEY_ASSISTANT_ROBOT = "assistant_robot_voice"
+        const val KEY_ASSISTANT_STRENGTH = "assistant_voice_style"
+        const val KEY_ASSISTANT_HUMOR = "assistant_humor"
+        const val KEY_ASSISTANT_VOICE = "assistant_voice_name"
+        const val KEY_ASKED_MIC = "asked_microphone"
         const val KEY_TRIP_CURRENT = "trip_current"
         const val KEY_TRIP_LAST = "trip_last"
         const val KEY_TANK = "tank_liters"
@@ -119,11 +239,14 @@ class AppSettings(context: Context) {
         const val KEY_W_COUNTRY = "weather_place_country"
         const val KEY_W_LAT = "weather_place_lat"
         const val KEY_W_LON = "weather_place_lon"
+        const val KEY_W_RECENT = "weather_recent_places"
+        const val RECENT_PLACES = 6
         const val KEY_W_JSON = "weather_cache_json"
         const val KEY_W_PLACE = "weather_cache_place"
         const val KEY_W_TIME = "weather_cache_time"
         const val KEY_ASKED_LOCATION = "asked_location"
         const val KEY_SOURCE = "source"
+        const val KEY_MIGRATED_RADIO = "migrated_radio_0920"
         const val KEY_PATH = "serial_path"
         const val KEY_BAUD = "baud"
         const val KEY_ASKED_BATTERY = "asked_battery"

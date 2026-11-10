@@ -12,18 +12,19 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import android.content.pm.PackageManager
+import androidx.compose.runtime.DisposableEffect
+import androidx.core.content.ContextCompat
+import com.cockpitf30.assistant.VoiceAssistant
+import com.cockpitf30.ui.components.AssistantOverlay
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -44,17 +45,19 @@ import com.cockpitf30.service.VehicleService
 import com.cockpitf30.system.AppSettings
 import com.cockpitf30.system.BatteryOptimization
 import com.cockpitf30.ui.components.DefaultFocus
+import com.cockpitf30.ui.components.SideArt
 import com.cockpitf30.ui.components.SideItem
 import com.cockpitf30.ui.components.Sidebar
 import com.cockpitf30.ui.screens.AppsScreen
 import com.cockpitf30.ui.screens.DiagnosticsScreen
 import com.cockpitf30.ui.screens.HomeScreen
 import com.cockpitf30.ui.screens.Screen
-import com.cockpitf30.ui.screens.VehicleScreen
 import com.cockpitf30.ui.screens.TripScreen
 import com.cockpitf30.ui.screens.Reorder
 import com.cockpitf30.ui.screens.WeatherScreen
 import com.cockpitf30.ui.screens.PhoneScreen
+import com.cockpitf30.ui.screens.FuelScreen
+import com.cockpitf30.fuel.FuelRepository
 import com.cockpitf30.weather.WeatherRepository
 import com.cockpitf30.nav.RouteTracker
 import android.Manifest
@@ -64,6 +67,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.cockpitf30.ui.screens.openMaps
+import com.cockpitf30.ui.screens.openOriginalBmw
 import com.cockpitf30.ui.screens.openMusic
 import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.ui.theme.CockpitTheme
@@ -81,12 +85,26 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         hideSystemBars()
         IDriveInput.learned = AppSettings(this).knobKeys
+        com.cockpitf30.ui.theme.DriveModes.load(this)
         VehicleService.start(this)
         askBatteryExemptionOnce()
+        // Lo pesado, en segundo plano y antes de que haga falta: imágenes grandes y lista de apps.
+        com.cockpitf30.system.AppCatalog.load(this)
+        Thread({
+            com.cockpitf30.ui.components.Images.preload(this)
+            com.cockpitf30.ui.components.Images.get(this, com.cockpitf30.R.drawable.spinner_sheet)
+            // La pantalla de inicio espera también a la lista de apps (como mucho 5 s).
+            val until = System.currentTimeMillis() + 5000
+            while (com.cockpitf30.system.AppCatalog.apps.value == null && System.currentTimeMillis() < until) Thread.sleep(50)
+            com.cockpitf30.ui.components.Startup.ready.value = true
+        }, "precarga").apply { priority = Thread.MIN_PRIORITY + 2 }.start()
 
         setContent {
             CockpitTheme {
-                CockpitRoot(navActions)
+                Box(Modifier.fillMaxSize()) {
+                    CockpitRoot(navActions)
+                    com.cockpitf30.ui.components.StartupSplash()
+                }
             }
         }
     }
@@ -139,6 +157,17 @@ class MainActivity : ComponentActivity() {
         if (action == NavAction.LONG_PRESS) swallowCenter = true
         navActions.tryEmit(action)
         return true
+    }
+
+    // El asistente solo escucha con la app en pantalla: al salir suelta el micrófono.
+    override fun onStart() {
+        super.onStart()
+        VoiceAssistant.resume(this)
+    }
+
+    override fun onStop() {
+        VoiceAssistant.pause()
+        super.onStop()
     }
 
     private var swallowKey: Int? = null
@@ -211,52 +240,120 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     val ctx = LocalContext.current
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         RouteTracker.start(ctx)
+        com.cockpitf30.vehicle.telemetry.Telemetry.startGps(ctx)
         scope.launch { WeatherRepository.refresh(ctx) }
+        VoiceAssistant.resume(ctx)
+    }
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        VoiceAssistant.resume(ctx)
+    }
+    DisposableEffect(Unit) {
+        VoiceAssistant.permissionRequester = { micPermission.launch(Manifest.permission.RECORD_AUDIO) }
+        onDispose { VoiceAssistant.permissionRequester = null }
     }
     LaunchedEffect(Unit) {
         val settings = AppSettings(ctx)
         WeatherRepository.loadCache(ctx)
         RouteTracker.start(ctx)
-        if (!settings.askedLocation && settings.weatherPlace == null && !WeatherRepository.hasLocationPermission(ctx)) {
-            settings.askedLocation = true
-            locationPermission.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION))
+        // Ubicación (tiempo, gasolineras) y micrófono (asistente) se piden una vez, en el mismo diálogo.
+        val ask = buildList {
+            if (!settings.askedLocation && settings.weatherPlace == null && !WeatherRepository.hasLocationPermission(ctx)) {
+                settings.askedLocation = true
+                add(Manifest.permission.ACCESS_COARSE_LOCATION)
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+            // Agenda y llamadas: para «Hola BMW, llama a …».
+            if (!settings.askedContacts) {
+                settings.askedContacts = true
+                if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.READ_CONTACTS)
+                if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.CALL_PHONE)
+            }
+            if (!settings.askedMicrophone && settings.assistantEnabled &&
+                ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+            ) {
+                settings.askedMicrophone = true
+                add(Manifest.permission.RECORD_AUDIO)
+            }
         }
+        if (ask.isNotEmpty()) locationPermission.launch(ask.toTypedArray())
         while (true) {
             WeatherRepository.refresh(ctx)
             delay(30 * 60 * 1000L)
         }
     }
+    // Gasolineras: el listado del Ministerio se descarga como mucho cada 12 h; si falla (p. ej. sin
+    // conexión al arrancar), se reintenta a los 10 minutos.
+    LaunchedEffect(Unit) {
+        while (true) {
+            FuelRepository.refresh(ctx)
+            delay(if (FuelRepository.state.value.error != null) 10 * 60 * 1000L else 60 * 60 * 1000L)
+        }
+    }
     BackHandler(enabled = screen != Screen.HOME) { screen = Screen.HOME }
 
-    // Puerta, capó o maletero abierto: se abre la pantalla Vehículo (vista cenital con cada puerta).
-    // Al cerrarse todo se vuelve al Inicio, que ya abre en el mapa. En Diagnóstico no se interrumpe.
+    // Modo Night automático: cada 5 s se mira si está oscuro (faros, sensor de luz o el sol).
     LaunchedEffect(Unit) {
-        var autoOpened = false
-        VehicleRepository.state.map { it.doors.anyOpen }.distinctUntilChanged().collect { open ->
-            if (open && screen != Screen.VEHICLE && screen != Screen.DIAGNOSTICS) {
-                screen = Screen.VEHICLE
-                autoOpened = true
-            } else if (!open && autoOpened) {
-                autoOpened = false
-                if (screen == Screen.VEHICLE) {
-                    ClusterIntro.done = true
-                    screen = Screen.HOME
-                }
+        while (true) {
+            val lights = com.cockpitf30.vehicle.source.RadioCarData.values.value["state.main.headlight_state"]?.toIntOrNull()?.let { it != 0 }
+            val pos = RouteTracker.state.value.position?.takeIf { RouteTracker.state.value.live }
+            val here = pos ?: WeatherRepository.lastKnownLocation(ctx)?.let { com.cockpitf30.nav.GeoPoint(it.latitude, it.longitude) }
+            com.cockpitf30.ui.theme.NightDetector.update(
+                lights, com.cockpitf30.vehicle.telemetry.Telemetry.state.value.lux, here?.lat, here?.lon,
+                useHeadlights = com.cockpitf30.ui.theme.DriveModes.nightWithHeadlights,
+            )
+            delay(5000)
+        }
+    }
+    // Radares: aviso hablado al acercarse a uno que queda delante. Tiempo en ruta: se recalcula solo.
+    DisposableEffect(Unit) {
+        com.cockpitf30.nav.SpeedCameras.onAlert = { v ->
+            if (AppSettings(ctx).radarVoice) {
+                val limit = v.camera.maxspeed?.let { ", límite $it" } ?: ""
+                val what = if (v.camera.kind == "Tramo") "Tramo de radar" else "Radar"
+                VoiceAssistant.announce("$what a ${com.cockpitf30.ui.components.radarDistance(v.meters).replace(" m", " metros").replace(" km", " kilómetros")}$limit")
             }
         }
+        onDispose { com.cockpitf30.nav.SpeedCameras.onAlert = null }
+    }
+    LaunchedEffect(Unit) {
+        com.cockpitf30.weather.RouteWeather.load(ctx)
+        while (true) {
+            com.cockpitf30.weather.RouteWeather.refresh(ctx)
+            delay(2 * 60 * 1000L)
+        }
+    }
+    // Al elegir Sport se abre Rendimiento (relojes de potencia y G-meter).
+    val selectedMode = com.cockpitf30.ui.theme.DriveModes.selected
+    var lastMode by remember { mutableStateOf(selectedMode) }
+    LaunchedEffect(selectedMode) {
+        if (selectedMode == com.cockpitf30.ui.theme.DriveMode.SPORT && lastMode != selectedMode) screen = Screen.PERFORMANCE
+        lastMode = selectedMode
+    }
+
+    // Las órdenes de voz abren pantallas como los botones.
+    // Vehículo abre el iDrive original del coche (la caja CAN no da puertas ni presiones):
+    // allí está «Estado del vehículo» con las ruedas y su presión.
+    val go: (Screen) -> Unit = { if (it == Screen.VEHICLE) openOriginalBmw(ctx) else screen = it }
+    DisposableEffect(Unit) {
+        val nav: (Screen) -> Unit = go
+        VoiceAssistant.navigator = nav
+        onDispose { if (VoiceAssistant.navigator === nav) VoiceAssistant.navigator = null }
     }
 
     val context = LocalContext.current
     val sideItems = listOf(
         // Pulsación larga en Home: atajo a Diagnóstico.
-        SideItem("Home", Icons.Filled.Home, screen == Screen.HOME, onLongClick = { screen = Screen.DIAGNOSTICS }) { screen = Screen.HOME },
-        SideItem("Navegación", Icons.Filled.LocationOn, false) { openMaps(context) },
-        SideItem("Música", Icons.Filled.PlayArrow, false) { openMusic(context) },
-        SideItem("Apps", Icons.Filled.Menu, screen == Screen.APPS) { screen = Screen.APPS },
+        SideItem("Home", SideArt.HOME, screen == Screen.HOME, onLongClick = { screen = Screen.DIAGNOSTICS }) { screen = Screen.HOME },
+        SideItem("Navegación", SideArt.NAV, false) { openMaps(context) },
+        SideItem("Rendimiento", SideArt.PERF, screen == Screen.PERFORMANCE) { screen = Screen.PERFORMANCE },
+        SideItem("Música", SideArt.MUSIC, false) { openMusic(context) },
+        SideItem("Apps", SideArt.APPS, screen == Screen.APPS) { screen = Screen.APPS },
         // Ajustes de la app: fuente de datos, puerto serie, batería.
-        SideItem("Ajustes", Icons.Filled.Settings, screen == Screen.DIAGNOSTICS) { screen = Screen.DIAGNOSTICS },
+        SideItem("Ajustes", SideArt.SETTINGS, screen == Screen.DIAGNOSTICS) { screen = Screen.DIAGNOSTICS },
     )
 
+    // Al cambiar de modo se rehace la interfaz entera con la paleta nueva.
+    androidx.compose.runtime.key(com.cockpitf30.ui.theme.DriveModes.current) {
     Row(
         Modifier
             .fillMaxSize()
@@ -264,21 +361,29 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
             .background(Brush.radialGradient(listOf(Cockpit.Blue.copy(alpha = 0.10f), Cockpit.Background), radius = 1600f)),
     ) {
         Sidebar(sideItems)
+        Box(Modifier.weight(1f).fillMaxHeight()) {
         AnimatedContent(
             screen,
-            modifier = Modifier.weight(1f).fillMaxHeight(),
+            modifier = Modifier.fillMaxSize(),
             transitionSpec = { fadeIn() togetherWith fadeOut() },
             label = "screen",
         ) { current ->
             when (current) {
-                Screen.HOME -> HomeScreen(onOpen = { screen = it })
-                Screen.VEHICLE -> VehicleScreen()
+                Screen.HOME -> HomeScreen(onOpen = go)
+                // Vehículo abre el iDrive original (no es una pantalla de la app).
+                Screen.VEHICLE -> HomeScreen(onOpen = go)
                 Screen.TRIP -> TripScreen()
                 Screen.APPS -> AppsScreen()
                 Screen.DIAGNOSTICS -> DiagnosticsScreen()
                 Screen.WEATHER -> WeatherScreen()
                 Screen.PHONE -> PhoneScreen()
+                Screen.FUEL -> FuelScreen()
+                Screen.PERFORMANCE -> com.cockpitf30.ui.screens.PerformanceScreen()
+                Screen.ROUTE -> com.cockpitf30.ui.screens.RouteScreen()
             }
         }
+            AssistantOverlay()
+        }
+    }
     }
 }

@@ -45,6 +45,7 @@ import com.cockpitf30.weather.WeatherRepository
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -72,16 +73,24 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cockpitf30.ui.components.CardArt
+import com.cockpitf30.ui.components.AssistantCardBody
+import com.cockpitf30.assistant.VoiceAssistant
 import com.cockpitf30.ui.components.CardTheme
 import com.cockpitf30.ui.components.ClusterStrip
 import com.cockpitf30.ui.components.glassBackground
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import com.cockpitf30.ui.components.glassOverlay
 import com.cockpitf30.ui.components.FocusTile
 import com.cockpitf30.ui.components.InitialFocus
 import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.vehicle.VehicleRepository
 import com.cockpitf30.vehicle.VehicleState
 import com.cockpitf30.vehicle.trip.TripComputer
+import com.cockpitf30.fuel.FuelStations
+import com.cockpitf30.ui.theme.numeric
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 
 /** Tarjeta de la parrilla panorámica: un resumen rápido de una función. */
 private class Card(
@@ -104,7 +113,9 @@ object Reorder {
     var step: ((Int) -> Unit)? = null
 }
 
-private val CARD_WIDTH = 320.dp
+private val CARD_WIDTH = 300.dp
+/** Alto del cuadro de instrumentos: 3/4 de los 720 dp de la pantalla. */
+private val CLUSTER_HEIGHT = 540.dp
 private val CARD_GAP = 16.dp
 
 @Composable
@@ -116,16 +127,26 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
     val settings = remember { AppSettings(context) }
     val cards = remember {
         listOf(
-            Card("music", "Música", "Abrir reproductor", CardTheme.MUSIC, ::openMusic),
-            Card("nav", "Navegación", "Mapas", CardTheme.NAV, ::openMaps),
+            // Antes "Música" (ya está en la barra lateral): ahora el asistente de voz «Hola BMW».
+            Card("assistant", "Hola BMW", "Asistente de voz", CardTheme.ASSIST, { VoiceAssistant.tap(it) }),
+            // Antes "Navegación" (repetida en la barra lateral): ahora la gasolinera más cercana.
+            Card("fuel", "Gasolinera", "La más cercana", CardTheme.FUEL, { onOpen(Screen.FUEL) }),
+            // Modo de conducción: cada pulsación pasa al siguiente (Normal → Sport → Night).
+            // Radares cercanos (barrido) y el tiempo en ruta.
+            Card("radar", "Radares", "", CardTheme.RADAR, { onOpen(Screen.ROUTE) }),
+            Card("mode", "Modo", "", CardTheme.MODE, { com.cockpitf30.ui.theme.DriveModes.cycle(it) }),
             Card("trip", "Datos de viaje", "Duración, km y consumo", CardTheme.TRIP, { onOpen(Screen.TRIP) }, Alignment.BottomStart) { TripBody(it) },
             Card("weather", "Tiempo", "", CardTheme.WEATHER, { onOpen(Screen.WEATHER) }),
-            Card("vehicle", "Vehículo", "Puertas y neumáticos", CardTheme.VEHICLE, { onOpen(Screen.VEHICLE) }),
+            Card("vehicle", "Vehículo", "iDrive original del coche", CardTheme.VEHICLE, { onOpen(Screen.VEHICLE) }),
             Card("phone", "Teléfono", "Marcador y contactos", CardTheme.PHONE, { onOpen(Screen.PHONE) }),
             Card("diag", "Diagnóstico", "Fuente de datos e iDrive", CardTheme.DIAG, { onOpen(Screen.DIAGNOSTICS) }),
         ).associateBy { it.id }
     }
-    var order by remember { mutableStateOf(CardOrder.merge(settings.cardOrder, cards.keys.toList())) }
+    // Quien tenía guardado el orden con "nav" o "music" encuentra la gasolinera o el asistente en el mismo sitio.
+    var order by remember {
+        mutableStateOf(CardOrder.merge(settings.cardOrder.map { when (it) { "nav" -> "fuel"; "music" -> "assistant"; else -> it } }, cards.keys.toList()))
+    }
+    val fuel = rememberFuelView()
     val moving by Reorder.moving.collectAsStateWithLifecycle()
     var beforeMove by remember { mutableStateOf(order) }
     var focusedId by remember { mutableStateOf<String?>(null) }
@@ -168,10 +189,10 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
     val firstCard = remember { FocusRequester() }
     InitialFocus(firstCard)
 
-    Column(Modifier.fillMaxSize().padding(top = 10.dp, bottom = 16.dp)) {
-        // El cuadro (mapa e indicadores) ocupa dos tercios de la altura; las tarjetas, el resto.
-        ClusterStrip(state, status, Modifier.fillMaxWidth().height(480.dp).padding(horizontal = 12.dp))
-        Spacer(Modifier.height(6.dp))
+    Column(Modifier.fillMaxSize().padding(top = 6.dp, bottom = 8.dp)) {
+        // El cuadro (mapa e indicadores) ocupa tres cuartos de la altura (540 de 720 dp); las tarjetas, el resto.
+        ClusterStrip(state, status, Modifier.fillMaxWidth().height(CLUSTER_HEIGHT).padding(horizontal = 12.dp))
+        Spacer(Modifier.height(2.dp))
         LazyRow(
             Modifier.weight(1f).fillMaxWidth().onPreviewKeyEvent { e ->
                 // En modo mover, el joystick izquierda/derecha también mueve la tarjeta.
@@ -183,7 +204,7 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                 }
             },
             state = listState,
-            contentPadding = PaddingValues(horizontal = 28.dp, vertical = 8.dp),
+            contentPadding = PaddingValues(horizontal = 28.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(CARD_GAP),
         ) {
             itemsIndexed(order, key = { _, id -> id }) { i, id ->
@@ -231,7 +252,12 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                     selected = isMoving,
                     modifier = mod,
                 ) {
-                    Box(Modifier.fillMaxSize().drawBehind { glassBackground(card.theme) }) {
+                    Box(
+                        Modifier.fillMaxSize()
+                            .drawBehind { glassBackground(card.theme) }
+                            // Placa de cristal por encima de la ilustración y del texto.
+                            .drawWithContent { drawContent(); glassOverlay(card.theme.to) },
+                    ) {
                         if (card.id == "weather") {
                             weather.forecast?.let { f ->
                                 val c = wmoCondition(f.code)
@@ -239,10 +265,36 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                                 // Velo para que el texto se lea sobre la animación.
                                 Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.15f), Color.Black.copy(alpha = 0.55f)))))
                             }
-                            WeatherCardContent(weather, animated = weather.forecast != null)
+                            WeatherCardContent(weather, animated = weather.forecast != null, compact = true)
+                        } else if (card.id == "assistant") {
+                            Box(Modifier.matchParentSize().graphicsLayer {
+                                scaleX = 0.66f; scaleY = 0.66f
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0f)
+                            }) { CardArt(card.theme) }
+                            AssistantCardBody()
+                        } else if (card.id == "radar") {
+                            RadarCardBody()
+                        } else if (card.id == "mode") {
+                            val mode = com.cockpitf30.ui.theme.DriveModes.current
+                            Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
+                                Text("MODO DE CONDUCCIÓN", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
+                                Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 8.dp)) {
+                                    ModeFace(mode, active = true, lit = true, glow = 0.6f, hint = "OK: siguiente modo")
+                                }
+                            }
+                        } else if (card.id == "fuel") {
+                            Box(Modifier.matchParentSize().graphicsLayer {
+                                scaleX = 0.66f; scaleY = 0.66f
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0f)
+                            }) { CardArt(card.theme) }
+                            FuelCardBody(fuel)
                         } else {
-                            CardArt(card.theme)
-                            Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp)) {
+                            // Tarjetas bajas: la ilustración se reduce hacia la esquina superior derecha.
+                            Box(Modifier.matchParentSize().graphicsLayer {
+                                scaleX = 0.66f; scaleY = 0.66f
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0f)
+                            }) { CardArt(card.theme) }
+                            Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
                                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = card.bodyAlignment) {
                                     card.body?.invoke(state)
                                 }
@@ -258,6 +310,36 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
     }
 }
 
+/**
+ * Tarjeta de radares: barrido a la derecha y, a la izquierda, el aviso (distancia y límite) o
+ * cuántos hay cerca y el resumen del tiempo en ruta.
+ */
+@Composable
+private fun RadarCardBody() {
+    val cams by com.cockpitf30.nav.SpeedCameras.state.collectAsStateWithLifecycle()
+    val route by com.cockpitf30.weather.RouteWeather.state.collectAsStateWithLifecycle()
+    val ahead = cams.ahead
+    Row(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).fillMaxHeight()) {
+            Text(if (ahead != null) "RADAR DELANTE" else "RADARES", style = MaterialTheme.typography.labelMedium, color = if (ahead != null) com.cockpitf30.ui.components.RadarAlert else Cockpit.TextDim)
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.BottomStart) {
+                if (ahead != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(com.cockpitf30.ui.components.radarDistance(ahead.meters), style = numeric(30, FontWeight.Medium), maxLines = 1)
+                        ahead.camera.maxspeed?.let { Spacer(Modifier.width(8.dp)); com.cockpitf30.ui.components.SpeedSign(it, 40.dp) }
+                    }
+                }
+            }
+            Text(
+                if (ahead == null) cams.near.firstOrNull()?.let { "A ${com.cockpitf30.ui.components.radarDistance(it.meters)}" } ?: "Ninguno cerca" else (ahead.camera.kind ?: "Radar fijo"),
+                style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            Text(route.summary ?: "Tiempo en ruta", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        com.cockpitf30.ui.components.RadarScope(cams, Modifier.size(104.dp), rangeM = 2000f, rings = listOf(1000f, 2000f), labels = false)
+    }
+}
+
 /** Indicación del modo mover sobre la tarjeta. */
 @Composable
 private fun MoveHint(modifier: Modifier = Modifier) {
@@ -270,26 +352,59 @@ private fun MoveHint(modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * Tarjeta de la gasolinera más cercana: distancia en grande, marca (rótulo) y dirección.
+ * Sin ubicación o sin datos, dice qué falta.
+ */
+@Composable
+private fun FuelCardBody(view: FuelView) {
+    val n = view.near.firstOrNull()
+    Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
+        Text("GASOLINERA MÁS CERCANA", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.BottomStart) {
+            if (n != null) {
+                Text(FuelStations.formatDistance(n.meters), style = numeric(34, FontWeight.Medium), maxLines = 1)
+            }
+        }
+        if (n != null) {
+            Text(n.station.brand, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(place(n.station), style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        } else {
+            Text("Gasolineras", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                when {
+                    view.position == null -> "Esperando ubicación"
+                    view.state.loading -> "Descargando estaciones…"
+                    view.state.error != null -> "Sin datos (${view.state.error})"
+                    else -> "Ninguna cerca"
+                },
+                style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
 /** Kilómetros y duración del viaje en curso (o del último), con ancho fijo para que no salten. */
 @Composable
 private fun TripBody(@Suppress("UNUSED_PARAMETER") state: VehicleState) {
     val trips by TripComputer.state.collectAsStateWithLifecycle()
     val trip = trips.current ?: trips.last
-    Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.Bottom) {
-        Metric(trip?.let { km(it.distanceKm) } ?: "--", "km", 110.dp)
-        Metric(trip?.let { hm(it.durationMillis) } ?: "--", if (trips.current != null) "h · en curso" else "h · último", 128.dp)
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Bottom) {
+        Metric(trip?.let { km(it.distanceKm) } ?: "--", "km", 96.dp)
+        Metric(trip?.let { hm(it.durationMillis) } ?: "--", if (trips.current != null) "h · en curso" else "h · último", 150.dp)
     }
 }
 
 @Composable
 private fun Metric(value: String, unit: String, width: Dp) {
-    Column(Modifier.width(width), horizontalAlignment = Alignment.End) {
-        Text(value, style = MaterialTheme.typography.displaySmall, textAlign = TextAlign.End, maxLines = 1, modifier = Modifier.fillMaxWidth())
-        Text(unit, style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
+    // Cifra y unidad en la misma línea: la tarjeta es baja.
+    Row(Modifier.width(width), verticalAlignment = Alignment.Bottom) {
+        Text(value, style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.End, maxLines = 1, modifier = Modifier.weight(1f))
+        Text(" $unit", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim, maxLines = 1, modifier = Modifier.padding(bottom = 4.dp))
     }
 }
 
-private const val GOOGLE_MAPS = "com.google.android.apps.maps"
+internal const val GOOGLE_MAPS = "com.google.android.apps.maps"
 
 /**
  * Abre la app Google Maps instalada (no la web) centrada en la posición actual. Sin posición
@@ -314,6 +429,28 @@ internal fun openMaps(context: Context) {
     launch(context, intent)
 }
 
+/**
+ * Pasa la pantalla al iDrive original del coche, igual que el botón del lanzador de la radio:
+ * la actividad OsuInfoActivity de CarCanbus manda a la caja CAN la orden de enseñar el vídeo del
+ * iDrive y se cierra. Allí, con la ruleta, está «Estado del vehículo» (neumáticos, puertas…).
+ * Para volver, el botón de inicio o atrás de la radio.
+ */
+internal fun openOriginalBmw(context: Context) {
+    val candidates = listOf(
+        "android.car.app.canbus" to "android.car.app.canbus.instance.osuwy.activity.OsuInfoActivity",
+        "android.car.app.video_original" to "android.car.app.video_original.OriginalMain",
+        "android.car.app.canbus" to "android.car.app.canbus.activity.MainActivity",
+    )
+    for ((pkg, cls) in candidates) {
+        try {
+            context.startActivity(Intent().setClassName(pkg, cls).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return
+        } catch (_: Exception) {
+        }
+    }
+    Toast.makeText(context, "No encuentro la app del coche original", Toast.LENGTH_SHORT).show()
+}
+
 internal fun openMusic(context: Context) = launch(
     context,
     context.packageManager.getLaunchIntentForPackage("com.spotify.music")
@@ -327,4 +464,4 @@ internal fun launch(context: Context, intent: Intent) {
     }
 }
 
-enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, WEATHER, PHONE }
+enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, WEATHER, PHONE, FUEL, PERFORMANCE, ROUTE }

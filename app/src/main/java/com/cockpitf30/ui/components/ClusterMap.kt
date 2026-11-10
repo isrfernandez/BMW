@@ -35,15 +35,15 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /** Fondo del mapa: azul marino casi negro, a juego con el panel del coche. */
-private val MapBase = Color(0xFF050B14)
-private val RouteGlow = Color(0xFF29B6F6)
-private val RouteCore = Color(0xFFBFE9FF)
+internal val MapBase = Color(0xFF050B14)
+internal val RouteGlow = Color(0xFF29B6F6)
+internal val RouteCore = Color(0xFFBFE9FF)
 
 /**
  * Las teselas oscuras vienen en grises: las pasamos a luminancia y las teñimos de azul acero,
  * algo más oscuras, para que el mapa quede "apagado" detrás del cuadro y la ruta destaque.
  */
-private val MapTint = ColorFilter.colorMatrix(
+internal val MapTint = ColorFilter.colorMatrix(
     ColorMatrix(
         floatArrayOf(
             // Ganancia > 1 y desplazamiento negativo: el fondo gris se hunde y las calles se separan.
@@ -56,7 +56,7 @@ private val MapTint = ColorFilter.colorMatrix(
 )
 
 /** OpenStreetMap viene claro: invertimos la luminancia (fondo oscuro, calles claras) y teñimos igual. */
-private val MapTintInverted = ColorFilter.colorMatrix(
+internal val MapTintInverted = ColorFilter.colorMatrix(
     ColorMatrix(
         floatArrayOf(
             -0.3f * 0.30f, -0.59f * 0.30f, -0.11f * 0.30f, 0f, 2f + 255f * 0.30f,

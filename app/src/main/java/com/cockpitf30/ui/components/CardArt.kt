@@ -28,7 +28,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.cockpitf30.R
 import kotlin.math.sin
@@ -42,6 +41,10 @@ enum class CardTheme(val from: Color, val to: Color) {
     VEHICLE(Color(0xFF5B7FAE), Color(0xFFC9D6E8)),
     PHONE(Color(0xFF1DB954), Color(0xFF7CF29C)),
     DIAG(Color(0xFFFF8F00), Color(0xFFFFD54F)),
+    FUEL(Color(0xFFE8473B), Color(0xFFFFA36B)),
+    ASSIST(Color(0xFF3D5AFE), Color(0xFF3FE0FF)),
+    MODE(Color(0xFFD0160C), Color(0xFFFFB238)),
+    RADAR(Color(0xFFFF3B30), Color(0xFFFFC94D)),
 }
 
 /**
@@ -81,7 +84,7 @@ fun BoxScope.CardArt(theme: CardTheme) {
             GlassBadge(theme, Modifier.align(Alignment.Center).size(110.dp)) { GradientIcon(Icons.Filled.Build, theme, 50) }
         }
         CardTheme.VEHICLE -> Image(
-            painterResource(R.drawable.car_rear_scene), null,
+            com.cockpitf30.ui.components.cachedPainter(R.drawable.car_rear_scene), null,
             Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp).size(width = 300.dp, height = 150.dp)
                 .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
                 .drawWithContent {
@@ -95,7 +98,14 @@ fun BoxScope.CardArt(theme: CardTheme) {
         CardTheme.TRIP -> Box(Modifier.align(Alignment.TopEnd).padding(top = 14.dp, end = 14.dp).size(width = 240.dp, height = 120.dp)) {
             Canvas(Modifier.fillMaxSize()) { lineChart(theme) }
         }
-        CardTheme.WEATHER -> Unit
+        CardTheme.FUEL -> Box(Modifier.align(Alignment.TopEnd).padding(top = 14.dp, end = 22.dp).size(width = 230.dp, height = 150.dp)) {
+            Canvas(Modifier.fillMaxSize()) { routeDots(theme) }
+            GlassBadge(theme, Modifier.align(Alignment.Center).size(110.dp)) {
+                Canvas(Modifier.size(56.dp)) { fuelPump(theme) }
+            }
+        }
+        CardTheme.ASSIST -> AssistantArt(theme)
+        CardTheme.WEATHER, CardTheme.MODE, CardTheme.RADAR -> Unit
     }
 }
 
@@ -227,4 +237,48 @@ private fun DrawScope.lineChart(theme: CardTheme) {
     val area = Path().apply { addPath(line); lineTo(w, h); lineTo(0f, h); close() }
     drawPath(area, Brush.verticalGradient(listOf(theme.to.copy(alpha = 0.35f), Color.Transparent)))
     drawPath(line, Brush.horizontalGradient(listOf(theme.from, theme.to)), style = Stroke(3.dp.toPx(), cap = StrokeCap.Round))
+}
+
+/** Surtidor: cuerpo con ventanilla, manguera y boquerel, con el degradado de la función. */
+private fun DrawScope.fuelPump(theme: CardTheme) {
+    val w = size.width
+    val h = size.height
+    val brush = Brush.linearGradient(listOf(theme.to, theme.from), Offset(0f, 0f), Offset(w, h))
+    val body = Path().apply {
+        addRoundRect(androidx.compose.ui.geometry.RoundRect(w * 0.12f, h * 0.08f, w * 0.62f, h * 0.92f, w * 0.08f, w * 0.08f))
+    }
+    drawPath(body, brush)
+    // Ventanilla del contador.
+    drawRoundRect(Color.White.copy(alpha = 0.85f), Offset(w * 0.2f, h * 0.18f), Size(w * 0.34f, h * 0.22f), androidx.compose.ui.geometry.CornerRadius(w * 0.03f))
+    // Base.
+    drawRect(brush, Offset(w * 0.04f, h * 0.88f), Size(w * 0.66f, h * 0.08f))
+    // Manguera hasta el boquerel colgado a la derecha.
+    val hose = Path().apply {
+        moveTo(w * 0.62f, h * 0.30f)
+        lineTo(w * 0.76f, h * 0.30f)
+        quadraticBezierTo(w * 0.86f, h * 0.30f, w * 0.86f, h * 0.42f)
+        lineTo(w * 0.86f, h * 0.72f)
+        quadraticBezierTo(w * 0.86f, h * 0.80f, w * 0.78f, h * 0.80f)
+        quadraticBezierTo(w * 0.70f, h * 0.80f, w * 0.70f, h * 0.70f)
+        lineTo(w * 0.70f, h * 0.56f)
+    }
+    drawPath(hose, brush, style = Stroke(w * 0.07f, cap = StrokeCap.Round))
+    drawLine(brush, Offset(w * 0.78f, h * 0.14f), Offset(w * 0.90f, h * 0.30f), w * 0.07f, StrokeCap.Round)
+}
+
+/** Ruta punteada hasta un destino, detrás del surtidor. */
+private fun DrawScope.routeDots(theme: CardTheme) {
+    val w = size.width
+    val h = size.height
+    val path = Path().apply {
+        moveTo(w * 0.02f, h * 0.9f)
+        cubicTo(w * 0.3f, h * 0.95f, w * 0.25f, h * 0.35f, w * 0.55f, h * 0.45f)
+        cubicTo(w * 0.8f, h * 0.55f, w * 0.85f, h * 0.15f, w * 0.98f, h * 0.1f)
+    }
+    drawPath(
+        path, Brush.horizontalGradient(listOf(theme.from.copy(alpha = 0.1f), theme.to.copy(alpha = 0.7f))),
+        style = Stroke(3.dp.toPx(), cap = StrokeCap.Round, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(2f, 14f))),
+    )
+    drawCircle(theme.to, 5.dp.toPx(), Offset(w * 0.98f, h * 0.1f))
+    drawCircle(theme.to.copy(alpha = 0.3f), 12.dp.toPx(), Offset(w * 0.98f, h * 0.1f))
 }

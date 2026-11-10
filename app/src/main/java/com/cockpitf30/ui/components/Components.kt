@@ -34,6 +34,11 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
@@ -74,9 +79,9 @@ fun FocusTile(
     val scale by animateFloatAsState(if (focused) 1.03f else 1f, label = "scale")
     val border by animateColorAsState(
         when {
-            focused -> Cockpit.BlueLight
-            selected -> Cockpit.Blue
-            else -> Cockpit.GlassBorder
+            focused -> FocusEdge
+            selected -> Cockpit.BlueLight
+            else -> Color.Transparent
         },
         label = "border",
     )
@@ -85,7 +90,7 @@ fun FocusTile(
         modifier
             .scale(scale)
             // Brillo azul alrededor del elemento enfocado.
-            .shadow(if (focused) 24.dp else 0.dp, shape, ambientColor = Cockpit.Blue, spotColor = Cockpit.BlueLight)
+            .shadow(if (focused) 28.dp else 0.dp, shape, ambientColor = Cockpit.BlueLight, spotColor = FocusEdge)
             .clip(shape)
             // Base opaca al enfocar para que el brillo no se transparente dentro de la tarjeta.
             .background(if (focused) Cockpit.Background else Cockpit.Background.copy(alpha = 0.55f))
@@ -93,7 +98,16 @@ fun FocusTile(
                 if (focused) Brush.verticalGradient(listOf(Cockpit.Blue.copy(alpha = 0.38f), Cockpit.Blue.copy(alpha = 0.12f)))
                 else Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.06f), Color.White.copy(alpha = 0.03f))),
             )
-            .border(if (focused || selected) 2.dp else 1.dp, border, shape)
+            // Mismo bisel de metal en todos los botones (cobre arriba a la izquierda, acero abajo) y,
+            // encima, un filo luminoso y ancho para el enfocado o el seleccionado: se ve con sol.
+            .drawWithContent {
+                drawContent()
+                tileBevel(lit = focused || selected)
+                if (border.alpha > 0f) {
+                    val w = (if (focused) 3.5.dp else 2.5.dp).toPx()
+                    drawRoundRect(border, Offset(w / 2, w / 2), Size(size.width - w, size.height - w), CornerRadius(12.dp.toPx() - w / 2), style = Stroke(w))
+                }
+            }
             .onFocusChanged { focused = it.isFocused }
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
@@ -165,4 +179,22 @@ fun TopBar(title: String, modifier: Modifier = Modifier, trailing: @Composable (
         trailing()
         ClockText()
     }
+}
+
+/** Filo del elemento enfocado: azul hielo muy claro, que se distingue incluso a pleno sol. */
+private val FocusEdge = Color(0xFFA8DCFF)
+
+/** Bisel de metal común a todos los botones: cobre arriba a la izquierda, azul acero abajo a la derecha. */
+fun androidx.compose.ui.graphics.drawscope.DrawScope.tileBevel(lit: Boolean) {
+    val stroke = 1.8.dp.toPx()
+    val a = if (lit) 1f else 0.8f
+    drawRoundRect(
+        Brush.linearGradient(
+            0f to Cockpit.CopperLight.copy(alpha = 0.95f * a), 0.3f to Cockpit.Copper.copy(alpha = 0.6f * a),
+            0.55f to Color.White.copy(alpha = 0.18f * a), 0.8f to Cockpit.SteelBlue.copy(alpha = 0.65f * a),
+            1f to Cockpit.SteelBlueLight.copy(alpha = 0.95f * a),
+            start = Offset(0f, 0f), end = Offset(size.width, size.height),
+        ),
+        Offset(stroke / 2, stroke / 2), Size(size.width - stroke, size.height - stroke), CornerRadius(12.dp.toPx()), style = Stroke(stroke),
+    )
 }

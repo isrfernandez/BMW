@@ -5,7 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.provider.ContactsContract
+import com.cockpitf30.system.Contact
+import com.cockpitf30.system.Contacts
 import android.speech.RecognizerIntent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
@@ -64,7 +65,7 @@ import androidx.core.content.ContextCompat
 import com.cockpitf30.ui.components.FocusTile
 import com.cockpitf30.ui.components.InitialFocus
 import com.cockpitf30.ui.components.TopBar
-import com.cockpitf30.ui.components.hexBackground
+import com.cockpitf30.ui.components.TriangleBackground
 import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.ui.theme.numeric
 import kotlinx.coroutines.Dispatchers
@@ -78,7 +79,6 @@ private val KEYS = listOf(
 )
 private val CallGreen = Color(0xFF1DB954)
 
-private class Contact(val name: String, val number: String)
 
 /**
  * Marcador propio con letra grande para el coche: número en Saira, teclado de teclas grandes,
@@ -93,7 +93,7 @@ fun PhoneScreen() {
 
     val contactsPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { hasContacts = it }
     val callPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { call(context, number) }
-    LaunchedEffect(hasContacts) { if (hasContacts) contacts = loadContacts(context) }
+    LaunchedEffect(hasContacts) { contacts = loadContacts(context) }
 
     fun dial() {
         if (number.isBlank()) return
@@ -155,7 +155,8 @@ fun PhoneScreen() {
     InitialFocus(first)
 
     pending?.let { CallingOverlay(it, countdown) { pending = null } }
-    Column(Modifier.fillMaxSize().hexBackground()) {
+    TriangleBackground(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize()) {
         TopBar("Teléfono")
         Row(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(40.dp)) {
             // Número y teclado
@@ -233,6 +234,7 @@ fun PhoneScreen() {
             }
         }
     }
+    }
 }
 
 private fun granted(context: Context, permission: String) =
@@ -246,18 +248,8 @@ private fun call(context: Context, number: String) {
     launch(context, Intent(action, uri))
 }
 
-private suspend fun loadContacts(context: Context): List<Contact> = withContext(Dispatchers.IO) {
-    runCatching {
-        context.contentResolver.query(
-            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-            arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER),
-            null, null, ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " ASC",
-        )?.use { c ->
-            buildList { while (c.moveToNext()) add(Contact(c.getString(0) ?: "", c.getString(1) ?: "")) }
-                .distinctBy { it.name + it.number.filter(Char::isDigit) }
-        } ?: emptyList()
-    }.getOrDefault(emptyList())
-}
+/** Contactos de Android o, si no hay, la agenda Bluetooth de la radio. */
+private suspend fun loadContacts(context: Context): List<Contact> = withContext(Dispatchers.IO) { Contacts.load(context) }
 
 /** Botón con micrófono para la voz. */
 @Composable

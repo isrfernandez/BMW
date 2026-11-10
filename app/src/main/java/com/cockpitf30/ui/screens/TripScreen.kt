@@ -39,7 +39,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cockpitf30.ui.components.FocusTile
 import com.cockpitf30.ui.components.InitialFocus
 import com.cockpitf30.ui.components.TopBar
-import com.cockpitf30.ui.components.hexBackground
+import com.cockpitf30.ui.components.TriangleBackground
+import com.cockpitf30.ui.components.glassPanel
+import com.cockpitf30.ui.components.PanelTitle
 import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.ui.theme.numeric
 import com.cockpitf30.vehicle.trip.Trip
@@ -49,8 +51,6 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-
-private val Panel = RoundedCornerShape(16.dp)
 
 /**
  * Datos de viaje: hora de inicio y fin, duración, kilómetros, consumo y velocidades, con la
@@ -65,7 +65,8 @@ fun TripScreen() {
     val first = remember { FocusRequester() }
     InitialFocus(first)
 
-    Column(Modifier.fillMaxSize().hexBackground()) {
+    TriangleBackground(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize()) {
         TopBar("Datos de viaje") {
             Text(
                 when {
@@ -82,7 +83,7 @@ fun TripScreen() {
             Timeline(trip, ongoing, Modifier.fillMaxWidth().height(132.dp))
             Row(Modifier.fillMaxWidth().height(132.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 val cons = trip?.avgConsumption(trips.tankLiters)
-                Stat("Distancia", trip?.let { km(it.distanceKm) } ?: "--", "km")
+                Stat("Distancia", trip?.let { km(it.distanceKm) } ?: "--", "km", accent = Color(0xFF4FA3FF))
                 Stat(
                     "Consumo medio", cons?.let { "%.1f".format(Locale("es"), it) } ?: "--", "l/100 km",
                     note = when {
@@ -91,10 +92,11 @@ fun TripScreen() {
                         cons != null -> "Estimado por el depósito"
                         else -> "Necesita más km o datos del CAN"
                     },
+                    accent = Color(0xFFFFB74D),
                 )
-                Stat("Velocidad media", trip?.avgSpeedKmh?.toString() ?: "--", "km/h")
-                Stat("Velocidad máx.", trip?.takeIf { it.maxSpeedKmh > 0 }?.maxSpeedKmh?.toString() ?: "--", "km/h")
-                Stat("En movimiento", trip?.let { duration(it.movingMillis) } ?: "--", null)
+                Stat("Velocidad media", trip?.avgSpeedKmh?.toString() ?: "--", "km/h", accent = Color(0xFF7FD3FF))
+                Stat("Velocidad máx.", trip?.takeIf { it.maxSpeedKmh > 0 }?.maxSpeedKmh?.toString() ?: "--", "km/h", accent = Color(0xFFFF6B6B))
+                Stat("En movimiento", trip?.let { duration(it.movingMillis) } ?: "--", null, accent = Cockpit.Ok)
             }
             Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 SpeedChart(trip, Modifier.weight(1f).fillMaxHeight())
@@ -119,6 +121,7 @@ fun TripScreen() {
             }
         }
     }
+}
 }
 
 /** Inicio a la izquierda, fin a la derecha y la duración sobre una línea que los une. */
@@ -163,9 +166,9 @@ private fun TimePoint(label: String, value: String, sub: String?, align: Alignme
 }
 
 @Composable
-private fun RowScope.Stat(label: String, value: String, unit: String?, note: String? = null) {
-    Column(Modifier.weight(1f).fillMaxHeight().panel().padding(horizontal = 22.dp, vertical = 14.dp), verticalArrangement = Arrangement.Center) {
-        Text(label.uppercase(), style = MaterialTheme.typography.labelLarge, color = Cockpit.TextDim, maxLines = 1)
+private fun RowScope.Stat(label: String, value: String, unit: String?, note: String? = null, accent: Color = Cockpit.BlueLight) {
+    Column(Modifier.weight(1f).fillMaxHeight().panel(accent).padding(horizontal = 22.dp, vertical = 14.dp), verticalArrangement = Arrangement.Center) {
+        PanelTitle(label, accent = accent)
         Row(verticalAlignment = Alignment.Bottom) {
             Text(value, style = numeric(44, FontWeight.Medium), color = Cockpit.Text, maxLines = 1)
             if (unit != null) Text(" $unit", style = numeric(20), color = Cockpit.TextDim, modifier = Modifier.padding(bottom = 7.dp), maxLines = 1)
@@ -179,9 +182,9 @@ private fun RowScope.Stat(label: String, value: String, unit: String?, note: Str
 private fun SpeedChart(trip: Trip?, modifier: Modifier) {
     Column(modifier.panel().padding(horizontal = 24.dp, vertical = 16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("VELOCIDAD DURANTE EL VIAJE", style = MaterialTheme.typography.labelLarge, color = Cockpit.TextDim)
-            Spacer(Modifier.weight(1f))
-            Text("km/h", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
+            PanelTitle("Velocidad durante el viaje", Modifier.weight(1f)) {
+                Text("km/h", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
+            }
         }
         Spacer(Modifier.height(10.dp))
         val samples = trip?.speedSamples.orEmpty()
@@ -230,7 +233,7 @@ private fun SpeedChart(trip: Trip?, modifier: Modifier) {
 @Composable
 private fun Hint(modifier: Modifier) {
     Column(modifier.panel().padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("PRÓXIMO VIAJE", style = MaterialTheme.typography.labelLarge, color = Cockpit.TextDim)
+        PanelTitle("Próximo viaje", accent = Cockpit.Ok)
         Text(
             "Empieza solo al mover el coche y termina tras 10 minutos parado o con el contacto quitado.",
             style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim,
@@ -242,7 +245,7 @@ private fun Hint(modifier: Modifier) {
 @Composable
 private fun LastTrip(trip: Trip?, tank: Float, modifier: Modifier) {
     Column(modifier.panel().padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("ÚLTIMO VIAJE", style = MaterialTheme.typography.labelLarge, color = Cockpit.TextDim)
+        PanelTitle("Último viaje", accent = Cockpit.Ok)
         if (trip == null) {
             Text("Todavía no hay un viaje anterior", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
             return@Column
@@ -267,8 +270,8 @@ private fun Mini(value: String, unit: String?) {
     }
 }
 
-/** Recuadro de cristal sobre el fondo hexagonal. */
-private fun Modifier.panel() = background(Color.Black.copy(alpha = 0.35f), Panel).border(1.dp, Cockpit.GlassBorder, Panel)
+/** Recuadro de cristal ahumado sobre el fondo de triángulos. */
+private fun Modifier.panel(tint: Color = Cockpit.BlueLight) = glassPanel(16.dp, tint)
 
 internal fun km(v: Double) = if (v < 100) "%.1f".format(Locale("es"), v) else "%.0f".format(Locale("es"), v)
 

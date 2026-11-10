@@ -13,8 +13,10 @@ import android.provider.Settings
  * la exclusión la concede el usuario en él.
  */
 object BatteryOptimization {
-    fun isIgnoring(context: Context): Boolean =
+    // Algunas ROMs (y el renderizador de capturas) no tienen el servicio: se toma como no excluida.
+    fun isIgnoring(context: Context): Boolean = runCatching {
         context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)
+    }.getOrDefault(false)
 
     @SuppressLint("BatteryLife")
     fun request(context: Context) {

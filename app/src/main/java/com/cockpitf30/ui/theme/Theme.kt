@@ -19,15 +19,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.cockpitf30.R
 
-/** Paleta estilo iDrive: negro grafito, texto blanco, gris plata, azul BMW y rojo M. */
+/**
+ * Paleta estilo iDrive: negro grafito, texto blanco, gris plata, azul BMW y rojo M. Los acentos
+ * cambian con el modo de conducción ([DriveModes]); se leen como estado de Compose, así que al
+ * cambiar de modo todo se vuelve a pintar.
+ */
 object Cockpit {
     val Background = Color(0xFF0B0C10)
     val Surface = Color(0xFF121212)
     val SurfaceHigh = Color(0xFF1C1F26)
-    val Blue = Color(0xFF1C69D8)
-    val BlueLight = Color(0xFF4FA3FF)
-    val Text = Color(0xFFFFFFFF)
-    val TextDim = Color(0xFFA7AFBA)
+    val Blue: Color get() = DriveModes.palette.blue
+    val BlueLight: Color get() = DriveModes.palette.blueLight
+    val Text: Color get() = DriveModes.palette.text
+    val TextDim: Color get() = DriveModes.palette.textDim
     val Track = Color(0xFF262B33)
     val Alert = Color(0xFFE10600)
     val Ok = Color(0xFF3DDC97)
@@ -35,6 +39,14 @@ object Cockpit {
     /** Efecto cristal de las tarjetas: blanco casi transparente y borde muy fino. */
     val Glass = Color.White.copy(alpha = 0.05f)
     val GlassBorder = Color.White.copy(alpha = 0.08f)
+
+    /** Cobre metalizado y azul acero suave: acentos del menú lateral y de los marcadores. */
+    val CopperDark: Color get() = DriveModes.palette.copperDark
+    val Copper: Color get() = DriveModes.palette.copper
+    val CopperLight: Color get() = DriveModes.palette.copperLight
+    val SteelBlueDark: Color get() = DriveModes.palette.steelDark
+    val SteelBlue: Color get() = DriveModes.palette.steel
+    val SteelBlueLight: Color get() = DriveModes.palette.steelLight
 
     val MLight = Color(0xFF0066B1)
     val MDark = Color(0xFF1C2D6B)

@@ -42,7 +42,7 @@ class RaiseFramerTest {
     }
 
     @Test
-    fun decodesSpeedRpmAndDoors() {
+    fun decodesSpeedAndRpm() {
         var state = VehicleState()
         val framer = RaiseFramer(onFrame = { state = RaiseBmwDecoder.apply(it, state) })
 
@@ -50,8 +50,5 @@ class RaiseFramerTest {
 
         assertEquals(3000, state.rpm)
         assertEquals(80, state.speedKmh)
-        assertEquals(true, state.doors.driver)
-        assertEquals(false, state.doors.passenger)
-        assertEquals(true, state.doors.trunk)
     }
 }

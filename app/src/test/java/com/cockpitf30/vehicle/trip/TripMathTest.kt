@@ -31,6 +31,26 @@ class TripMathTest {
     }
 
     @Test
+    fun gpsJumpsAreCappedToRealisticSpeed() {
+        // Posiciones que saltan 170 m cada segundo (612 km/h): no pueden contar como distancia.
+        val t = drive(0, 600, null, gps = 170.0)
+        assertTrue(t.maxSpeedKmh <= TripMath.MAX_KMH)
+        assertTrue(t.avgSpeedKmh!! <= TripMath.MAX_KMH)
+    }
+
+    @Test
+    fun absurdSavedAverageIsHidden() {
+        val t = Trip(startMillis = 0, lastMillis = 600_000, distanceM = 102_500.0, maxSpeedKmh = 700)
+        assertNull(t.avgSpeedKmh)
+    }
+
+    @Test
+    fun averageNeverAboveMax() {
+        val t = Trip(startMillis = 0, lastMillis = 3_600_000, distanceM = 80_000.0, maxSpeedKmh = 70)
+        assertEquals(70, t.avgSpeedKmh)
+    }
+
+    @Test
     fun gapsDoNotAddDistance() {
         var t = TripMath.begin(TripInput(0, 50))
         t = TripMath.step(t, TripInput(60_000, 50))

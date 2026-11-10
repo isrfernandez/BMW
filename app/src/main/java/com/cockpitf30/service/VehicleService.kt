@@ -19,6 +19,7 @@ import com.cockpitf30.vehicle.VehicleRepository
 import com.cockpitf30.vehicle.trip.TripComputer
 import com.cockpitf30.vehicle.source.CarPropertySource
 import com.cockpitf30.vehicle.source.DemoSource
+import com.cockpitf30.vehicle.source.RadioCarSource
 import com.cockpitf30.vehicle.source.SerialSource
 import com.cockpitf30.vehicle.source.VehicleDataSource
 import kotlinx.coroutines.CoroutineScope
@@ -41,6 +42,8 @@ class VehicleService : LifecycleService() {
         val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
         ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), type)
         TripComputer.start(this, tripScope)
+        com.cockpitf30.vehicle.telemetry.Telemetry.start(this, tripScope)
+        com.cockpitf30.nav.SpeedCameras.start(this, tripScope)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -53,6 +56,8 @@ class VehicleService : LifecycleService() {
         stopSource()
         tripScope.cancel()
         TripComputer.stop()
+        com.cockpitf30.vehicle.telemetry.Telemetry.stop()
+        com.cockpitf30.nav.SpeedCameras.stop()
         super.onDestroy()
     }
 
@@ -76,10 +81,13 @@ class VehicleService : LifecycleService() {
     private fun createSource(settings: AppSettings): VehicleDataSource = when (settings.sourceMode) {
         SourceMode.DEMO -> DemoSource()
         SourceMode.CAR_PROPERTY -> CarPropertySource(this)
+        SourceMode.RADIO -> RadioCarSource(this)
         SourceMode.SERIAL -> SerialSource(settings.serialPath, settings.baudRate)
-        SourceMode.AUTO ->
-            if (CarPropertySource.isAvailable(this)) CarPropertySource(this)
-            else SerialSource(settings.serialPath, settings.baudRate)
+        SourceMode.AUTO -> when {
+            CarPropertySource.isAvailable(this) -> CarPropertySource(this)
+            RadioCarSource.isAvailable(this) -> RadioCarSource(this)
+            else -> SerialSource(settings.serialPath, settings.baudRate)
+        }
     }
 
     private fun buildNotification(): Notification {

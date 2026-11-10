@@ -36,9 +36,18 @@ data class Trip(
     val durationMillis: Long get() = (endMillis - startMillis).coerceAtLeast(0)
     val distanceKm: Double get() = distanceM / 1000.0
 
-    /** Velocidad media sobre la duración total, como el ordenador de a bordo de BMW. */
+    /**
+     * Velocidad media sobre la duración total, como el ordenador de a bordo de BMW. Nunca puede
+     * pasar de la máxima; si aun así sale disparatada (viajes guardados antes de filtrar los saltos
+     * del GPS) no se muestra.
+     */
     val avgSpeedKmh: Int?
-        get() = if (durationMillis < 60_000) null else (distanceKm / (durationMillis / 3_600_000.0)).roundToInt()
+        get() {
+            if (durationMillis < 60_000) return null
+            val avg = (distanceKm / (durationMillis / 3_600_000.0)).roundToInt()
+            if (avg > TripMath.MAX_KMH) return null
+            return if (maxSpeedKmh > 0) minOf(avg, maxSpeedKmh) else avg
+        }
 
     /** Litros gastados según el nivel del depósito, si ha bajado algo. */
     fun fuelUsedLiters(tankLiters: Float): Float? {
@@ -124,6 +133,8 @@ object TripMath {
     const val FIRST_SAMPLE_MS = 15_000L
     const val MAX_SAMPLES = 240
     const val MIN_KM_FOR_FUEL = 15.0
+    /** Velocidad que un F30 no supera: tope para lo que se deduce del GPS. */
+    const val MAX_KMH = 260
 
     fun isMoving(input: TripInput) = (input.speedKmh ?: 0) >= MOVING_KMH || (input.speedKmh == null && input.gpsMeters > 3.0)
 
@@ -144,7 +155,9 @@ object TripMath {
     fun step(trip: Trip, input: TripInput): Trip {
         val dt = (input.now - trip.lastMillis).coerceIn(0, MAX_STEP_MS)
         val speed = input.speedKmh
-        val meters = if (speed != null) speed / 3.6 * dt / 1000.0 else input.gpsMeters
+        // La distancia del GPS se limita a lo que se puede recorrer en dt a [MAX_KMH]: un salto de
+        // la posición no puede convertirse en kilómetros.
+        val meters = if (speed != null) speed / 3.6 * dt / 1000.0 else minOf(input.gpsMeters, MAX_KMH / 3.6 * dt / 1000.0)
         val shownSpeed = speed ?: if (dt > 0) (meters / dt * 3600.0).toInt() else 0
         val moving = isMoving(input)
         var t = trip.copy(
