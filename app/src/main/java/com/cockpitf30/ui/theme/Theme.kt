@@ -6,7 +6,13 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -124,13 +130,24 @@ const val DESIGN_HEIGHT_DP = 720f
 var appliedDesignDensity: Float = 0f
     private set
 
+/** Bandas (px) que deja [DesignScale] arriba/abajo o a los lados cuando la pantalla no es 8:3. */
+var appliedBandsPx: Pair<Int, Int> = 0 to 0
+    private set
+
 /**
  * Escala la interfaz para que la pantalla real equivalga siempre al lienzo de diseño, sea cual sea
  * la densidad o el tamaño de letra que traiga la radio (algunas usan 240 dpi y todo se salía).
+ *
+ * El lienzo mide siempre exactamente 1920x720 dp y se centra: en pantallas con otra proporción
+ * (móvil 2772x1280, tablet 16:10) quedan bandas del color de fondo en lugar de estirar la
+ * interfaz, así todo se ve con las mismas proporciones que en la radio.
  */
 @Composable
 private fun DesignScale(content: @Composable () -> Unit) {
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    BoxWithConstraints(
+        Modifier.fillMaxSize().background(Cockpit.Background),
+        contentAlignment = Alignment.Center,
+    ) {
         val w = constraints.maxWidth.toFloat()
         val h = constraints.maxHeight.toFloat()
         if (!constraints.hasBoundedWidth || !constraints.hasBoundedHeight || w <= 0f || h <= 0f) {
@@ -139,6 +156,10 @@ private fun DesignScale(content: @Composable () -> Unit) {
         }
         val density = minOf(w / DESIGN_WIDTH_DP, h / DESIGN_HEIGHT_DP)
         appliedDesignDensity = density
-        CompositionLocalProvider(LocalDensity provides Density(density, fontScale = 1f), content = content)
+        appliedBandsPx = ((w - DESIGN_WIDTH_DP * density) / 2f).toInt() to
+            ((h - DESIGN_HEIGHT_DP * density) / 2f).toInt()
+        CompositionLocalProvider(LocalDensity provides Density(density, fontScale = 1f)) {
+            Box(Modifier.size(DESIGN_WIDTH_DP.dp, DESIGN_HEIGHT_DP.dp).clipToBounds()) { content() }
+        }
     }
 }

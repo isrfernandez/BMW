@@ -35,6 +35,11 @@ class RouteAlertsTest {
         assertEquals("place", p["n6"]!!.kind)
     }
 
+    @Test fun overpassTimeoutIsAnError() {
+        val r = runCatching { RoutePois.parse("""{"elements":[],"remark":"runtime error: Query timed out in \"query\" at line 3 after 31 seconds."}""") }
+        assertTrue(r.isFailure)
+    }
+
     @Test fun safetyFirstAndOnlyAhead() {
         val mem = RouteAlerts.Memory()
         val near = listOf(
