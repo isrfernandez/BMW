@@ -26,6 +26,8 @@ data class CopilotSnapshot(
     /** Primer punto de la ruta con lluvia probable. */
     val rainAheadKm: Int? = null,
     val camerasNear: Int = 0,
+    /** Sitios turísticos a menos de 5 km (nombres). */
+    val sightsNear: List<String> = emptyList(),
 )
 
 /** Una frase del copiloto; con [yes], es una pregunta y un «sí» hace esa orden. */
@@ -102,6 +104,11 @@ object Copilot {
             if (s.camerasNear <= 0) return@Topic null
             val n = if (s.camerasNear == 1) "un radar" else "${s.camerasNear} radares"
             CopilotLine("cameras", "Hay $n en los próximos kilómetros. Tranquilo, te aviso al acercarnos.")
+        },
+        Topic("sights", false, 40) { s ->
+            if (s.sightsNear.isEmpty()) return@Topic null
+            val names = s.sightsNear.joinToString(" y ")
+            CopilotLine("sights", "Por esta zona hay cosas que ver: $names. ¿Quieres que te cuente qué hay por aquí?", Command.Nearby)
         },
         Topic("consumption", false, 30) { s ->
             val c = s.avgConsumption ?: return@Topic null

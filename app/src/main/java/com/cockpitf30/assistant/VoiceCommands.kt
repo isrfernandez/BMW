@@ -56,6 +56,12 @@ sealed interface Command {
     data class Copilot(val on: Boolean?) : Command
     /** «Cállate un rato»: el copiloto no habla en media hora. */
     data object Quiet : Command
+    /** Activar o desactivar los avisos en ruta, todos ([category] null) o de un tipo. */
+    data class Alerts(val category: com.cockpitf30.nav.AlertCategory?, val on: Boolean) : Command
+    /** «¿Qué hay por aquí?»: sitios de interés cercanos. */
+    data object Nearby : Command
+    /** «Háblame de eso»: más del último sitio del que se avisó. */
+    data object AboutThat : Command
     /** Una de las gasolineras de las que se acaba de hablar (lo crea [Conversation]). */
     data class Station(val index: Int, val action: StationAction) : Command
 }
@@ -167,6 +173,23 @@ object VoiceCommands {
         if (has("copiloto")) {
             return Command.Copilot(if (has("desactiva", "quita", "apaga", "para ", "deja", "fuera", "sin copiloto")) false else true)
         }
+        // Avisos en ruta: «desactiva los avisos», «quita los avisos turísticos», «activa avisos de radares».
+        val alertWords = has("aviso", "avisos", "puntos de interes", "informacion turistica", "turistic", "turismo")
+        val toggle = has("activa", "desactiva", "quita", "apaga", "enciende", "pon ", "quiero", "sin ", "no quiero", "deja de", "para de", "vuelve a")
+        if (alertWords && toggle) {
+            val off = has("desactiva", "quita", "apaga", "sin ", "no quiero", "deja de", "para de", "no me avises")
+            val cat = when {
+                has("radar") -> com.cockpitf30.nav.AlertCategory.RADAR
+                has("turistic", "turismo", "monumento", "puntos de interes", "lugares", "sitios") -> com.cockpitf30.nav.AlertCategory.TOURISM
+                has("seguridad", "peligro", "paso a nivel", "pasos a nivel") -> com.cockpitf30.nav.AlertCategory.SAFETY
+                has("gasolin", "combustible", "gasoil", "repostar", "autonomia") -> com.cockpitf30.nav.AlertCategory.FUEL
+                has("descanso", "area", "areas", "parar") -> com.cockpitf30.nav.AlertCategory.REST
+                else -> null
+            }
+            return Command.Alerts(cat, !off)
+        }
+        if (has("que hay por aqui", "que hay cerca", "que hay por la zona", "que ver por aqui", "que se puede ver", "algo que ver", "sitios de interes", "lugares de interes", "puntos de interes", "que hay interesante")) return Command.Nearby
+        if (has("hablame de eso", "hablame de ese", "hablame de esa", "cuentame mas", "que es eso", "que es ese", "que es esa", "mas informacion", "cuentame de eso", "dime mas")) return Command.AboutThat
         if (has("callate", "silencio", "no hables", "deja de hablar")) return Command.Quiet
         if (Regex("^(?:llevame|llevanos|vamos|ve|navega|ir|guiame)(?: (?:alli|ahi|alla|hasta alli|hacia alli|para alla|a ella|a esa))?$").matches(t)) return Command.GoThere
         if (!has("google") && has("cuanto cuesta", "precio", "a cuanto esta", "cuanto vale", "a como esta")) return Command.Price
