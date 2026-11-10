@@ -29,14 +29,13 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
 import kotlin.math.abs
-import kotlin.math.sqrt
 import kotlin.math.max
 
 /** Punto del perfil de altitud: kilómetro recorrido y cota en metros. */
 data class AltPoint(val km: Float, val altM: Float)
 
 /** De dónde salen las fuerzas G. */
-enum class GSource(val label: String) { SENSOR("Acelerómetro"), GPS("Velocidad CAN + rumbo GPS"), NONE("Sin datos") }
+enum class GSource(val label: String) { SENSOR("Acelerómetro"), GPS("Velocidad y GPS"), NONE("Sin datos") }
 
 data class TelemetryState(
     /** Fuerza G longitudinal: + acelerando, − frenando. */
@@ -92,11 +91,6 @@ object Telemetry {
     @Volatile private var acc: V3? = null
     @Volatile private var gravity: V3? = null
     @Volatile private var slowAcc: V3? = null
-    // Muchas radios chinas no llevan acelerómetro, y algunas registran uno de mentira que da
-    // siempre lo mismo: solo se usa si llegan lecturas recientes, con la gravedad y que cambian.
-    @Volatile private var accAt = 0L
-    @Volatile private var accFirst: V3? = null
-    @Volatile private var accVaries = false
     private var stillSince = 0L
 
     // Barómetro y luz.
@@ -202,10 +196,6 @@ object Telemetry {
             when (e.sensor.type) {
                 Sensor.TYPE_ACCELEROMETER -> {
                     val r = V3(e.values[0], e.values[1], e.values[2])
-                    accAt = SystemClock.elapsedRealtime()
-                    val f = accFirst
-                    if (f == null) accFirst = r
-                    else if (!accVaries && (abs(r.x - f.x) + abs(r.y - f.y) + abs(r.z - f.z)) > 0.05f) accVaries = true
                     acc = acc?.let { lerp(it, r, 0.12f) } ?: r
                     slowAcc = slowAcc?.let { lerp(it, r, 0.002f) } ?: r
                 }
@@ -231,12 +221,8 @@ object Telemetry {
                 var d = loc.bearing - prev
                 if (d > 180) d -= 360
                 if (d < -180) d += 360
-                val dt = (now - lastBearingAt) / 1000f
-                // Un salto de más de 45° por segundo es un fallo del GPS, no una curva.
-                if (abs(d) / dt <= 45f) {
-                    val rate = Math.toRadians(d.toDouble()).toFloat() / dt
-                    yawRate += (rate - yawRate) * 0.6f
-                }
+                val rate = Math.toRadians(d.toDouble()).toFloat() / ((now - lastBearingAt) / 1000f)
+                yawRate += (rate - yawRate) * 0.6f
             }
             lastBearing = loc.bearing
             lastBearingAt = now
@@ -280,14 +266,9 @@ object Telemetry {
         } else stillSince = 0L
 
         val ref = gravity ?: slowAcc
-        // Sin rumbo nuevo en 2,5 s (túnel, parado) la curva se va apagando.
-        if (now - lastBearingAt > 2500) yawRate *= 0.8f
-        val sensorOk = a != null && ref != null && accVaries && now - accAt < 1000 && a.let { sqrt(it.x * it.x + it.y * it.y + it.z * it.z) } in 6f..13.5f
         val (rawLong, rawLat, source) = when {
-            sensorOk -> TelemetryMath.gForces(a!!, ref!!).let { Triple(it.first, it.second, GSource.SENSOR) }
-            // Sin acelerómetro: longitudinal por la velocidad de la caja CAN (10 por segundo) y
-            // lateral = velocidad × giro del rumbo GPS (centrípeta v·ω).
-            v != null -> Triple((aSpeed ?: 0f) / TelemetryMath.G, if (v > 3f) v * yawRate / TelemetryMath.G else 0f, GSource.GPS)
+            a != null && ref != null -> TelemetryMath.gForces(a, ref).let { Triple(it.first, it.second, GSource.SENSOR) }
+            v != null -> Triple((aSpeed ?: 0f) / TelemetryMath.G, v * yawRate / TelemetryMath.G, GSource.GPS)
             else -> Triple(0f, 0f, GSource.NONE)
         }
         longF += (rawLong.coerceIn(-1.5f, 1.5f) - longF) * 0.35f
