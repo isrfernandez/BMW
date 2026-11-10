@@ -54,6 +54,10 @@ sealed interface Command {
     data class Chat(val key: String) : Command
     /** «Activa / desactiva el copiloto»; null = activar. */
     data class Copilot(val on: Boolean?) : Command
+    /** «Pausa»: se calla, pero recuerda dónde iba. */
+    data object Pause : Command
+    /** «Continúa», «sigue»: retoma lo que estaba diciendo. */
+    data object Resume : Command
     /** «Cállate un rato»: el copiloto no habla en media hora. */
     data object Quiet : Command
     /** Una de las gasolineras de las que se acaba de hablar (lo crea [Conversation]). */
@@ -102,13 +106,35 @@ object VoiceCommands {
     ).joinToString(",", "[", "]") { "\"$it\"" }
 
     /** Palabras para cortar al asistente mientras habla. */
-    private val STOP_WORDS = listOf("basta", "calla", "callate", "cállate", "espera", "vale ya", "para ya", "stop", "silencio")
+    /** Cortar y callarse. */
+    private val STOP_WORDS = listOf("para", "para ya", "detente", "cancela", "silencio", "calla", "callate", "cállate", "basta", "vale ya", "stop")
+    /** Pausar para luego seguir («continúa»). */
+    private val PAUSE_WORDS = listOf("pausa", "haz una pausa")
+    /** Retomar lo que estaba diciendo. */
+    private val RESUME_WORDS = listOf("continua", "continúa", "sigue", "sigue hablando", "continua hablando", "continúa hablando", "sigue por favor")
+    /** Cortar sin perder el hilo y escuchar lo que viene («espera, ¿y mañana?»). */
+    private val HOLD_WORDS = listOf("espera", "un momento", "a ver", "aclarame", "aclárame", "aclarame esto", "aclárame esto", "perdona", "oye")
 
     /** Gramática mientras habla la radio: «Hola BMW» o una palabra para cortarla. */
     val BARGE_GRAMMAR: String = (Regex("\"([^\"]+)\"").findAll(WAKE_GRAMMAR).map { it.groupValues[1] }.filter { it != "[unk]" }.toList() +
-        STOP_WORDS + "[unk]").joinToString(",", "[", "]") { "\"$it\"" }
+        STOP_WORDS + PAUSE_WORDS + HOLD_WORDS + RESUME_WORDS + "[unk]").distinct().joinToString(",", "[", "]") { "\"$it\"" }
 
-    fun isStopWord(text: String): Boolean = normalize(text) in STOP_WORDS.map(::normalize)
+    /** Lo que pide una palabra dicha mientras habla el asistente. */
+    enum class Barge { STOP, PAUSE, HOLD, RESUME }
+
+    fun bargeAction(text: String): Barge? {
+        val t = normalize(text)
+        fun inList(l: List<String>) = l.any { normalize(it) == t }
+        return when {
+            inList(STOP_WORDS) -> Barge.STOP
+            inList(PAUSE_WORDS) -> Barge.PAUSE
+            inList(HOLD_WORDS) -> Barge.HOLD
+            inList(RESUME_WORDS) -> Barge.RESUME
+            else -> null
+        }
+    }
+
+    fun isStopWord(text: String): Boolean = bargeAction(text) == Barge.STOP
 
     private val HELLO = setOf("hola", "ola", "hello", "oye")
 
@@ -147,6 +173,9 @@ object VoiceCommands {
         fun has(vararg keys: String) = keys.any { k -> if (' ' in k) t.contains(k) else words.any { it.startsWith(k) } }
         val question = words.any { it in QUESTION }
 
+        if (t in setOf("pausa", "haz una pausa")) return Command.Pause
+        if (t in setOf("continua", "sigue", "sigue hablando", "continua hablando", "sigue por favor", "continua por favor", "por donde ibas", "donde te habias quedado")) return Command.Resume
+        if (t in setOf("para", "para ya", "detente", "parate", "stop", "basta", "vale ya")) return Command.Cancel
         if (t in setOf("nada", "no", "no gracias", "cancelar", "cancela", "olvidalo", "salir", "adios", "hasta luego", "nada mas") || has("cancela", "olvidalo")) return Command.Cancel
         if (has("gracias") && words.size <= 4) return Command.Thanks
         if (t in YES || (words.size <= 3 && t.startsWith("si "))) return Command.Yes

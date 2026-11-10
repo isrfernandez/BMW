@@ -97,6 +97,8 @@ data class AssistantState(
     val lastText: String? = null,
     /** Escuchando sin «Hola BMW» justo después de responder (conversación seguida). */
     val followUp: Boolean = false,
+    /** En pausa («pausa»): «sigue» retoma lo que estaba diciendo. */
+    val paused: Boolean = false,
 )
 
 /**
@@ -117,6 +119,8 @@ object VoiceAssistant {
     private const val FOLLOW_MS = 12_000L
     /** Silencio tras la última palabra para dar la frase por terminada (Vosk corta en cada pausa). */
     private const val END_SILENCE_MS = 1_200L
+    /** Tras «pausa», tiempo para decir «sigue» sin «Hola BMW». */
+    private const val PAUSE_MS = 30_000L
     /** Lo mismo cuando lo dicho hasta ahora todavía no se entiende (frase a medias). */
     private const val END_SILENCE_UNSURE_MS = 2_500L
     /** Al empezar a hablar no se atiende a interrupciones (aún se oye el final de lo que dijo el conductor). */
@@ -165,6 +169,11 @@ object VoiceAssistant {
     private var followUp = false
     /** Abrir la escucha sin «Hola BMW» al terminar de hablar (y durante cuánto). */
     private var listenAfterReply = 0L
+    /** Por dónde va hablando (carácter de la respuesta, lo dice el motor de voz). */
+    @Volatile private var spokenPos = 0
+    /** Lo que quedó por decir al interrumpirla con «pausa» o «espera» (para «sigue»). */
+    private var pausedText: String? = null
+    private var pausedAt = 0L
     /** Gasolineras de la última respuesta, de la más cercana a la más lejana. */
     private var nearStations: List<com.cockpitf30.fuel.NearStation> = emptyList()
 
@@ -446,7 +455,7 @@ object VoiceAssistant {
             followUp = false
             muted = false
             resetRecognizer = true
-            _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, reply = "Algo ha fallado. Vuelve a intentarlo", replyAt = System.currentTimeMillis(), error = "$what: ${e.message ?: e.javaClass.simpleName}") }
+            _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, paused = false, reply = "Algo ha fallado. Vuelve a intentarlo", replyAt = System.currentTimeMillis(), error = "$what: ${e.message ?: e.javaClass.simpleName}") }
         }
     }
 
@@ -508,7 +517,7 @@ object VoiceAssistant {
         if (followUp) {
             // Fin de la conversación seguida: sin «No te he oído», que no se ha preguntado nada.
             followUp = false
-            _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, engine = null, followUp = false) }
+            _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, engine = null, followUp = false, paused = false) }
             return
         }
         _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, reply = "No te he oído", replyAt = System.currentTimeMillis(), engine = null) }
@@ -518,7 +527,7 @@ object VoiceAssistant {
     private fun wake() {
         followUp = false
         listenUntil = System.currentTimeMillis() + LISTEN_MS
-        _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, reply = null, engine = "Vosk", followUp = false) }
+        _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, reply = null, engine = "Vosk", followUp = false, paused = false) }
         beep()
     }
 
@@ -547,7 +556,7 @@ object VoiceAssistant {
                 listenUntil = 0
                 followUp = false
                 stopGoogle()
-                _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, reply = null, followUp = false) }
+                _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, reply = null, followUp = false, paused = false) }
                 refresh()
             }
             AssistantPhase.NO_PERMISSION -> permissionRequester?.invoke()
@@ -617,10 +626,10 @@ object VoiceAssistant {
         // En la escucha seguida se descarta lo suelto (ruido, la radio); una frase de verdad se contesta.
         if (inFollowUp && !waitingAnswer && ((command is Command.Unknown && words < 3) || command == Command.Yes || command == Command.Another)) {
             // Sin «Hola BMW» y sin sentido: será la radio o alguien hablando. No se contesta.
-            _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false) }
+            _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, paused = false) }
             return
         }
-        _state.update { it.copy(heard = text, followUp = false) }
+        _state.update { it.copy(heard = text, followUp = false, paused = false) }
         lastActivityAt = now
         var reply = perform(command, now)
         val repeatable = command is Command.Info || command is Command.WeatherDay
@@ -762,6 +771,12 @@ object VoiceAssistant {
                 startCopilot()
                 "Modo copiloto activado. Te daré conversación cada ${settings().copilotMinutes} minutos más o menos. Si molesto, di cállate un rato."
             } else joke("Modo copiloto desactivado", "cancel")
+        }
+        Command.Pause -> if (pausedText != null) "Sigo en pausa. Di sigue cuando quieras" else Personality.line("ack")
+        Command.Resume -> {
+            val rest = pausedText?.takeIf { now - pausedAt < 10 * 60_000L }
+            pausedText = null
+            rest ?: "No me había quedado a medias. Pregúntame lo que quieras"
         }
         Command.Quiet -> {
             copilotSnoozeUntil = now + 30 * 60_000L
@@ -1040,6 +1055,8 @@ object VoiceAssistant {
             applyVoice()
             t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) { ttsLastError = null }
+                // Palabra que está diciendo: para saber dónde seguir tras «pausa» y no confundir su voz con una orden.
+                override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) { spokenPos = start }
                 override fun onError(utteranceId: String?, errorCode: Int) {
                     ttsLastError = "error $errorCode al hablar"
                     @Suppress("DEPRECATION") onError(utteranceId)
@@ -1152,7 +1169,8 @@ object VoiceAssistant {
 
     private fun say(text: String, listenAfter: Long = 0L) {
         listenAfterReply = listenAfter
-        _state.update { it.copy(phase = AssistantPhase.ANSWERING, reply = text, replyAt = System.currentTimeMillis(), engine = null) }
+        spokenPos = 0
+        _state.update { it.copy(phase = AssistantPhase.ANSWERING, reply = text, replyAt = System.currentTimeMillis(), engine = null, paused = false) }
         unmuteJob?.cancel()
         stopPlayer()
         val t = tts
@@ -1239,27 +1257,59 @@ object VoiceAssistant {
     }
 
     /**
-     * Mientras habla: «Hola BMW» la corta y escucha una orden nueva; «basta», «calla», «espera»
-     * la corta y queda escuchando (sin «Hola BMW»).
+     * Mientras habla se le puede interrumpir:
+     * - «Hola BMW»: corta y escucha una orden nueva.
+     * - «para», «cancela», «silencio», «basta»…: corta y se calla.
+     * - «pausa»: corta y espera a «sigue» / «continúa» para retomar donde iba.
+     * - «espera», «un momento», «a ver»…: corta y escucha sin perder el hilo («sigue» también retoma).
      */
     private fun onBargeIn(text: String) {
         if (_state.value.phase != AssistantPhase.ANSWERING || !muted) return
         val wake = VoiceCommands.afterWakeWord(text) != null
-        val reply = VoiceCommands.normalize(_state.value.reply.orEmpty())
-        val stop = VoiceCommands.isStopWord(text) && !reply.contains(VoiceCommands.normalize(text))
-        if (!wake && !stop) return
-        Log.i(TAG, "Interrumpida: «$text»")
+        val action = if (wake) null else VoiceCommands.bargeAction(text)
+        if (!wake && (action == null || action == VoiceCommands.Barge.RESUME)) return
+        // Si esa palabra la está diciendo ella misma ahora («para llegar…»), es su eco: no se corta.
+        if (!wake && saysItNow(text)) return
+        Log.i(TAG, "Interrumpida ($action): «$text»")
+        val reply = _state.value.reply.orEmpty()
+        val rest = remainingText(reply, spokenPos)
         unmuteJob?.cancel()
         listenAfterReply = 0
         stopSpeaking()
         muted = false
         resetRecognizer = true
-        if (wake) wake()
-        else {
-            followUp = true
-            listenUntil = System.currentTimeMillis() + FOLLOW_MS
-            _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, engine = "Vosk", followUp = true, level = 0f) }
+        val now = System.currentTimeMillis()
+        if (action != VoiceCommands.Barge.STOP && rest != null) { pausedText = rest; pausedAt = now } else pausedText = null
+        when (action) {
+            null -> wake()
+            VoiceCommands.Barge.STOP -> _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, paused = false) }
+            VoiceCommands.Barge.PAUSE -> listenFollowUp(PAUSE_MS, paused = rest != null)
+            else -> listenFollowUp(FOLLOW_MS, paused = false)
         }
+    }
+
+    private fun listenFollowUp(ms: Long, paused: Boolean) {
+        followUp = true
+        listenUntil = System.currentTimeMillis() + ms
+        _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, engine = "Vosk", followUp = true, paused = paused, level = 0f) }
+    }
+
+    /** ¿Está diciendo [word] justo ahora? Mira el trozo de la respuesta alrededor de la palabra en curso. */
+    private fun saysItNow(word: String): Boolean {
+        val reply = _state.value.reply.orEmpty()
+        val w = VoiceCommands.normalize(word)
+        val pos = spokenPos
+        // Sin posición (voz con filtro, o el motor no la da) se mira la frase entera.
+        val window = if (pos <= 0) reply else reply.substring((pos - 30).coerceAtLeast(0), (pos + 40).coerceAtMost(reply.length))
+        return " ${VoiceCommands.normalize(window)} ".contains(" $w ")
+    }
+
+    /** Lo que falta por decir desde el principio de la frase (o trozo entre comas) en curso; null si nada. */
+    private fun remainingText(reply: String, pos: Int): String? {
+        if (reply.isBlank()) return null
+        if (pos <= 0) return reply
+        val cut = reply.lastIndexOfAny(charArrayOf('.', ',', ';', ':', '?', '!'), (pos - 1).coerceAtLeast(0))
+        return reply.substring(cut + 1).trim().takeIf { it.length > 2 }
     }
 
     private fun doneSpeaking() {
