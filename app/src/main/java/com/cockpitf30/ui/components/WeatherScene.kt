@@ -1,5 +1,6 @@
 package com.cockpitf30.ui.components
 
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -102,7 +103,8 @@ fun WeatherScene(
     val windX = -sin(Math.toRadians(windDir.toDouble())).toFloat()
     val windForce = (windKmh / 60f).coerceIn(0f, 1f)
     Spacer(
-        modifier.clipToBounds().drawWithCache {
+        // Capa propia: la escena se anima en cada fotograma y no debe repintar lo que la rodea.
+        modifier.graphicsLayer().clipToBounds().drawWithCache {
             val cloudW = (size.width * 0.36f).toInt()
             val cache = SceneCache(
                 clouds = List(3) { renderCloud(cloudW, 11 + it * 7, false, this) },

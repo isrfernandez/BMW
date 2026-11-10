@@ -28,6 +28,9 @@ object Images {
         BitmapFactory.decodeResource(context.resources, id, BitmapFactory.Options().apply { inScaled = false }).asImageBitmap()
     }
 
+    /** Suelta imágenes que ya no se van a usar (las de la pantalla de arranque, unos 6 MB). */
+    fun evict(vararg ids: Int) = ids.forEach { cache.remove(it) }
+
     fun preload(context: Context, ids: List<Int> = COMMON) {
         ids.forEach { runCatching { get(context.applicationContext, it) } }
     }

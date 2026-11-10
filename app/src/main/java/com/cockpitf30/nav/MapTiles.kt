@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -70,9 +71,11 @@ object MapTiles {
     val lastError = MutableStateFlow<String?>(null)
     @Volatile private var failuresInRow = 0
 
-    private val memory = LruCache<String, ImageBitmap>(96)
-    private val pending = ConcurrentHashMap.newKeySet<String>()
-    private val failedAt = ConcurrentHashMap<String, Long>()
+    // Claves numéricas: el mapa pregunta por cada tesela visible en cada fotograma y formar un
+    // texto por consulta llenaba la memoria de basura (pausas del recolector = tirones).
+    private val memory = LruCache<Long, ImageBitmap>(96)
+    private val pending = ConcurrentHashMap.newKeySet<Long>()
+    private val failedAt = ConcurrentHashMap<Long, Long>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val network = Semaphore(4)
     @Volatile private var dir: File? = null
@@ -92,11 +95,12 @@ object MapTiles {
         val n = 1 shl z
         if (y !in 0 until n) return null
         val wx = ((x % n) + n) % n
-        val key = "${provider.value.name}/$z/$wx/$y"
+        val p = provider.value
+        val key = key(p, z, wx, y)
         memory.get(key)?.let { return it }
         val failed = failedAt[key]
         if (failed != null && System.currentTimeMillis() - failed < 30_000) return null
-        if (pending.add(key)) scope.launch { load(key, provider.value, z, wx, y) }
+        if (pending.add(key)) scope.launch { load(key, p, z, wx, y) }
         return null
     }
 
@@ -104,10 +108,14 @@ object MapTiles {
     fun peek(z: Int, x: Int, y: Int): ImageBitmap? {
         val n = 1 shl z
         if (y !in 0 until n) return null
-        return memory.get("${provider.value.name}/$z/${((x % n) + n) % n}/$y")
+        return memory.get(key(provider.value, z, ((x % n) + n) % n, y))
     }
 
-    private suspend fun load(key: String, p: TileProvider, z: Int, x: Int, y: Int) {
+    /** Servidor (4 bits), zoom (5) y x, y (24 cada uno) en un solo número. */
+    private fun key(p: TileProvider, z: Int, x: Int, y: Int): Long =
+        (p.ordinal.toLong() shl 53) or (z.toLong() shl 48) or (x.toLong() shl 24) or y.toLong()
+
+    private suspend fun load(key: Long, p: TileProvider, z: Int, x: Int, y: Int) {
         try {
             val file = dir?.let { File(it, "${p.name.lowercase()}-$z-$x-$y.png") }
             var bytes = file?.takeIf { it.exists() }?.readBytes()
@@ -123,7 +131,7 @@ object MapTiles {
             } else {
                 memory.put(key, bmp.asImageBitmap())
                 failedAt.remove(key)
-                version.value++
+                version.update { it + 1 }
             }
         } catch (_: Throwable) {
             failedAt[key] = System.currentTimeMillis()
@@ -164,7 +172,7 @@ object MapTiles {
         if (p == TileProvider.ESRI_DARK && ++failuresInRow >= 4) {
             provider.value = TileProvider.OSM
             failedAt.clear()
-            version.value++
+            version.update { it + 1 }
         }
     }
 

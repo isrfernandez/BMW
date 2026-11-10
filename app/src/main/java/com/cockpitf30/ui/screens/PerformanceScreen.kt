@@ -387,7 +387,8 @@ internal fun ModeButton(mode: DriveMode, active: Boolean, modifier: Modifier, on
     val pulse by rememberInfiniteTransition(label = "pulse").animateFloat(
         0.55f, 1f, infiniteRepeatable(tween(1400, easing = LinearEasing), RepeatMode.Reverse), label = "p",
     )
-    val glow = if (active) pulse else 0f
+    // El latido se lee al dibujar la placa: animarlo no recompone el botón en cada fotograma.
+    val glow = { if (active) pulse else 0f }
     FocusTile(onClick = onClick, selected = active, modifier = modifier.graphicsLayer {
         rotationX = flip.value
         rotationY = if (active) 0f else 6f
@@ -397,10 +398,10 @@ internal fun ModeButton(mode: DriveMode, active: Boolean, modifier: Modifier, on
 
 /** Cara del botón de modo (sin foco propio): también la usa la tarjeta del Inicio. */
 @Composable
-internal fun ModeFace(mode: DriveMode, active: Boolean, lit: Boolean, glow: Float, hint: String? = null) {
+internal fun ModeFace(mode: DriveMode, active: Boolean, lit: Boolean, glow: () -> Float, hint: String? = null) {
     val p = paletteOf(mode)
     Box(Modifier.fillMaxSize()) {
-        Canvas(Modifier.fillMaxSize()) { modePlate(mode, p, active || lit, glow) }
+        Canvas(Modifier.fillMaxSize().graphicsLayer()) { modePlate(mode, p, active || lit, glow()) }
         Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Spacer(Modifier.width(62.dp))
             Column(Modifier.weight(1f)) {

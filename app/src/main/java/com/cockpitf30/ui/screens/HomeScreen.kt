@@ -100,7 +100,7 @@ private class Card(
     val theme: CardTheme,
     val action: (Context) -> Unit,
     val bodyAlignment: Alignment = Alignment.Center,
-    val body: (@Composable (VehicleState) -> Unit)? = null,
+    val body: (@Composable () -> Unit)? = null,
 )
 
 /**
@@ -120,8 +120,8 @@ private val CARD_GAP = 16.dp
 
 @Composable
 fun HomeScreen(onOpen: (Screen) -> Unit) {
-    val state by VehicleRepository.state.collectAsStateWithLifecycle()
-    val status by VehicleRepository.status.collectAsStateWithLifecycle()
+    // Los datos del coche (10 lecturas por segundo) se leen solo dentro del cuadro ([LiveCluster]):
+    // leídos aquí, cada lectura recomponía también todas las tarjetas.
     val weather by WeatherRepository.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val settings = remember { AppSettings(context) }
@@ -135,7 +135,7 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
             // Radares cercanos (barrido) y el tiempo en ruta.
             Card("radar", "Radares", "", CardTheme.RADAR, { onOpen(Screen.ROUTE) }),
             Card("mode", "Modo", "", CardTheme.MODE, { com.cockpitf30.ui.theme.DriveModes.cycle(it) }),
-            Card("trip", "Datos de viaje", "Duración, km y consumo", CardTheme.TRIP, { onOpen(Screen.TRIP) }, Alignment.BottomStart) { TripBody(it) },
+            Card("trip", "Datos de viaje", "Duración, km y consumo", CardTheme.TRIP, { onOpen(Screen.TRIP) }, Alignment.BottomStart) { TripBody() },
             Card("weather", "Tiempo", "", CardTheme.WEATHER, { onOpen(Screen.WEATHER) }),
             Card("vehicle", "Vehículo", "iDrive original del coche", CardTheme.VEHICLE, { onOpen(Screen.VEHICLE) }),
             Card("phone", "Teléfono", "Marcador y contactos", CardTheme.PHONE, { onOpen(Screen.PHONE) }),
@@ -191,7 +191,7 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
 
     Column(Modifier.fillMaxSize().padding(top = 6.dp, bottom = 8.dp)) {
         // El cuadro (mapa e indicadores) ocupa tres cuartos de la altura (540 de 720 dp); las tarjetas, el resto.
-        ClusterStrip(state, status, Modifier.fillMaxWidth().height(CLUSTER_HEIGHT).padding(horizontal = 12.dp))
+        LiveCluster(Modifier.fillMaxWidth().height(CLUSTER_HEIGHT).padding(horizontal = 12.dp))
         Spacer(Modifier.height(2.dp))
         LazyRow(
             Modifier.weight(1f).fillMaxWidth().onPreviewKeyEvent { e ->
@@ -279,7 +279,7 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                             Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
                                 Text("MODO DE CONDUCCIÓN", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
                                 Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 8.dp)) {
-                                    ModeFace(mode, active = true, lit = true, glow = 0.6f, hint = "OK: siguiente modo")
+                                    ModeFace(mode, active = true, lit = true, glow = { 0.6f }, hint = "OK: siguiente modo")
                                 }
                             }
                         } else if (card.id == "fuel") {
@@ -296,7 +296,7 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                             }) { CardArt(card.theme) }
                             Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
                                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = card.bodyAlignment) {
-                                    card.body?.invoke(state)
+                                    card.body?.invoke()
                                 }
                                 Text(card.title, style = MaterialTheme.typography.headlineSmall)
                                 Text(card.subtitle, style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
@@ -308,6 +308,14 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
             }
         }
     }
+}
+
+/** El cuadro con los datos del coche en vivo: solo él se recompone con cada lectura. */
+@Composable
+private fun LiveCluster(modifier: Modifier) {
+    val state by VehicleRepository.state.collectAsStateWithLifecycle()
+    val status by VehicleRepository.status.collectAsStateWithLifecycle()
+    ClusterStrip(state, status, modifier)
 }
 
 /**
@@ -331,7 +339,7 @@ private fun RadarCardBody() {
                 }
             }
             Text(
-                if (ahead == null) cams.near.firstOrNull()?.let { "A ${com.cockpitf30.ui.components.radarDistance(it.meters)}" } ?: "Ninguno cerca" else (ahead.camera.kind ?: "Radar fijo"),
+                if (ahead == null) cams.near.firstOrNull()?.let { "A ${com.cockpitf30.ui.components.radarDistance(it.meters)}" } ?: "Sin radares" else (ahead.camera.kind ?: "Radar fijo"),
                 style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
             Text(route.summary ?: "Tiempo en ruta", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -386,7 +394,7 @@ private fun FuelCardBody(view: FuelView) {
 
 /** Kilómetros y duración del viaje en curso (o del último), con ancho fijo para que no salten. */
 @Composable
-private fun TripBody(@Suppress("UNUSED_PARAMETER") state: VehicleState) {
+private fun TripBody() {
     val trips by TripComputer.state.collectAsStateWithLifecycle()
     val trip = trips.current ?: trips.last
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Bottom) {

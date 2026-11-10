@@ -306,10 +306,10 @@ object VoiceAssistant {
         audioJob = null
     }
 
-    @SuppressLint("MissingPermission") // Se comprueba en refresh().
     /** El micrófono ha dejado de dar audio: hay que cerrarlo y abrirlo otra vez. */
     private class MicLost(msg: String) : Exception(msg)
 
+    @SuppressLint("MissingPermission") // Se comprueba en refresh().
     private suspend fun listen(m: Model, onAudio: () -> Unit) {
         val minBuf = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         fun open(source: Int) = AudioRecord(source, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuf, RATE))
@@ -371,7 +371,10 @@ object VoiceAssistant {
                 if (now - lastLevel > 80) {
                     lastLevel = now
                     val lvl = if (muted) 0f else rms(buf, n)
-                    _state.update { it.copy(level = lvl) }
+                    // Solo se publica si cambia de forma apreciable: cada publicación recompone la
+                    // tarjeta y la burbuja del asistente, y con ruido de fondo eran 12 por segundo.
+                    val shown = _state.value.level
+                    if (kotlin.math.abs(lvl - shown) >= 0.04f || (lvl == 0f && shown != 0f)) _state.update { it.copy(level = lvl) }
                 }
                 if (resetRecognizer) {
                     resetRecognizer = false; wakeRec.reset(); cmdRec.reset(); bargeRec.reset(); lastPartial = ""

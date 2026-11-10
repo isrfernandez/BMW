@@ -30,6 +30,7 @@ Lanzador y panel de datos con estética BMW para la radio Wondefoo **ZQ9109** (1
 1. Abre la carpeta en **Android Studio** (Ladybug o posterior). Descargará el SDK 34 y las dependencias.
 2. Conecta la radio por USB o ADB por Wi‑Fi (Ajustes → Opciones de desarrollador; en TopWay suele estar tras una contraseña de fábrica).
 3. `Run ▶` o `./gradlew installDebug`.
+   Para el coche, mejor la versión no depurable (`./gradlew assembleRelease`, queda en `app/build/outputs/apk/release/`): va más fluida y lleva la misma firma, así que se instala encima de la de depuración.
 4. Pulsa Inicio y elige **Cockpit F30** como lanzador si quieres que sea la pantalla principal.
 
 ## Primeros pasos en el coche
