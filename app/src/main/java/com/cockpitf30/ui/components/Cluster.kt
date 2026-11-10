@@ -40,6 +40,7 @@ import com.cockpitf30.nav.RouteState
 import com.cockpitf30.nav.RouteTracker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -133,8 +134,35 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     // Muelle en vez de tween: los datos llegan cada 50 ms y un tween reiniciado a cada dato va a
     // tirones; el muelle conserva la velocidad de la aguja al cambiar de objetivo.
     val needle = spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
-    val speed by animateFloatAsState(state.speedKmh?.let(::speedFraction) ?: 0f, needle, label = "speed")
-    val rpm by animateFloatAsState(((state.rpm ?: 0).coerceIn(0, RPM_MAX)).toFloat() / RPM_MAX, needle, label = "rpm")
+    val realSpeed by animateFloatAsState(state.speedKmh?.let(::speedFraction) ?: 0f, needle, label = "speed")
+    val realRpm by animateFloatAsState(((state.rpm ?: 0).coerceIn(0, RPM_MAX)).toFloat() / RPM_MAX, needle, label = "rpm")
+    // Bienvenida: al arrancar la app, el cuadro se enciende y las dos barras barren hasta arriba y
+    // vuelven, como el autotest de las agujas de un BMW. Solo una vez por arranque.
+    val sweep = remember { Animatable(0f) }
+    val fadeIn = remember { Animatable(if (ClusterIntro.swept) 1f else 0f) }
+    LaunchedEffect(Unit) {
+        if (ClusterIntro.swept) return@LaunchedEffect
+        Startup.splashDone.first { it }
+        launch { fadeIn.animateTo(1f, tween(650, easing = FastOutSlowInEasing)) }
+        delay(250)
+        sweep.animateTo(1f, tween(950, easing = FastOutSlowInEasing))
+        delay(220)
+        sweep.animateTo(0f, tween(1100, easing = FastOutSlowInEasing))
+        ClusterIntro.swept = true
+    }
+    // Se leen al pintar las capas: el barrido no recompone el cuadro.
+    val speed by remember { derivedStateOf { maxOf(realSpeed, sweep.value) } }
+    val rpm by remember { derivedStateOf { maxOf(realRpm, sweep.value) } }
+
+    // Indicador de cambio (caja manual): flecha junto a la marcha.
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val shiftOn = remember { com.cockpitf30.system.AppSettings(ctx).shiftIndicator }
+    val advisor = remember { com.cockpitf30.vehicle.ShiftAdvisor() }
+    val gearText = state.gear ?: GearEstimator.estimate(state.speedKmh, state.rpm)
+    val shift = if (!shiftOn) null else advisor.update(
+        System.currentTimeMillis(), gearText?.toIntOrNull(), state.rpm, state.speedKmh,
+        if (DriveModes.current == DriveMode.SPORT) com.cockpitf30.vehicle.ShiftAdvisor.SPORT else com.cockpitf30.vehicle.ShiftAdvisor.ECO,
+    )
     // El halo de las cifras solo necesita unos pocos niveles: así el texto no se recompone en cada fotograma.
     val speedGlow by remember { derivedStateOf { (speed * 10).roundToInt() / 10f } }
     val rpmGlow by remember { derivedStateOf { (rpm * 10).roundToInt() / 10f } }
@@ -200,6 +228,11 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
 
     BoxWithConstraints(
         modifier
+            .graphicsLayer {
+                alpha = fadeIn.value
+                val k = 0.97f + 0.03f * fadeIn.value
+                scaleX = k; scaleY = k
+            }
             .pointerInput(Unit) {
                 // Deslizar a izquierda o derecha en el panel cambia entre coche y mapa.
                 var start = 0f
@@ -300,7 +333,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         ) {
             TabValue(state.speedKmh?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false, glow = SpeedGlow, intensity = speedGlow)
             Spacer(Modifier.weight(1.5f))
-            TabValue(state.gear ?: GearEstimator.estimate(state.speedKmh, state.rpm) ?: "--", state.rpm?.let { "$it rpm" } ?: "-- rpm", Modifier.weight(1f), alignEnd = true, glow = RpmGlow, intensity = rpmGlow)
+            TabValue(gearText ?: "--", state.rpm?.let { "$it rpm" } ?: "-- rpm", Modifier.weight(1f), alignEnd = true, glow = RpmGlow, intensity = rpmGlow, shift = shift)
         }
         StatusLine(
             state, status,
@@ -314,6 +347,8 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
 object ClusterIntro {
     const val CAR_MS = 10_000L
     @Volatile var done = false
+    /** Ya se hizo el barrido de bienvenida de las agujas. */
+    @Volatile var swept = false
 }
 
 /** Posición y rumbo suavizados: el GPS da una lectura por segundo y el mapa no debe ir a saltos. */
@@ -927,8 +962,14 @@ private fun DrawScope.drawMiniBar(g: GeoPx, tm: TextMeasurer, fraction: Float?, 
 }
 
 @Composable
-private fun TabValue(value: String, caption: String, modifier: Modifier = Modifier, alignEnd: Boolean, glow: Color, intensity: Float) {
+private fun TabValue(
+    value: String, caption: String, modifier: Modifier = Modifier, alignEnd: Boolean, glow: Color, intensity: Float,
+    shift: com.cockpitf30.vehicle.Shift? = null,
+) {
     Column(modifier, horizontalAlignment = if (alignEnd) Alignment.End else Alignment.Start) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+        // Flecha de cambio a la izquierda de la marcha (solo en la pestaña de la marcha).
+        if (alignEnd) ShiftArrow(shift, Modifier.size(width = 46.dp, height = 70.dp))
         // Cifra sobre la imagen: sombra oscura para que se lea y, encima, halo del color de su barra.
         Box(Modifier.padding(horizontal = 20.dp)) {
             val big = numeric(80, FontWeight.Bold)
@@ -939,12 +980,52 @@ private fun TabValue(value: String, caption: String, modifier: Modifier = Modifi
                 color = Cockpit.Text, maxLines = 1,
             )
         }
+        }
         Text(
             caption,
             style = numeric(20, FontWeight.Medium),
             color = glow,
             modifier = Modifier.padding(horizontal = 24.dp),
         )
+    }
+}
+
+private val ShiftUp = Color(0xFF3DDC97)
+private val ShiftDown = Color(0xFFFFB238)
+
+/**
+ * Flecha de cambio de marcha: doble chevron verde hacia arriba (subir) o ámbar hacia abajo
+ * (bajar), con halo y un latido suave. Aparece y se va con un fundido.
+ */
+@Composable
+internal fun ShiftArrow(shift: com.cockpitf30.vehicle.Shift?, modifier: Modifier) {
+    var last by remember { mutableStateOf(com.cockpitf30.vehicle.Shift.UP) }
+    if (shift != null) last = shift
+    androidx.compose.animation.AnimatedVisibility(
+        shift != null, modifier,
+        enter = androidx.compose.animation.fadeIn(tween(160)) + androidx.compose.animation.scaleIn(tween(160), initialScale = 0.7f),
+        exit = androidx.compose.animation.fadeOut(tween(220)),
+    ) {
+        val up = last == com.cockpitf30.vehicle.Shift.UP
+        val color = if (up) ShiftUp else ShiftDown
+        val beat by rememberInfiniteTransition(label = "shift").animateFloat(
+            0.55f, 1f, infiniteRepeatable(tween(520, easing = LinearEasing), androidx.compose.animation.core.RepeatMode.Reverse), label = "beat",
+        )
+        Canvas(Modifier.fillMaxSize().graphicsLayer()) {
+            val w = size.width; val h = size.height
+            val k = beat
+            fun chevron(cy: Float, a: Float) {
+                val dy = h * 0.13f * (if (up) -1 else 1)
+                val p = Path().apply { moveTo(w * 0.12f, cy - dy); lineTo(w * 0.5f, cy + dy); lineTo(w * 0.88f, cy - dy) }
+                drawPath(p, color.copy(alpha = 0.30f * a), style = Stroke(w * 0.30f, cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round), blendMode = BlendMode.Plus)
+                drawPath(p, color.copy(alpha = a), style = Stroke(w * 0.13f, cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+            }
+            // El chevron delantero (en el sentido del cambio) late; el otro queda más tenue.
+            val lead = if (up) h * 0.36f else h * 0.64f
+            val tail = if (up) h * 0.64f else h * 0.36f
+            chevron(tail, 0.45f)
+            chevron(lead, k)
+        }
     }
 }
 

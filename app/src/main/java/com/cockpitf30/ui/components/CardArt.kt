@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
@@ -45,6 +46,7 @@ enum class CardTheme(val from: Color, val to: Color) {
     ASSIST(Color(0xFF3D5AFE), Color(0xFF3FE0FF)),
     MODE(Color(0xFFD0160C), Color(0xFFFFB238)),
     RADAR(Color(0xFFFF3B30), Color(0xFFFFC94D)),
+    SERVICE(Color(0xFF00A88F), Color(0xFF9CFFD9)),
 }
 
 /**
@@ -105,6 +107,10 @@ fun BoxScope.CardArt(theme: CardTheme) {
             }
         }
         CardTheme.ASSIST -> AssistantArt(theme)
+        CardTheme.SERVICE -> Box(Modifier.align(Alignment.TopEnd).padding(top = 14.dp, end = 30.dp).size(160.dp)) {
+            Canvas(Modifier.fillMaxSize()) { rings(theme) }
+            GlassBadge(theme, Modifier.align(Alignment.Center).size(110.dp)) { GradientIcon(Icons.Filled.DateRange, theme, 50) }
+        }
         CardTheme.WEATHER, CardTheme.MODE, CardTheme.RADAR -> Unit
     }
 }

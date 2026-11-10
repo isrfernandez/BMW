@@ -234,6 +234,66 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_CAN_ASK_SPEED, true)
         set(value) = prefs.edit().putBoolean(KEY_CAN_ASK_SPEED, value).apply()
 
+    /** Trayectos terminados (ver TripHistory), en JSON. */
+    var tripHistory: String?
+        get() = prefs.getString("trip_history", null)
+        set(value) = prefs.edit().putString("trip_history", value).apply()
+
+    /**
+     * Cuentakilómetros propio, en metros: la caja CAN no manda el del coche. Lo pone el conductor
+     * una vez en Mantenimiento y la app le suma lo que recorre. null = sin poner.
+     */
+    var odometerM: Long?
+        get() = prefs.getLong("odometer_m", -1L).takeIf { it >= 0 }
+        set(value) = prefs.edit().putLong("odometer_m", value ?: -1L).apply()
+
+    /** Última vez que se hizo [item]: km del cuentakilómetros y fecha. */
+    fun serviceRecord(item: com.cockpitf30.vehicle.ServiceItem): com.cockpitf30.vehicle.ServiceRecord? {
+        val k = "service_" + item.name.lowercase()
+        val km = prefs.getLong(k + "_km", -1L).takeIf { it >= 0 }
+        val at = prefs.getLong(k + "_at", -1L).takeIf { it > 0 }
+        return if (km == null && at == null) null else com.cockpitf30.vehicle.ServiceRecord(km, at)
+    }
+
+    fun setServiceRecord(item: com.cockpitf30.vehicle.ServiceItem, r: com.cockpitf30.vehicle.ServiceRecord?) {
+        val k = "service_" + item.name.lowercase()
+        prefs.edit().putLong(k + "_km", r?.doneAtKm ?: -1L).putLong(k + "_at", r?.doneAtMillis ?: -1L).apply()
+    }
+
+    /** Fecha de la próxima ITV (día de la época), o null. */
+    var itvDate: java.time.LocalDate?
+        get() = prefs.getLong("itv_epoch_day", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }?.let { java.time.LocalDate.ofEpochDay(it) }
+        set(value) = prefs.edit().putLong("itv_epoch_day", value?.toEpochDay() ?: Long.MIN_VALUE).apply()
+
+    /** Años entre ITV (2 hasta los 10 años del coche, luego 1). */
+    var itvYears: Int
+        get() = prefs.getInt("itv_years", 1)
+        set(value) = prefs.edit().putInt("itv_years", value.coerceIn(1, 2)).apply()
+
+    /** Ventana de resumen al parar el motor. */
+    var tripSummary: Boolean
+        get() = prefs.getBoolean("trip_summary", true)
+        set(value) = prefs.edit().putBoolean("trip_summary", value).apply()
+
+    /** Flecha de cambio de marcha en el cuadro. */
+    var shiftIndicator: Boolean
+        get() = prefs.getBoolean("shift_indicator", true)
+        set(value) = prefs.edit().putBoolean("shift_indicator", value).apply()
+
+    /** Saludo del asistente al arrancar (tiempo, autonomía, radares y mantenimiento). */
+    var briefing: Boolean
+        get() = prefs.getBoolean("briefing", true)
+        set(value) = prefs.edit().putBoolean("briefing", value).apply()
+
+    var lastBriefingAt: Long
+        get() = prefs.getLong("last_briefing_at", 0L)
+        set(value) = prefs.edit().putLong("last_briefing_at", value).apply()
+
+    /** Halo de luz ambiente en los bordes de la pantalla. */
+    var ambientLight: Boolean
+        get() = prefs.getBoolean("ambient_light", true)
+        set(value) = prefs.edit().putBoolean("ambient_light", value).apply()
+
     private companion object {
         const val KEY_CAN_ASK_SPEED = "can_ask_speed"
         const val KEY_ASSISTANT = "assistant_enabled"

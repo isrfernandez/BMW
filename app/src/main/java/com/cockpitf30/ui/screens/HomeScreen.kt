@@ -139,6 +139,7 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
             Card("weather", "Tiempo", "", CardTheme.WEATHER, { onOpen(Screen.WEATHER) }),
             Card("vehicle", "Vehículo", "iDrive original del coche", CardTheme.VEHICLE, { onOpen(Screen.VEHICLE) }),
             Card("phone", "Teléfono", "Marcador y contactos", CardTheme.PHONE, { onOpen(Screen.PHONE) }),
+            Card("service", "Mantenimiento", "Aceite, neumáticos e ITV", CardTheme.SERVICE, { onOpen(Screen.MAINTENANCE) }, Alignment.BottomStart) { ServiceBody() },
             Card("diag", "Diagnóstico", "Fuente de datos e iDrive", CardTheme.DIAG, { onOpen(Screen.DIAGNOSTICS) }),
         ).associateBy { it.id }
     }
@@ -403,6 +404,18 @@ private fun TripBody() {
     }
 }
 
+/** Lo más urgente del mantenimiento, con su color. */
+@Composable
+private fun ServiceBody() {
+    val context = LocalContext.current
+    val st = remember { com.cockpitf30.vehicle.Maintenance.mostUrgent(com.cockpitf30.ui.screens.serviceStatuses(AppSettings(context))) }
+    Column {
+        Text(st?.item?.label ?: "Sin datos", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim, maxLines = 1)
+        Text(st?.text ?: "Pon los km", style = MaterialTheme.typography.titleLarge, maxLines = 1,
+            color = st?.let { com.cockpitf30.ui.screens.serviceColor(it.level) } ?: Cockpit.TextDim)
+    }
+}
+
 @Composable
 private fun Metric(value: String, unit: String, width: Dp) {
     // Cifra y unidad en la misma línea: la tarjeta es baja.
@@ -472,4 +485,4 @@ internal fun launch(context: Context, intent: Intent) {
     }
 }
 
-enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, WEATHER, PHONE, FUEL, PERFORMANCE, ROUTE }
+enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, WEATHER, PHONE, FUEL, PERFORMANCE, ROUTE, MAINTENANCE }

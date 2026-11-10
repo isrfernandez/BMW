@@ -508,6 +508,30 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                // Funciones de conducción: resumen al parar, flecha de cambio, briefing y luz ambiente.
+                var summaryOn by remember { mutableStateOf(settings.tripSummary) }
+                var shiftOn by remember { mutableStateOf(settings.shiftIndicator) }
+                var briefingOn by remember { mutableStateOf(settings.briefing) }
+                var glowOn by remember { mutableStateOf(settings.ambientLight) }
+                DiagCard("Conducción: resumen, cambio de marcha, briefing y luz ambiente") {
+                    ChipRow(listOf("Resumen al apagar el motor", "Sin resumen", "Ver ahora"), if (summaryOn) 0 else 1) {
+                        if (it == 2) com.cockpitf30.vehicle.trip.TripComputer.showSummary(System.currentTimeMillis())
+                        else { summaryOn = it == 0; settings.tripSummary = summaryOn }
+                    }
+                    ChipRow(listOf("Flecha de cambio de marcha", "Sin flecha"), if (shiftOn) 0 else 1) {
+                        shiftOn = it == 0; settings.shiftIndicator = shiftOn
+                    }
+                    ChipRow(listOf("Briefing al arrancar", "Sin briefing", "Probar ahora"), if (briefingOn) 0 else 1) {
+                        if (it == 2) com.cockpitf30.assistant.StartupBriefing.speak(context)
+                        else { briefingOn = it == 0; settings.briefing = briefingOn }
+                    }
+                    ChipRow(listOf("Luz ambiente", "Sin luz ambiente"), if (glowOn) 0 else 1) {
+                        glowOn = it == 0; settings.ambientLight = glowOn
+                    }
+                    Info("La flecha y la luz ambiente se aplican al volver a abrir la pantalla. El briefing se dice al arrancar si han pasado más de 45 minutos desde el anterior.", Cockpit.TextDim)
+                }
+            }
+            item {
                 // Avisos en ruta: radares, peligros, combustible, áreas de descanso y sitios turísticos.
                 val pois by com.cockpitf30.nav.RoutePois.state.collectAsStateWithLifecycle()
                 val alertScope = androidx.compose.runtime.rememberCoroutineScope()

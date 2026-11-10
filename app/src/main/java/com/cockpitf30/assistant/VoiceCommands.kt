@@ -307,6 +307,7 @@ object VoiceCommands {
             has("radar", "radares", "multa", "en ruta", "en el camino", "por el camino", "destino") -> Command.Open(Screen.ROUTE)
             has("rendimiento", "potencia", "fuerzas g", "fuerza g", "altitud", "pendiente", "telemetria") -> Command.Open(Screen.PERFORMANCE)
             has("gasolinera", "repostar", "echar gasoil", "echar gasolina") -> Command.Open(Screen.FUEL)
+            has("mantenimiento", "aceite", "itv", "revision", "cambio de ruedas") -> Command.Open(Screen.MAINTENANCE)
             has("viaje", "consumo", "recorrido") -> Command.Open(Screen.TRIP)
             has("vehiculo", "coche", "neumatico", "rueda", "puerta", "presion") -> Command.Open(Screen.VEHICLE)
             has("tiempo", "clima", "prevision", "meteo") -> Command.Open(Screen.WEATHER)

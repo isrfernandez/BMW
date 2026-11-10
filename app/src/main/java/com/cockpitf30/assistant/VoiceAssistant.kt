@@ -1,5 +1,7 @@
 package com.cockpitf30.assistant
 
+import com.cockpitf30.vehicle.Maintenance
+
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.SearchManager
@@ -747,6 +749,7 @@ object VoiceAssistant {
                 Screen.HOME -> joke("Vuelvo al inicio", "open.home")
                 Screen.ROUTE -> joke("Radares y tiempo en ruta", "open.route")
                 Screen.PERFORMANCE -> joke("Rendimiento", "open.performance")
+                Screen.MAINTENANCE -> Maintenance.spoken(com.cockpitf30.ui.screens.serviceStatuses(settings())) ?: "Mantenimiento: todo al día"
             }
         }
         is Command.Info -> info(c.topic, now)
