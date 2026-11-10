@@ -88,6 +88,7 @@ import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.ui.theme.DriveMode
 import com.cockpitf30.ui.theme.DriveModes
 import com.cockpitf30.ui.theme.numeric
+import com.cockpitf30.vehicle.VehicleRepository
 import com.cockpitf30.vehicle.SourceStatus
 import com.cockpitf30.vehicle.VehicleState
 import com.cockpitf30.vehicle.GearEstimator
@@ -116,6 +117,9 @@ private fun speedFraction(kmh: Int): Float {
     return if (v <= 150) v / 150f * 0.625f else 0.625f + (v - 150) / 100f * 0.375f
 }
 
+private fun speedFromFraction(f: Float): Int =
+    (if (f <= 0.625f) f / 0.625f * 150f else 150f + (f - 0.625f) / 0.375f * 100f).roundToInt()
+
 private const val RPM_MAX = 8000
 private const val RPM_RED = 6000
 
@@ -140,15 +144,35 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     // vuelven, como el autotest de las agujas de un BMW. Solo una vez por arranque.
     val sweep = remember { Animatable(0f) }
     val fadeIn = remember { Animatable(if (ClusterIntro.swept) 1f else 0f) }
+    suspend fun doSweep() {
+        sweep.snapTo(0f)
+        sweep.animateTo(1f, tween(1100, easing = FastOutSlowInEasing))
+        delay(300)
+        sweep.animateTo(0f, tween(1300, easing = FastOutSlowInEasing))
+    }
+    // Primera vez: al terminar de irse la imagen de arranque (antes quedaba tapado por su fundido).
     LaunchedEffect(Unit) {
         if (ClusterIntro.swept) return@LaunchedEffect
         Startup.splashDone.first { it }
+        delay(450)
         launch { fadeIn.animateTo(1f, tween(650, easing = FastOutSlowInEasing)) }
-        delay(250)
-        sweep.animateTo(1f, tween(950, easing = FastOutSlowInEasing))
-        delay(220)
-        sweep.animateTo(0f, tween(1100, easing = FastOutSlowInEasing))
+        delay(200)
+        doSweep()
         ClusterIntro.swept = true
+    }
+    // Y cada vez que se arranca el motor (rpm de parado a encendido), como en el coche.
+    LaunchedEffect(Unit) {
+        var offSince: Long? = System.currentTimeMillis()
+        VehicleRepository.state.collect { st ->
+            val now = System.currentTimeMillis()
+            val r = st.rpm ?: 0
+            if (r < 100) { if (offSince == null) offSince = now }
+            else if (r >= 400) {
+                val since = offSince
+                offSince = null
+                if (since != null && now - since >= ClusterIntro.ENGINE_OFF_MS && ClusterIntro.swept) launch { doSweep() }
+            }
+        }
     }
     // Se leen al pintar las capas: el barrido no recompone el cuadro.
     val speed by remember { derivedStateOf { maxOf(realSpeed, sweep.value) } }
@@ -331,9 +355,13 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
                 .padding(start = g.contentInset, end = g.contentInset),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TabValue(state.speedKmh?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false, glow = SpeedGlow, intensity = speedGlow)
+            // Durante el barrido las cifras suben y bajan con las barras.
+            val sw = sweep.value
+            val shownSpeed = if (sw > 0f) maxOf(state.speedKmh ?: 0, speedFromFraction(sw)) else state.speedKmh
+            val shownRpm = if (sw > 0f) maxOf(state.rpm ?: 0, (sw * RPM_MAX).roundToInt() / 50 * 50) else state.rpm
+            TabValue(shownSpeed?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false, glow = SpeedGlow, intensity = speedGlow)
             Spacer(Modifier.weight(1.5f))
-            TabValue(gearText ?: "--", state.rpm?.let { "$it rpm" } ?: "-- rpm", Modifier.weight(1f), alignEnd = true, glow = RpmGlow, intensity = rpmGlow, shift = shift)
+            TabValue(gearText ?: "--", shownRpm?.let { "$it rpm" } ?: "-- rpm", Modifier.weight(1f), alignEnd = true, glow = RpmGlow, intensity = rpmGlow, shift = shift)
         }
         StatusLine(
             state, status,
@@ -346,6 +374,8 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
 /** Presentación del Inicio: el coche se ve solo durante los primeros segundos tras arrancar la app. */
 object ClusterIntro {
     const val CAR_MS = 10_000L
+    /** Motor parado al menos esto para repetir el barrido al arrancarlo. */
+    const val ENGINE_OFF_MS = 5_000L
     @Volatile var done = false
     /** Ya se hizo el barrido de bienvenida de las agujas. */
     @Volatile var swept = false
