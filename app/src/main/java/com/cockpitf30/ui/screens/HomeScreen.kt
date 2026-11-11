@@ -462,7 +462,7 @@ internal const val GOOGLE_MAPS = "com.google.android.apps.maps"
 
 /**
  * Abre la app Google Maps instalada (no la web) centrada en la posición actual. Sin posición
- * conocida, la abre normal (Maps se centra solo en la ubicación). Si no está instalada,
+ * conocida, o si ya está navegando, la abre normal (Maps se centra solo en la ubicación). Si no está instalada,
  * cualquier app de mapas con un aviso.
  */
 internal fun openMaps(context: Context) {
@@ -474,7 +474,10 @@ internal fun openMaps(context: Context) {
         return
     }
     val here = WeatherRepository.lastKnownLocation(context)
-    val intent = if (here != null) {
+    // Con una ruta en marcha, abrir Maps con un «geo:» es pedirle otra cosa, y pregunta
+    // «¿Continuar con la navegación?». Se abre tal cual estaba, sin intent nuevo.
+    val navigating = com.cockpitf30.nav.MapsGuidanceState.current.value != null
+    val intent = if (here != null && !navigating) {
         Intent(Intent.ACTION_VIEW, Uri.parse("geo:%.6f,%.6f?z=16".format(Locale.US, here.latitude, here.longitude)))
             .setPackage(GOOGLE_MAPS)
     } else {
