@@ -99,7 +99,7 @@ fun RadioScreen() {
 private fun SourceBadge(st: RadioState) {
     val c = sourceColor(st.source)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (st.ducked) Text("Volumen bajado mientras hablan", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
+        st.duckReason?.let { Text("$it · radio bajada", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim) }
         Box(Modifier.size(10.dp).background(if (st.playing) c else Cockpit.TextDim, RoundedCornerShape(5.dp)))
         Text(
             "Fuente: " + st.source.label + if (st.source == RadioSource.FM) " · 0 MB" else (st.station?.mbPerHour?.let { " · ~$it MB/h" } ?: ""),
@@ -157,6 +157,7 @@ private fun NowPlaying(st: RadioState, modifier: Modifier, first: FocusRequester
                 Text(if (fav) "★ Favorita" else "☆ Guardar", Modifier.padding(horizontal = 18.dp, vertical = 20.dp), style = MaterialTheme.typography.titleMedium, color = if (fav) Color(0xFFFFC94D) else Cockpit.Text)
             }
         }
+        VolumeRow(st)
         if (st.source == RadioSource.FM) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 SmallButton("−0.1") { Radio.fmStep(-1) }
@@ -166,6 +167,30 @@ private fun NowPlaying(st: RadioState, modifier: Modifier, first: FocusRequester
                 SmallButton("Explorar") { Radio.fmScan() }
             }
         }
+    }
+}
+
+/** Volumen propio de la radio: aparte del volumen general y del asistente. */
+@Composable
+private fun VolumeRow(st: RadioState) {
+    val c = sourceColor(st.source)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        SmallButton("−") { Radio.changeVolume(-5) }
+        Column(Modifier.weight(1f)) {
+            Row {
+                Text("VOLUMEN DE LA RADIO", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim, modifier = Modifier.weight(1f))
+                Text("${st.volume} %", style = numeric(18, FontWeight.Medium))
+            }
+            Canvas(Modifier.fillMaxWidth().height(10.dp).padding(top = 4.dp)) {
+                val r = androidx.compose.ui.geometry.CornerRadius(size.height / 2)
+                drawRoundRect(Cockpit.Track, cornerRadius = r)
+                drawRoundRect(c, size = androidx.compose.ui.geometry.Size(size.width * st.volume / 100f, size.height), cornerRadius = r)
+            }
+            if (st.source == RadioSource.FM) {
+                Text("En FM el volumen lo lleva la radio del coche", style = MaterialTheme.typography.labelSmall, color = Cockpit.TextDim, maxLines = 1)
+            }
+        }
+        SmallButton("+") { Radio.changeVolume(5) }
     }
 }
 

@@ -23,6 +23,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -51,19 +53,24 @@ data class RadioState(
     val error: String? = null,
     /** Bajado porque habla el asistente, Maps u otra app. */
     val ducked: Boolean = false,
+    /** Por qué está bajada (para la pantalla), o null. */
+    val duckReason: String? = null,
+    /** Volumen propio de la radio (0–100), aparte del volumen general y del asistente. */
+    val volume: Int = RadioLogic.DEFAULT_VOLUME,
 )
 
 /**
  * Radio: FM por el sintonizador de la propia unidad si lo tiene ([FactoryTuner]) y, si no (o si
  * se elige), emisoras por Internet con ExoPlayer en un servicio multimedia ([RadioService]).
  *
- * Volumen: la radio pide el foco de audio. Cuando Maps da una indicación o el asistente habla
- * (piden foco "transitorio, se puede bajar") se baja al [DUCK_VOLUME] y vuelve al terminar.
+ * Volumen: la radio tiene su propio volumen base ([RadioState.volume]) y el que suena se calcula
+ * siempre desde él ([RadioLogic.effectiveVolume]): bajada fuerte mientras el asistente escucha (para
+ * que no se oiga a la radio como si fuera una orden), media mientras habla y suave con las
+ * indicaciones de Maps. Al volver, se vuelve exactamente al volumen base: no se acumulan bajadas.
  */
 @SuppressLint("StaticFieldLeak") // solo guarda el contexto de la aplicación
 object Radio {
     private const val TAG = "Radio"
-    private const val DUCK_VOLUME = 0.25f
 
     private val _state = MutableStateFlow(RadioState())
     val state: StateFlow<RadioState> = _state.asStateFlow()
@@ -74,6 +81,12 @@ object Radio {
     private var pollJob: Job? = null
     private var focus: AudioFocusRequest? = null
     private var started = false
+    /** Lo que hace el asistente ahora (ver [RadioLogic.effectiveVolume]). */
+    private var assistant = AssistantActivity.IDLE
+    /** Otra app (Maps) tiene el foco un momento y nos pide bajar. */
+    private var focusDucked = false
+    private var focusWatchdog: Job? = null
+    private var rampJob: Job? = null
 
     private fun settings() = AppSettings(app)
 
@@ -91,8 +104,22 @@ object Radio {
                 favorites = RadioLogic.favoritesFromJson(s.radioFavorites),
                 fmFavorites = RadioLogic.fmFromJson(s.radioFmFavorites),
                 fmFreq = s.radioFmFreq,
+                volume = s.radioVolume,
                 station = RadioLogic.favoritesFromJson(s.radioLastStation).firstOrNull(),
             )
+        }
+        // El asistente manda directamente sobre el volumen (no depende de que llegue el aviso de foco).
+        scope.launch {
+            com.cockpitf30.assistant.VoiceAssistant.state
+                .map { st ->
+                    when (st.phase) {
+                        com.cockpitf30.assistant.AssistantPhase.LISTENING -> AssistantActivity.LISTENING
+                        com.cockpitf30.assistant.AssistantPhase.ANSWERING -> AssistantActivity.SPEAKING
+                        else -> AssistantActivity.IDLE
+                    }
+                }
+                .distinctUntilChanged()
+                .collect { a -> assistant = if (settings().radioDuckAssistant) a else AssistantActivity.IDLE; applyVolume() }
         }
         scope.launch {
             val p = withContext(Dispatchers.IO) { runCatching { FactoryTuner.probe(app) }.getOrNull() }
@@ -147,7 +174,10 @@ object Radio {
         }
         pollJob?.cancel()
         abandonFocus()
-        _state.update { it.copy(playing = false, buffering = false, ducked = false) }
+        focusDucked = false
+        focusWatchdog?.cancel()
+        _state.update { it.copy(playing = false, buffering = false) }
+        applyVolume()
     }
 
     // ------------------------------------------------------------------ FM
@@ -159,6 +189,7 @@ object Radio {
         }
         player?.let { it.stop(); it.clearMediaItems() }
         requestFocus()
+        focusDucked = false
         _state.update { it.copy(source = RadioSource.FM, playing = true, fmFreq = freq, fmRds = null, error = null) }
         settings().radioFmFreq = freq
         settings().radioSource = RadioSource.FM.name
@@ -242,13 +273,14 @@ object Radio {
         if (_state.value.source == RadioSource.FM && _state.value.playing) scope.launch(Dispatchers.IO) { FactoryTuner.exit(app) }
         pollJob?.cancel()
         val p = ensurePlayer()
-        requestFocus()
+        if (requestFocus()) focusDucked = false
         val item = MediaItem.Builder()
             .setUri(station.url)
             .setMediaId(station.id.ifBlank { station.url })
             .setMediaMetadata(MediaMetadata.Builder().setTitle(station.name).setStation(station.name).setArtist("Radio por Internet").build())
             .build()
         p.setMediaItem(item)
+        applyVolume(ramp = false)
         p.prepare()
         p.play()
         settings().radioLastStation = RadioLogic.favoritesToJson(listOf(station))
@@ -353,23 +385,50 @@ object Radio {
     private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
         scope.launch {
             when (change) {
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> duck(true)
-                AudioManager.AUDIOFOCUS_GAIN -> duck(false)
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                    focusDucked = true
+                    startFocusWatchdog()
+                    applyVolume()
+                }
+                AudioManager.AUDIOFOCUS_GAIN -> {
+                    focusDucked = false
+                    focusWatchdog?.cancel()
+                    applyVolume()
+                }
                 // Otra app de música (Spotify…) se queda el audio: la radio se para.
                 AudioManager.AUDIOFOCUS_LOSS -> if (_state.value.playing) stop()
             }
         }
     }
 
-    private fun requestFocus() {
-        val am = app.getSystemService(AudioManager::class.java) ?: return
+    /**
+     * Por si Android no nos devuelve el foco (pasa en algunas ROM): a los 20 s se pide otra vez;
+     * si lo da, se vuelve al volumen base, y si no (p. ej. una llamada), se reintenta cada 10 s.
+     */
+    private fun startFocusWatchdog() {
+        focusWatchdog?.cancel()
+        focusWatchdog = scope.launch {
+            delay(20_000)
+            while (isActive && focusDucked && _state.value.playing) {
+                if (requestFocus()) {
+                    focusDucked = false
+                    applyVolume()
+                    break
+                }
+                delay(10_000)
+            }
+        }
+    }
+
+    private fun requestFocus(): Boolean {
+        val am = app.getSystemService(AudioManager::class.java) ?: return false
         val req = focus ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
             .setAudioAttributes(SysAttributes.Builder().setUsage(SysAttributes.USAGE_MEDIA).setContentType(SysAttributes.CONTENT_TYPE_MUSIC).build())
             // Bajamos nosotros el volumen (si no, Android lo baja solo y no nos enteramos para la FM).
             .setWillPauseWhenDucked(true)
             .setOnAudioFocusChangeListener(focusListener)
             .build().also { focus = it }
-        runCatching { am.requestAudioFocus(req) }
+        return runCatching { am.requestAudioFocus(req) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED }.getOrDefault(false)
     }
 
     private fun abandonFocus() {
@@ -377,14 +436,40 @@ object Radio {
         focus?.let { runCatching { am.abandonAudioFocusRequest(it) } }
     }
 
+    /** Cambia el volumen propio de la radio (0–100) y lo guarda. */
+    fun setVolume(v: Int) {
+        val nv = v.coerceIn(0, 100)
+        settings().radioVolume = nv
+        _state.update { it.copy(volume = nv) }
+        applyVolume(ramp = false)
+    }
+
+    fun changeVolume(delta: Int) = setVolume(_state.value.volume + delta)
+
     /**
-     * Baja o sube la radio. Internet: volumen del reproductor. FM: el audio no pasa por Android; lo
-     * baja la propia radio con su "mezcla de navegación" (data.set.gps_mix_level) cuando suena la app
-     * de navegación elegida en sus ajustes. Desde aquí no hay una orden de volumen conocida.
+     * Pone en el reproductor el volumen que toca, calculado siempre desde el volumen base (nunca
+     * desde el anterior: así no se pierde volumen entre bajadas y subidas). Con una rampa corta para
+     * que no pegue saltos. FM: el audio no pasa por Android; lo baja la propia radio con su "mezcla
+     * de navegación" (data.set.gps_mix_level). Desde aquí no hay una orden de volumen conocida.
      */
-    fun duck(on: Boolean) {
-        if (_state.value.ducked == on) return
-        _state.update { it.copy(ducked = on) }
-        player?.volume = if (on) DUCK_VOLUME else 1f
+    private fun applyVolume(ramp: Boolean = true) {
+        val st = _state.value
+        val nav = focusDucked
+        val target = RadioLogic.effectiveVolume(st.volume, assistant, nav)
+        val reason = RadioLogic.duckReason(assistant, nav)
+        _state.update { it.copy(ducked = reason != null, duckReason = reason) }
+        val p = player ?: return
+        rampJob?.cancel()
+        if (!ramp) { p.volume = target; return }
+        // Bajar rápido (que no se oiga la radio al empezar a escuchar) y subir suave.
+        val from = p.volume
+        val steps = if (target < from) 4 else 10
+        rampJob = scope.launch {
+            for (i in 1..steps) {
+                p.volume = from + (target - from) * i / steps
+                delay(25)
+            }
+            p.volume = target
+        }
     }
 }

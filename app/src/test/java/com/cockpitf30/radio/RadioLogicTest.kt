@@ -74,4 +74,23 @@ class RadioLogicTest {
         assertEquals(Command.RadioNext(1), VoiceCommands.parse("siguiente emisora"))
         assertEquals(Command.Open(Screen.RADIO), VoiceCommands.parse("abre la radio"))
     }
+
+    @Test
+    fun volumeAlwaysComesBackToTheBase() {
+        assertEquals(0.7f, RadioLogic.effectiveVolume(70, AssistantActivity.IDLE, false), 1e-4f)
+        // Escuchando gana a cualquier otra bajada; hablando y Maps, la más fuerte.
+        assertEquals(0.7f * RadioLogic.DUCK_LISTENING, RadioLogic.effectiveVolume(70, AssistantActivity.LISTENING, true), 1e-4f)
+        assertEquals(0.7f * RadioLogic.DUCK_SPEAKING, RadioLogic.effectiveVolume(70, AssistantActivity.SPEAKING, true), 1e-4f)
+        assertEquals(0.7f * RadioLogic.DUCK_NAV, RadioLogic.effectiveVolume(70, AssistantActivity.IDLE, true), 1e-4f)
+        assertEquals(0.7f, RadioLogic.effectiveVolume(70, AssistantActivity.IDLE, false), 1e-4f)
+        assertEquals(1f, RadioLogic.effectiveVolume(150, AssistantActivity.IDLE, false), 1e-4f)
+    }
+
+    @Test
+    fun volumeByVoice() {
+        assertEquals(Command.RadioVolume(delta = 10), VoiceCommands.parse("sube la radio"))
+        assertEquals(Command.RadioVolume(delta = -10), VoiceCommands.parse("baja la radio"))
+        assertEquals(Command.RadioVolume(set = 40), VoiceCommands.parse("pon el volumen de la radio al 40"))
+        assertEquals(Command.RadioVolume(set = 30), VoiceCommands.parse("volumen de la radio treinta"))
+    }
 }

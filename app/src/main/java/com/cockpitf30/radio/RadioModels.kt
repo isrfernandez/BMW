@@ -40,12 +40,45 @@ data class StreamStation(
     }
 }
 
+/** Lo que está haciendo el asistente, para bajar la radio. */
+enum class AssistantActivity { IDLE, LISTENING, SPEAKING }
+
 /** Emisora FM guardada. [freq] en unidades de 10 kHz, como el sintonizador (10230 = 102,3 MHz). */
 data class FmStation(val freq: Int, val name: String = "")
 
 object RadioLogic {
     const val FM_MIN = 8750
     const val FM_MAX = 10800
+    const val DEFAULT_VOLUME = 70
+
+    /** Fracción del volumen base mientras el asistente escucha: casi nada, para que no oiga la radio. */
+    const val DUCK_LISTENING = 0.06f
+    /** Mientras el asistente habla. */
+    const val DUCK_SPEAKING = 0.2f
+    /** Indicaciones de Maps u otra app que pide bajar. */
+    const val DUCK_NAV = 0.3f
+
+    /**
+     * Volumen del reproductor (0..1): el volumen base de la radio por la bajada más fuerte que toque.
+     * Se calcula siempre desde el base, así que tras cualquier serie de bajadas vuelve exacto.
+     */
+    fun effectiveVolume(base: Int, assistant: AssistantActivity, navDucked: Boolean): Float {
+        val b = base.coerceIn(0, 100) / 100f
+        val a = when (assistant) {
+            AssistantActivity.LISTENING -> DUCK_LISTENING
+            AssistantActivity.SPEAKING -> DUCK_SPEAKING
+            AssistantActivity.IDLE -> 1f
+        }
+        val n = if (navDucked) DUCK_NAV else 1f
+        return b * minOf(a, n)
+    }
+
+    fun duckReason(assistant: AssistantActivity, navDucked: Boolean): String? = when {
+        assistant == AssistantActivity.LISTENING -> "El asistente te escucha"
+        assistant == AssistantActivity.SPEAKING -> "Habla el asistente"
+        navDucked -> "Indicación del navegador"
+        else -> null
+    }
 
     /** 10230 -> "102.3" (o "102.35" si no cae en 100 kHz). */
     fun formatFm(freq: Int): String {

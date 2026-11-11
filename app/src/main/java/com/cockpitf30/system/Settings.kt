@@ -326,6 +326,11 @@ class AppSettings(context: Context) {
         get() = prefs.getString("radio_last_station", null)
         set(value) = prefs.edit().putString("radio_last_station", value).apply()
 
+    /** Volumen propio de la radio (0–100), independiente del general. */
+    var radioVolume: Int
+        get() = prefs.getInt("radio_volume", com.cockpitf30.radio.RadioLogic.DEFAULT_VOLUME)
+        set(value) = prefs.edit().putInt("radio_volume", value.coerceIn(0, 100)).apply()
+
     /** Bajar la radio (y otras apps) mientras el asistente escucha o habla. */
     var radioDuckAssistant: Boolean
         get() = prefs.getBoolean("radio_duck_assistant", true)

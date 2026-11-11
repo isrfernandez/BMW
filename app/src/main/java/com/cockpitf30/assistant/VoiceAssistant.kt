@@ -663,7 +663,7 @@ object VoiceAssistant {
         val ends = command == Command.Cancel || command == Command.Thanks || command == Command.No || command == Command.Quiet ||
             command is Command.Navigate || command is Command.Call || command == Command.Maps || command == Command.Music ||
             command is Command.AskGoogle || (command is Command.Station && command.action == StationAction.GO) ||
-            command is Command.RadioPlay || command == Command.RadioStop || command is Command.RadioNext
+            command is Command.RadioPlay || command == Command.RadioStop || command is Command.RadioNext || command is Command.RadioVolume
         say(reply, listenAfter = if (ends || !settings().assistantFollowUp) 0L else FOLLOW_MS)
     }
 
@@ -780,6 +780,11 @@ object VoiceAssistant {
             com.cockpitf30.radio.Radio.playByVoice(c.query)
         }
         Command.RadioStop -> { com.cockpitf30.radio.Radio.stop(); "Radio apagada" }
+        is Command.RadioVolume -> {
+            val r = com.cockpitf30.radio.Radio
+            if (c.set != null) r.setVolume(c.set) else r.changeVolume(c.delta)
+            "Radio al ${r.state.value.volume} por ciento"
+        }
         is Command.RadioNext -> { com.cockpitf30.radio.Radio.next(c.dir); if (c.dir > 0) "Siguiente emisora" else "Emisora anterior" }
         Command.Help -> "Puedo abrir gasolineras, viaje, tiempo, teléfono o apps; decirte la autonomía, el tiempo de hoy o de mañana " +
             "y la gasolinera más cercana; llevarte a un sitio, llamar a alguien, contarte un chiste o preguntar a Google. " +

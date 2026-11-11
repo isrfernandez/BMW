@@ -76,6 +76,8 @@ sealed interface Command {
     data object RadioStop : Command
     /** «Siguiente emisora» (1) / «emisora anterior» (-1). */
     data class RadioNext(val dir: Int) : Command
+    /** «Sube / baja la radio» ([delta]) o «volumen de la radio al 40» ([set]). */
+    data class RadioVolume(val set: Int? = null, val delta: Int = 0) : Command
 }
 
 enum class StationAction { DESCRIBE, PRICE, GO }
@@ -339,6 +341,11 @@ object VoiceCommands {
         val sintoniza = Regex("^(?:sintoniza|sintonizame|pon la frecuencia|pon el dial)(?: (?:el|la|los|las))? (.+)").find(t)
         if (sintoniza != null) return Command.RadioPlay(sintoniza.groupValues[1].trim())
         if (!h("radio", "emisora", "frecuencia")) return null
+        if (h("volumen") || h("sube", "baja", "mas alta", "mas baja", "mas fuerte", "mas flojo", "mas bajo", "mas alto")) {
+            number(t.substringAfter("volumen", t))?.let { return Command.RadioVolume(set = it.coerceIn(0, 100)) }
+            if (h("sube", "mas alta", "mas alto", "mas fuerte", "aumenta")) return Command.RadioVolume(delta = 10)
+            if (h("baja", "mas baja", "mas bajo", "mas flojo", "reduce")) return Command.RadioVolume(delta = -10)
+        }
         if (h("apaga", "quita", "para la", "para radio", "deten", "silencia", "quitame", "fuera la")) return Command.RadioStop
         if (h("siguiente emisora", "otra emisora", "cambia de emisora", "cambia la emisora", "emisora siguiente", "proxima emisora")) return Command.RadioNext(1)
         if (h("emisora anterior", "anterior emisora")) return Command.RadioNext(-1)
