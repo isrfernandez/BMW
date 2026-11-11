@@ -325,8 +325,10 @@ object Radio {
                 else -> "Elige una emisora en la pantalla de radio"
             }
         }
-        // «pon la 102.3» o «pon el 98»
-        Regex("(\\d{2,3})(?:[.,\\s]+(\\d{1,2}))?").find(query)?.let { m ->
+        // «sintoniza el 102.3», «pon la radio noventa y ocho coma tres»: solo si lo dicho es una frecuencia
+        // (si no, «cadena cien» se tomaría por el 100.0).
+        val spoken = RadioLogic.digitize(query)
+        Regex("^(?:el |la )?(\\d{2,3})(?:[.,\\s]+(\\d{1,2}))?(?: (?:mhz|megahercios|fm))?$").find(spoken.trim())?.let { m ->
             val mhz = m.groupValues[1].toInt()
             val dec = m.groupValues[2].padEnd(2, '0').ifBlank { "00" }.toInt()
             val f = mhz * 100 + dec
@@ -340,15 +342,28 @@ object Radio {
         RadioLogic.matchName(query, s.favorites + s.stations) { it.name }?.let {
             playStream(it); return "Pongo ${it.name}"
         }
-        // No está en la lista: se busca en Internet y se pone la primera.
+        // No está en la lista: primero entre las populares de España y, si no, en el buscador
+        // (probando versiones más cortas: «los 40 principales» → «los40»).
         scope.launch {
-            val found = withContext(Dispatchers.IO) { runCatching { RadioBrowser.search(query) }.getOrNull() }.orEmpty()
+            val found = withContext(Dispatchers.IO) {
+                val popular = if (s.stations.isEmpty()) runCatching { RadioBrowser.popular() }.getOrNull().orEmpty() else emptyList()
+                RadioLogic.matchName(query, popular) { it.name }?.let { return@withContext listOf(it) + popular.filter { p -> p.id != it.id } }
+                for (v in RadioLogic.searchVariants(query)) {
+                    val r = runCatching { RadioBrowser.search(v) }.getOrNull().orEmpty()
+                    if (r.isEmpty()) continue
+                    // Con una búsqueda recortada solo vale si encaja con lo dicho (si no, «cadena» pondría la SER).
+                    val best = RadioLogic.matchName(query, r) { it.name }
+                    if (best != null) return@withContext listOf(best) + r.filter { it.id != best.id }
+                    if (v == spoken.trim()) return@withContext r
+                }
+                emptyList()
+            }
             if (found.isNotEmpty()) {
                 _state.update { it.copy(stations = found) }
                 playStream(found.first())
-            } else _state.update { it.copy(error = "No encuentro «$query»") }
+            } else _state.update { it.copy(error = "No encuentro «$spoken»") }
         }
-        return "Busco $query"
+        return "Busco $spoken"
     }
 
     private fun ensurePlayer(): ExoPlayer = player ?: ExoPlayer.Builder(app)

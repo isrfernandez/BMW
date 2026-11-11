@@ -71,6 +71,8 @@ class RadioLogicTest {
         assertEquals(Command.RadioPlay("los 40"), VoiceCommands.parse("pon la emisora los 40"))
         assertEquals(Command.RadioPlay("102 3"), VoiceCommands.parse("sintoniza el 102.3"))
         assertEquals(Command.RadioStop, VoiceCommands.parse("apaga la radio"))
+        assertEquals(Command.RadioPlay("cadena cien"), VoiceCommands.parse("pon en la radio cadena cien"))
+        assertEquals(Command.RadioPlay("los cuarenta principales"), VoiceCommands.parse("pon la radio los cuarenta principales"))
         assertEquals(Command.RadioNext(1), VoiceCommands.parse("siguiente emisora"))
         assertEquals(Command.Open(Screen.RADIO), VoiceCommands.parse("abre la radio"))
     }
@@ -92,5 +94,30 @@ class RadioLogicTest {
         assertEquals(Command.RadioVolume(delta = -10), VoiceCommands.parse("baja la radio"))
         assertEquals(Command.RadioVolume(set = 40), VoiceCommands.parse("pon el volumen de la radio al 40"))
         assertEquals(Command.RadioVolume(set = 30), VoiceCommands.parse("volumen de la radio treinta"))
+    }
+
+    @Test
+    fun spokenNumbersBecomeDigits() {
+        assertEquals("cadena 100", RadioLogic.digitize("cadena cien"))
+        assertEquals("los 40 principales", RadioLogic.digitize("los cuarenta principales"))
+        assertEquals("98.3", RadioLogic.digitize("noventa y ocho coma tres"))
+        assertEquals("102.5", RadioLogic.digitize("ciento dos punto cinco"))
+        assertEquals("cadena ser", RadioLogic.digitize("Cadena SER"))
+    }
+
+    @Test
+    fun matchesStationsSaidWithWords() {
+        val list = listOf("Cadena SER", "LOS40", "Cadena 100", "Cadena Dial")
+        assertEquals("Cadena 100", RadioLogic.matchName("cadena cien", list) { it })
+        assertEquals("LOS40", RadioLogic.matchName("los cuarenta principales", list) { it })
+        assertEquals("LOS40", RadioLogic.matchName("los cuarenta", list) { it })
+        assertEquals("Cadena SER", RadioLogic.matchName("cadena ser", list) { it })
+        assertEquals("Los 40 Principales", RadioLogic.matchName("los cuarenta", listOf("Los 40 Principales")) { it })
+    }
+
+    @Test
+    fun searchVariantsGetShorter() {
+        assertEquals(listOf("los 40 principales", "los40principales", "los 40", "los40"), RadioLogic.searchVariants("los cuarenta principales"))
+        assertEquals(listOf("cadena 100", "cadena100", "cadena"), RadioLogic.searchVariants("cadena cien"))
     }
 }

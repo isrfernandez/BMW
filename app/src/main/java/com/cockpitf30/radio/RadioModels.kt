@@ -169,12 +169,78 @@ object RadioLogic {
         (0 until a.length()).map { a.getJSONObject(it).let { o -> FmStation(o.getInt("f"), o.optString("n")) } }
     }.getOrDefault(emptyList())
 
-    /** Busca una emisora por lo que dijo el conductor («los 40», «cadena ser»). */
+    /**
+     * Busca una emisora por lo que dijo el conductor («los 40», «cadena cien», «los cuarenta
+     * principales»). Los números dichos en palabras se pasan a cifras; vale que el nombre de la
+     * emisora contenga lo dicho o que lo dicho contenga el nombre («los40principales» ⊃ «los40»).
+     */
     fun <T> matchName(query: String, items: List<T>, name: (T) -> String): T? {
-        val q = key(query)
+        val q = key(digitize(query))
         if (q.isBlank()) return null
-        return items.firstOrNull { key(name(it)) == q }
-            ?: items.firstOrNull { key(name(it)).startsWith(q) }
-            ?: items.firstOrNull { key(name(it)).contains(q) }
+        val keyed = items.map { it to key(digitize(name(it))) }.filter { it.second.isNotBlank() }
+        return keyed.firstOrNull { it.second == q }?.first
+            ?: keyed.firstOrNull { it.second.startsWith(q) }?.first
+            ?: keyed.filter { q.startsWith(it.second) && it.second.length >= 4 }.maxByOrNull { it.second.length }?.first
+            ?: keyed.firstOrNull { q.length >= 3 && it.second.contains(q) }?.first
+            ?: keyed.filter { q.contains(it.second) && it.second.length >= 4 }.maxByOrNull { it.second.length }?.first
+    }
+
+    /** Textos a probar en el buscador de Radio-Browser, del más completo al más corto. */
+    fun searchVariants(query: String): List<String> {
+        val d = digitize(query).trim()
+        val words = d.split(' ').filter { it.isNotBlank() }
+        return buildList {
+            add(d)
+            // «los 40» también como «los40» (así se llama en Radio-Browser).
+            if (words.size >= 2 && words.any { w -> w.all(Char::isDigit) }) add(words.joinToString(""))
+            if (words.size > 2) add(words.take(2).joinToString(" "))
+            if (words.size >= 2 && words.take(2).any { w -> w.all(Char::isDigit) }) add(words.take(2).joinToString(""))
+            if (words.size > 1 && words[0].length >= 4) add(words[0])
+        }.distinct().filter { it.isNotBlank() }
+    }
+
+    private val UNITS = listOf("cero", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve")
+    private val TEENS = listOf("diez", "once", "doce", "trece", "catorce", "quince", "dieciseis", "diecisiete", "dieciocho", "diecinueve")
+    private val TENS = mapOf("veinte" to 20, "treinta" to 30, "cuarenta" to 40, "cincuenta" to 50, "sesenta" to 60, "setenta" to 70, "ochenta" to 80, "noventa" to 90)
+
+    /** Número de 0 a 99 dicho en palabras al principio de [w] desde [i]: (valor, palabras usadas). */
+    private fun under100(w: List<String>, i: Int): Pair<Int, Int>? {
+        val word = w.getOrNull(i) ?: return null
+        word.toIntOrNull()?.let { return it to 1 }
+        UNITS.indexOf(if (word == "un" || word == "una") "uno" else word).takeIf { it >= 0 }?.let { return it to 1 }
+        TEENS.indexOf(word).takeIf { it >= 0 }?.let { return 10 + it to 1 }
+        if (word.startsWith("veinti")) UNITS.indexOf(word.removePrefix("veinti").let { if (it == "un") "uno" else it }).takeIf { it > 0 }?.let { return 20 + it to 1 }
+        TENS[word]?.let { tens ->
+            if (w.getOrNull(i + 1) == "y") UNITS.indexOf(w.getOrNull(i + 2) ?: "").takeIf { it > 0 }?.let { return tens + it to 3 }
+            return tens to 1
+        }
+        return null
+    }
+
+    /**
+     * Pasa a cifras los números dichos en palabras, como los escribe el reconocedor: «cadena cien» →
+     * «cadena 100», «los cuarenta principales» → «los 40 principales», «noventa y ocho coma tres» →
+     * «98.3», «ciento dos» → «102».
+     */
+    fun digitize(text: String): String {
+        val w = java.text.Normalizer.normalize(text.lowercase(Locale.ROOT), java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{M}+"), "").split(Regex("\\s+")).filter { it.isNotBlank() }
+        val out = ArrayList<String>()
+        var i = 0
+        while (i < w.size) {
+            val word = w[i]
+            if (word == "cien") { out += "100"; i++; continue }
+            if (word == "ciento") {
+                val rest = under100(w, i + 1)
+                if (rest != null) { out += (100 + rest.first).toString(); i += 1 + rest.second } else { out += "100"; i++ }
+                continue
+            }
+            val n = under100(w, i)
+            if (n != null && word.toIntOrNull() == null) { out += n.first.toString(); i += n.second; continue }
+            out += word
+            i++
+        }
+        // «98 coma 3» / «98 punto 3» → «98.3»
+        return out.joinToString(" ").replace(Regex("(\\d+) (?:coma|punto) (\\d+)"), "$1.$2")
     }
 }
