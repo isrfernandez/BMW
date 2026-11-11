@@ -1,5 +1,7 @@
 package com.cockpitf30.assistant
 
+import com.cockpitf30.vehicle.Maintenance
+
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.SearchManager
@@ -306,10 +308,10 @@ object VoiceAssistant {
         audioJob = null
     }
 
-    @SuppressLint("MissingPermission") // Se comprueba en refresh().
     /** El micrófono ha dejado de dar audio: hay que cerrarlo y abrirlo otra vez. */
     private class MicLost(msg: String) : Exception(msg)
 
+    @SuppressLint("MissingPermission") // Se comprueba en refresh().
     private suspend fun listen(m: Model, onAudio: () -> Unit) {
         val minBuf = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         fun open(source: Int) = AudioRecord(source, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuf, RATE))
@@ -371,7 +373,10 @@ object VoiceAssistant {
                 if (now - lastLevel > 80) {
                     lastLevel = now
                     val lvl = if (muted) 0f else rms(buf, n)
-                    _state.update { it.copy(level = lvl) }
+                    // Solo se publica si cambia de forma apreciable: cada publicación recompone la
+                    // tarjeta y la burbuja del asistente, y con ruido de fondo eran 12 por segundo.
+                    val shown = _state.value.level
+                    if (kotlin.math.abs(lvl - shown) >= 0.04f || (lvl == 0f && shown != 0f)) _state.update { it.copy(level = lvl) }
                 }
                 if (resetRecognizer) {
                     resetRecognizer = false; wakeRec.reset(); cmdRec.reset(); bargeRec.reset(); lastPartial = ""
@@ -657,7 +662,8 @@ object VoiceAssistant {
         saveRecent()
         val ends = command == Command.Cancel || command == Command.Thanks || command == Command.No || command == Command.Quiet ||
             command is Command.Navigate || command is Command.Call || command == Command.Maps || command == Command.Music ||
-            command is Command.AskGoogle || (command is Command.Station && command.action == StationAction.GO)
+            command is Command.AskGoogle || (command is Command.Station && command.action == StationAction.GO) ||
+            command is Command.RadioPlay || command == Command.RadioStop || command is Command.RadioNext || command is Command.RadioVolume
         say(reply, listenAfter = if (ends || !settings().assistantFollowUp) 0L else FOLLOW_MS)
     }
 
@@ -672,7 +678,7 @@ object VoiceAssistant {
     private fun callContact(who: String): String {
         val number = com.cockpitf30.system.VoiceMatch.spokenNumber(who)
         if (number != null) {
-            scope.launch { delay(2200); com.cockpitf30.system.Contacts.call(app, number) }
+            afterSpeaking { com.cockpitf30.system.Contacts.call(app, number) }
             return "Llamando al ${number.chunked(3).joinToString(" ")}"
         }
         val book = contactsCache ?: com.cockpitf30.system.Contacts.load(app).also { if (it.isNotEmpty()) contactsCache = it }
@@ -687,7 +693,7 @@ object VoiceAssistant {
             found.isEmpty() -> joke("No encuentro a $who en tus contactos", "call.notfound")
             people.size == 1 -> {
                 val c = found.first()
-                scope.launch { delay(2200); com.cockpitf30.system.Contacts.call(app, c.number) }
+                afterSpeaking { com.cockpitf30.system.Contacts.call(app, c.number) }
                 joke("Llamando a ${c.name}", "call.found")
             }
             else -> {
@@ -740,10 +746,13 @@ object VoiceAssistant {
                 Screen.WEATHER -> joke("Este es el tiempo", "open.weather")
                 Screen.PHONE -> joke("Abro el teléfono", "open.phone")
                 Screen.APPS -> joke("Tus aplicaciones", "open.apps")
-                Screen.DIAGNOSTICS -> joke("Abro los ajustes", "open.settings")
+                Screen.DIAGNOSTICS -> joke("Abro el diagnóstico", null)
+                Screen.SETTINGS -> joke("Abro los ajustes", "open.settings")
                 Screen.HOME -> joke("Vuelvo al inicio", "open.home")
                 Screen.ROUTE -> joke("Radares y tiempo en ruta", "open.route")
                 Screen.PERFORMANCE -> joke("Rendimiento", "open.performance")
+                Screen.MAINTENANCE -> Maintenance.spoken(com.cockpitf30.ui.screens.serviceStatuses(settings())) ?: "Mantenimiento: todo al día"
+                Screen.RADIO -> "Abro la radio"
             }
         }
         is Command.Info -> info(c.topic, now)
@@ -757,12 +766,27 @@ object VoiceAssistant {
             }
         }
         is Command.Navigate -> {
-            navigateTo(c.destination)
+            afterSpeaking { navigateTo(c.destination) }
             joke("Vamos a ${c.destination}", "nav")
         }
-        Command.Music -> { openMusic(app); joke("Abro la música", "music") }
-        Command.Maps -> { openMaps(app); joke("Abro el mapa", "maps") }
-        is Command.AskGoogle -> if (openGoogleAssistant(c.query)) joke("Se lo pregunto a Google", "google") else "La radio no tiene la app de Google"
+        Command.Music -> { afterSpeaking { openMusic(app) }; joke("Abro la música", "music") }
+        Command.Maps -> { afterSpeaking { openMaps(app) }; joke("Abro el mapa", "maps") }
+        is Command.AskGoogle -> if (canOpenGoogleAssistant(c.query)) {
+            afterSpeaking { openGoogleAssistant(c.query) }
+            joke("Se lo pregunto a Google", "google")
+        } else "La radio no tiene la app de Google"
+        is Command.RadioPlay -> {
+            com.cockpitf30.radio.Radio.init(app)
+            open(Screen.RADIO)
+            com.cockpitf30.radio.Radio.playByVoice(c.query)
+        }
+        Command.RadioStop -> { com.cockpitf30.radio.Radio.stop(); "Radio apagada" }
+        is Command.RadioVolume -> {
+            val r = com.cockpitf30.radio.Radio
+            if (c.set != null) r.setVolume(c.set) else r.changeVolume(c.delta)
+            "Radio al ${r.state.value.volume} por ciento"
+        }
+        is Command.RadioNext -> { com.cockpitf30.radio.Radio.next(c.dir); if (c.dir > 0) "Siguiente emisora" else "Emisora anterior" }
         Command.Help -> "Puedo abrir gasolineras, viaje, tiempo, teléfono o apps; decirte la autonomía, el tiempo de hoy o de mañana " +
             "y la gasolinera más cercana; llevarte a un sitio, llamar a alguien, contarte un chiste o preguntar a Google. " +
             "Después de contestarte sigo escuchando unos segundos, así que puedes seguir: otra, y mañana, llévame. " +
@@ -859,7 +883,7 @@ object VoiceAssistant {
                 }
             }
             StationAction.GO -> {
-                navigateTo("${s.lat},${s.lon}")
+                afterSpeaking { navigateTo("${s.lat},${s.lon}") }
                 joke("Vamos a ${s.brand}, en ${place(s)}", "station.go")
             }
         }
@@ -1042,8 +1066,16 @@ object VoiceAssistant {
         )
     }
 
+    private fun canOpenGoogleAssistant(query: String?): Boolean = googleIntent(query) != null
+
     /** Abre la app de Google con la pregunta, o el asistente de Google si no hay pregunta. */
     private fun openGoogleAssistant(query: String?): Boolean {
+        val intent = googleIntent(query) ?: return false
+        launch(app, intent)
+        return true
+    }
+
+    private fun googleIntent(query: String?): Intent? {
         val pm = app.packageManager
         val candidates = if (query != null) {
             listOf(
@@ -1053,9 +1085,7 @@ object VoiceAssistant {
         } else {
             listOf(Intent(Intent.ACTION_VOICE_COMMAND), Intent("android.intent.action.ASSIST"))
         }
-        val intent = candidates.firstOrNull { it.resolveActivity(pm) != null } ?: return false
-        launch(app, intent)
-        return true
+        return candidates.firstOrNull { it.resolveActivity(pm) != null }
     }
 
     // ---------------------------------------------------------------- voz
@@ -1215,6 +1245,20 @@ object VoiceAssistant {
         )
     }
 
+    /**
+     * Lo que hay que hacer cuando termine de hablar: abrir Maps, la música, llamar… Si se abriera
+     * antes, Maps se pone delante y corta la frase (la app pasa a segundo plano).
+     */
+    private var afterSpeech: (() -> Unit)? = null
+
+    private fun afterSpeaking(action: () -> Unit) { afterSpeech = action }
+
+    private fun runAfterSpeech() {
+        val a = afterSpeech ?: return
+        afterSpeech = null
+        runCatching { a() }.onFailure { Log.w(TAG, "Tras hablar", it) }
+    }
+
     private fun say(text: String, listenAfter: Long = 0L) {
         listenAfterReply = listenAfter
         spokenPos = 0
@@ -1227,11 +1271,17 @@ object VoiceAssistant {
             muted = true
             if (settings().assistantRobotVoice && settings().assistantRobotStrength.filter && !robotBroken && synthesizeRobot(t, text)) {
                 // La síntesis a archivo tarda un poco más; el tiempo real se ajusta al reproducir.
-                unmuteJob = scope.launch { delay(6_000L + text.length * 120L); doneSpeaking() }
+                unmuteJob = scope.launch {
+                    delay(6_000L + text.length * 120L)
+                    // Una tablet lenta puede tardar más en preparar la voz: mientras siga pendiente, se espera.
+                    var waited = 0L
+                    while (waited < 30_000L && robotText.isNotEmpty()) { delay(300); waited += 300 }
+                    doneSpeaking()
+                }
             } else {
                 t.speak(text, TextToSpeech.QUEUE_FLUSH, null, "reply")
                 // El aviso real es onDone; esto es solo por si el motor no lo manda.
-                unmuteJob = scope.launch { delay(4_000L + text.length * 140L); doneSpeaking() }
+                unmuteJob = finishWhenSilent(4_000L + text.length * 140L)
             }
         } else {
             if (settings().assistantSpeaks) {
@@ -1240,6 +1290,23 @@ object VoiceAssistant {
             }
             unmuteJob = scope.launch { delay(1_200); doneSpeaking() }
         }
+    }
+
+    /**
+     * Plan B por si el motor de voz no avisa al terminar (onDone): pasado el tiempo estimado, solo da
+     * por terminada la frase cuando el motor ya no está hablando. Antes se cortaba a la hora
+     * estimada aunque siguiera hablando (en una tablet, con avisos largos o voz más lenta): se
+     * quitaba el texto, subía la radio y se pisaban los audios.
+     */
+    private fun finishWhenSilent(estimateMs: Long) = scope.launch {
+        delay(estimateMs)
+        var waited = 0L
+        while (waited < 120_000L && (runCatching { tts?.isSpeaking == true }.getOrDefault(false) ||
+                player?.playState == AudioTrack.PLAYSTATE_PLAYING)) {
+            delay(300)
+            waited += 300
+        }
+        doneSpeaking()
     }
 
     private fun robotFile(id: String) = java.io.File(app.cacheDir, "$id.wav")
@@ -1264,7 +1331,7 @@ object VoiceAssistant {
         if (_state.value.phase != AssistantPhase.ANSWERING) return
         unmuteJob?.cancel()
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "reply")
-        unmuteJob = scope.launch { delay(2_000L + text.length * 90L); doneSpeaking() }
+        unmuteJob = finishWhenSilent(2_000L + text.length * 90L)
     }
 
     private suspend fun playRobot(id: String) {
@@ -1288,6 +1355,13 @@ object VoiceAssistant {
         unmuteJob?.cancel()
         unmuteJob = scope.launch {
             delay(pcm.durationMs + 300)
+            // Por si la duración calculada se queda corta: se espera a que el audio llegue al final.
+            var waited = 0L
+            while (waited < 60_000L && player === track &&
+                runCatching { track.playState == AudioTrack.PLAYSTATE_PLAYING && track.playbackHeadPosition < pcm.samples.size }.getOrDefault(false)) {
+                delay(200)
+                waited += 200
+            }
             if (player === track) stopPlayer()
             doneSpeaking()
         }
@@ -1319,6 +1393,8 @@ object VoiceAssistant {
         // Si esa palabra la está diciendo ella misma ahora («para llegar…»), es su eco: no se corta.
         if (!wake && saysItNow(text)) return
         Log.i(TAG, "Interrumpida ($action): «$text»")
+        // «Hola BMW» = orden nueva: lo pendiente se descarta. «Para», «espera»…: se hace ya.
+        if (wake) afterSpeech = null else runAfterSpeech()
         val reply = _state.value.reply.orEmpty()
         val rest = remainingText(reply, spokenPos)
         unmuteJob?.cancel()
@@ -1363,6 +1439,7 @@ object VoiceAssistant {
     private fun doneSpeaking() {
         unmuteJob?.cancel()
         muted = false
+        runAfterSpeech()
         // Si ya se interrumpió y está escuchando, no se borra lo que se está oyendo.
         if (_state.value.phase != AssistantPhase.ANSWERING) return
         resetRecognizer = true

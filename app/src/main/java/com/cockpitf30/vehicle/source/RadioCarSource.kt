@@ -227,9 +227,12 @@ class VendorCar private constructor(
     // Referencias fuertes al callback: si el recolector se lo lleva, el servicio deja de avisar.
     private var callback: Any? = null
 
-    fun readAll(): Map<String, Any?> {
+    fun readAll(): Map<String, Any?> = read(PREFIXES)
+
+    /** Claves que empiezan por cualquiera de [prefixes] (p. ej. "data.radio.") con su valor. */
+    fun read(prefixes: List<String>): Map<String, Any?> {
         val out = LinkedHashMap<String, Any?>()
-        for (p in PREFIXES) {
+        for (p in prefixes) {
             val items = byPrefix.invoke(data, p) as Array<*>? ?: continue
             for (item in items) {
                 item ?: continue
@@ -283,6 +286,25 @@ class VendorCar private constructor(
     }
 
     private var sendMethod: Method? = null
+    private var syncMethod: Method? = null
+
+    /** Petición al servicio del coche con respuesta, igual que las librerías del fabricante. */
+    fun requestSync(key: String, args: Bundle?): Int {
+        val m = syncMethod ?: generateSequence<Class<*>>(base.javaClass) { it.superclass }
+            .firstNotNullOf { c -> runCatching { c.getDeclaredMethod("requestSync", String::class.java, Bundle::class.java) }.getOrNull() }
+            .apply { isAccessible = true }.also { syncMethod = it }
+        return (m.invoke(base, key, args) as? Int) ?: 0
+    }
+
+    /** Petición sin respuesta (requestOneway). */
+    fun requestOneway(key: String, args: Bundle?) {
+        val m = onewayMethod ?: generateSequence<Class<*>>(base.javaClass) { it.superclass }
+            .firstNotNullOf { c -> runCatching { c.getDeclaredMethod("requestOneway", String::class.java, Bundle::class.java) }.getOrNull() }
+            .apply { isAccessible = true }.also { onewayMethod = it }
+        m.invoke(base, key, args)
+    }
+
+    private var onewayMethod: Method? = null
 
     companion object {
         val CLIENT_PACKAGES = listOf("com.bmw1.launcher2", "android.car.app.canbus")

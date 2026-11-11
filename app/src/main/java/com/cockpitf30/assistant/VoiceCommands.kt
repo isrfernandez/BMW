@@ -68,6 +68,16 @@ sealed interface Command {
     data object AboutThat : Command
     /** Una de las gasolineras de las que se acaba de hablar (lo crea [Conversation]). */
     data class Station(val index: Int, val action: StationAction) : Command
+
+    // ---- radio
+    /** «Pon la radio» ([query] null) o «pon la radio Cadena SER», «sintoniza el 102.3». */
+    data class RadioPlay(val query: String?) : Command
+    /** «Apaga / quita la radio». */
+    data object RadioStop : Command
+    /** «Siguiente emisora» (1) / «emisora anterior» (-1). */
+    data class RadioNext(val dir: Int) : Command
+    /** «Sube / baja la radio» ([delta]) o «volumen de la radio al 40» ([set]). */
+    data class RadioVolume(val set: Int? = null, val delta: Int = 0) : Command
 }
 
 enum class StationAction { DESCRIBE, PRICE, GO }
@@ -214,6 +224,8 @@ object VoiceCommands {
         if (has("copiloto")) {
             return Command.Copilot(if (has("desactiva", "quita", "apaga", "para ", "deja", "fuera", "sin copiloto")) false else true)
         }
+        radio(t, ::has)?.let { return it }
+
         // Avisos en ruta: «desactiva los avisos», «quita los avisos turísticos», «activa avisos de radares».
         val alertWords = has("aviso", "avisos", "puntos de interes", "informacion turistica", "turistic", "turismo")
         val toggle = has("activa", "desactiva", "quita", "apaga", "enciende", "pon ", "quiero", "sin ", "no quiero", "deja de", "para de", "vuelve a")
@@ -307,12 +319,14 @@ object VoiceCommands {
             has("radar", "radares", "multa", "en ruta", "en el camino", "por el camino", "destino") -> Command.Open(Screen.ROUTE)
             has("rendimiento", "potencia", "fuerzas g", "fuerza g", "altitud", "pendiente", "telemetria") -> Command.Open(Screen.PERFORMANCE)
             has("gasolinera", "repostar", "echar gasoil", "echar gasolina") -> Command.Open(Screen.FUEL)
+            has("mantenimiento", "aceite", "itv", "revision", "cambio de ruedas") -> Command.Open(Screen.MAINTENANCE)
             has("viaje", "consumo", "recorrido") -> Command.Open(Screen.TRIP)
             has("vehiculo", "coche", "neumatico", "rueda", "puerta", "presion") -> Command.Open(Screen.VEHICLE)
             has("tiempo", "clima", "prevision", "meteo") -> Command.Open(Screen.WEATHER)
             has("telefono", "llama", "llamar", "contacto", "marcador", "agenda") -> Command.Open(Screen.PHONE)
             has("aplicacion", "apps", "app") -> Command.Open(Screen.APPS)
-            has("diagnostico", "ajuste", "configuracion") -> Command.Open(Screen.DIAGNOSTICS)
+            has("diagnostico", "depuracion") -> Command.Open(Screen.DIAGNOSTICS)
+            has("ajuste", "configuracion") -> Command.Open(Screen.SETTINGS)
             has("inicio", "principal", "home") -> Command.Open(Screen.HOME)
             has("musica", "spotify", "cancion", "reproductor") -> Command.Music
             has("mapa", "navegacion", "navegador", "maps", "gps") -> Command.Maps
@@ -320,6 +334,27 @@ object VoiceCommands {
             has("hora") -> Command.Info(InfoTopic.TIME)
             else -> Command.Unknown(t)
         }
+    }
+
+    /** Órdenes de la radio; solo si se nombra la radio, una emisora o se pide «sintoniza». */
+    private fun radio(t: String, has: (Array<out String>) -> Boolean): Command? {
+        fun h(vararg k: String) = has(k)
+        val sintoniza = Regex("^(?:sintoniza|sintonizame|pon la frecuencia|pon el dial)(?: (?:el|la|los|las))? (.+)").find(t)
+        if (sintoniza != null) return Command.RadioPlay(sintoniza.groupValues[1].trim())
+        if (!h("radio", "emisora", "frecuencia")) return null
+        if (h("volumen") || h("sube", "baja", "mas alta", "mas baja", "mas fuerte", "mas flojo", "mas bajo", "mas alto")) {
+            number(t.substringAfter("volumen", t))?.let { return Command.RadioVolume(set = it.coerceIn(0, 100)) }
+            if (h("sube", "mas alta", "mas alto", "mas fuerte", "aumenta")) return Command.RadioVolume(delta = 10)
+            if (h("baja", "mas baja", "mas bajo", "mas flojo", "reduce")) return Command.RadioVolume(delta = -10)
+        }
+        if (h("apaga", "quita", "para la", "para radio", "deten", "silencia", "quitame", "fuera la")) return Command.RadioStop
+        if (h("siguiente emisora", "otra emisora", "cambia de emisora", "cambia la emisora", "emisora siguiente", "proxima emisora")) return Command.RadioNext(1)
+        if (h("emisora anterior", "anterior emisora")) return Command.RadioNext(-1)
+        if (h("abre", "muestra", "ensename", "pantalla")) return Command.Open(Screen.RADIO)
+        // Lo que va tras «radio» / «emisora» es el nombre: «pon la radio cadena ser», «pon la emisora los cuarenta».
+        val rest = t.replace(Regex("^.*?\\b(?:radio|emisora|frecuencia)\\b"), "")
+            .replace(Regex("^(?: (?:de|del|en|la|el|por favor|fm|por internet))+"), "").replace("por favor", "").trim()
+        return Command.RadioPlay(rest.ifBlank { null })
     }
 
     private val WEATHER_WORDS = arrayOf("tiempo", "temperatura", "llover", "llueve", "lluvia", "clima", "frio", "calor", "sol", "nieve", "nevar", "grados")

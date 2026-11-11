@@ -148,19 +148,24 @@ object DefaultFocus {
 
 @Composable
 fun ClockText(modifier: Modifier = Modifier, style: TextStyle = numeric(26, FontWeight.Medium)) {
-    val now by produceState(LocalTime.now()) {
+    // La hora ya formateada: el texto solo se recompone al cambiar de minuto (antes, cada segundo).
+    // Se despierta justo al cambio de minuto y, como mucho, cada 10 s por si la radio ajusta su reloj.
+    val now by produceState(LocalTime.now().format(ClockFormat)) {
         while (true) {
-            value = LocalTime.now()
-            delay(1_000)
+            val t = LocalTime.now()
+            value = t.format(ClockFormat)
+            delay((60_000L - (t.second * 1000L + t.nano / 1_000_000L) + 20L).coerceAtMost(10_000L))
         }
     }
     Text(
-        now.format(DateTimeFormatter.ofPattern("HH:mm")),
+        now,
         modifier = modifier,
         style = style,
         color = Cockpit.Text,
     )
 }
+
+private val ClockFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
 /** Barra superior común: título, franja M y reloj. */
 @Composable

@@ -89,6 +89,8 @@ fun LoadingOverlay(visible: Boolean, text: String? = null, graceMs: Long = 150) 
 /** true cuando las imágenes grandes ya están decodificadas (lo pone la precarga de MainActivity). */
 object Startup {
     val ready = kotlinx.coroutines.flow.MutableStateFlow(false)
+    /** La pantalla de arranque ya se ha ido (empieza la bienvenida del cuadro y el saludo). */
+    val splashDone = kotlinx.coroutines.flow.MutableStateFlow(false)
 }
 
 /**
@@ -102,6 +104,14 @@ fun StartupSplash(minMs: Long = 3000, maxMs: Long = 7000) {
     var elapsed by remember { mutableIntStateOf(0) } // 0 = antes de minMs, 1 = pasado, 2 = tope
     LaunchedEffect(Unit) { delay(minMs); elapsed = 1; delay(maxMs - minMs); elapsed = 2 }
     val visible = !(elapsed == 2 || (elapsed == 1 && ready))
+    // Terminado el fundido de salida, la imagen de arranque no vuelve a hacer falta: se libera.
+    LaunchedEffect(visible) {
+        if (!visible) {
+            delay(350)
+            Startup.splashDone.value = true
+            delay(1150); Images.evict(R.drawable.splash_scene, R.drawable.splash_text_mask)
+        }
+    }
     AnimatedVisibility(visible, enter = fadeIn(), exit = fadeOut(androidx.compose.animation.core.tween(700))) {
         val scene = cachedBitmap(R.drawable.splash_scene)
         val mask = cachedBitmap(R.drawable.splash_text_mask)

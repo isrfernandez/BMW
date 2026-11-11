@@ -1,5 +1,6 @@
 package com.cockpitf30.ui.components
 
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -105,7 +106,8 @@ fun VoiceWave(theme: CardTheme, s: AssistantState, modifier: Modifier = Modifier
     val t by rememberInfiniteTransition(label = "wave").animateFloat(
         0f, (2 * PI).toFloat(), infiniteRepeatable(tween(if (s.active) 1400 else 3200, easing = LinearEasing)), label = "t",
     )
-    Canvas(modifier) {
+    // Capa propia: la onda se repinta en cada fotograma sin arrastrar a la pantalla que tiene debajo.
+    Canvas(modifier.graphicsLayer()) {
         val colors = listOf(theme.to, theme.from, Color.White)
         for (k in 0 until 3) {
             val path = Path()

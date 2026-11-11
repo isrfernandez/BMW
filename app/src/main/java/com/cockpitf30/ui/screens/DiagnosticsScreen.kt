@@ -17,9 +17,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import android.view.KeyEvent
 import com.cockpitf30.input.IDriveInput
-import com.cockpitf30.input.KnobFunction
 import com.cockpitf30.vehicle.probe.BroadcastSniffer
 import com.cockpitf30.vehicle.probe.PortProbe
 import com.cockpitf30.vehicle.probe.SystemProbe
@@ -35,11 +33,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cockpitf30.service.VehicleService
 import com.cockpitf30.system.AppSettings
-import com.cockpitf30.system.BatteryOptimization
 import com.cockpitf30.system.SourceMode
 import com.cockpitf30.ui.components.FocusTile
 import com.cockpitf30.ui.components.InitialFocus
@@ -63,8 +59,9 @@ import com.cockpitf30.ui.theme.appliedBandsPx
 import com.cockpitf30.ui.theme.appliedDesignDensity
 
 /**
- * Herramientas para descubrir cómo habla esta placa: elegir fuente y puerto, ver tramas
- * en crudo y ver qué eventos manda el iDrive.
+ * Solo información técnica para depurar: elegir fuente y puerto, ver tramas en crudo, qué
+ * eventos manda el iDrive y el estado interno del asistente. Lo que elige el conductor
+ * (iluminación, voz, avisos…) está en [SettingsScreen].
  */
 @Composable
 fun DiagnosticsScreen() {
@@ -74,11 +71,9 @@ fun DiagnosticsScreen() {
     val raw by VehicleRepository.rawLog.collectAsStateWithLifecycle()
     val input by VehicleRepository.inputLog.collectAsStateWithLifecycle()
     val bytes by VehicleRepository.byteLog.collectAsStateWithLifecycle()
-    val learning by IDriveInput.learning.collectAsStateWithLifecycle()
     val broadcasts by BroadcastSniffer.log.collectAsStateWithLifecycle()
     val listening by BroadcastSniffer.listening.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    var learned by remember { mutableStateOf(IDriveInput.learned) }
     var probes by remember { mutableStateOf<List<String>?>(null) }
     var packages by remember { mutableStateOf<List<SystemProbe.PackageReport>?>(null) }
     var props by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -102,10 +97,7 @@ fun DiagnosticsScreen() {
     var mode by remember { mutableStateOf(settings.sourceMode) }
     var path by remember { mutableStateOf(settings.serialPath) }
     var baud by remember { mutableIntStateOf(settings.baudRate) }
-    var batteryOk by remember { mutableStateOf(BatteryOptimization.isIgnoring(context)) }
     val ports = remember { SerialSource.candidatePorts() }
-    // Cuando se aprende una tecla, el mapa cambia fuera de Compose: lo releemos.
-    androidx.compose.runtime.LaunchedEffect(learning) { learned = IDriveInput.learned }
 
     fun probePorts() {
         busy = "Probando puertos…"
@@ -224,11 +216,6 @@ fun DiagnosticsScreen() {
         VehicleService.restart(context)
     }
 
-    // Al volver del diálogo de batería refrescamos el estado.
-    LifecycleResumeEffect(Unit) {
-        batteryOk = BatteryOptimization.isIgnoring(context)
-        onPauseOrDispose {}
-    }
 
     val first = remember { FocusRequester() }
     InitialFocus(first)
@@ -313,45 +300,6 @@ fun DiagnosticsScreen() {
                     if (canbusProbe.isNotEmpty()) {
                         Info("CarCanbus (${canbusProbe.size} líneas, todo en el informe):", Cockpit.TextDim)
                         canbusProbe.filter { " = " in it || it.startsWith("--") || "conectado" in it }.take(40).forEach { Mono(it) }
-                    }
-                }
-            }
-            item {
-                DiagCard("Ruleta iDrive: enseñar botones") {
-                    Info(
-                        if (learning != null) "Pulsa ahora en el iDrive el botón para «${learning!!.label}»… (toca de nuevo para cancelar)"
-                        else "Toca una función y luego pulsa en el iDrive el botón que quieras para ella.",
-                        if (learning != null) Cockpit.BlueLight else Cockpit.Text,
-                    )
-                    ChipRow(KnobFunction.entries.map { it.label }, KnobFunction.entries.indexOf(learning)) {
-                        val f = KnobFunction.entries[it]
-                        IDriveInput.startLearning(if (learning == f) null else f)
-                    }
-                    if (learned.isEmpty()) Info("Sin teclas aprendidas: se usan DPAD, ENTER, TAB y la ruleta estándar.", Cockpit.TextDim)
-                    else {
-                        learned.forEach { (from, to) ->
-                            Info("${KeyEvent.keyCodeToString(from)} ($from) → ${KnobFunction.ofKeyCode(to)?.label ?: KeyEvent.keyCodeToString(to)}")
-                        }
-                        ChipRow(listOf("Borrar teclas aprendidas"), -1) {
-                            IDriveInput.learned = emptyMap()
-                            settings.knobKeys = emptyMap()
-                            learned = emptyMap()
-                        }
-                    }
-                }
-            }
-            item {
-                DiagCard("Pantalla de inicio (lanzador)") {
-                    val isHome = remember { isDefaultHome(context) }
-                    Info(
-                        if (isHome) "Cockpit F30 es ahora la pantalla de inicio de la radio. Para volver a la de serie u otra, elige aquí."
-                        else "La pantalla de inicio de la radio es otra app. Puedes poner Cockpit F30 desde aquí.",
-                    )
-                    ChipRow(listOf("Elegir pantalla de inicio", "Abrir la de serie (BMW)"), -1) {
-                        when (it) {
-                            0 -> chooseHome(context)
-                            else -> openStockLauncher(context)
-                        }
                     }
                 }
             }
@@ -457,176 +405,20 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
-                // Nivel de humor del asistente, como el robot TARS. También por voz: «Hola BMW, humor al 60 por ciento».
+                // Estado interno del asistente (lo que se elige está en Ajustes › Asistente de voz).
                 val assistant = com.cockpitf30.assistant.VoiceAssistant
-                LaunchedEffect(Unit) { assistant.loadHumor(context) }
-                val humor by assistant.humor.collectAsStateWithLifecycle()
-                DiagCard("Humor del asistente: $humor %") {
-                    ChipRow(listOf("− 5 %", "+ 5 %"), -1) { assistant.setHumor(context, humor + if (it == 0) -5 else 5) }
-                    val levels = listOf(0, 25, 50, 75, 90, 100)
-                    ChipRow(levels.map { "$it %" }, levels.indexOf(humor)) { assistant.setHumor(context, levels[it]) }
-                    Info("0 % responde seco y sin bromas; 100 % siempre con una broma. Por voz: «Hola BMW, humor al 60 por ciento», «sube el humor», «baja el humor» o «¿qué humor tienes?».", Cockpit.TextDim)
-                }
-            }
-            item {
-                // Conversación seguida, memoria y modo copiloto (charla cada cierto tiempo contra la fatiga).
-                val assistant = com.cockpitf30.assistant.VoiceAssistant
-                var follow by remember { mutableStateOf(settings.assistantFollowUp) }
-                var copilot by remember { mutableStateOf(settings.copilotEnabled) }
-                var minutes by remember { mutableStateOf(settings.copilotMinutes) }
-                var name by remember { mutableStateOf(settings.assistantUserName) }
-                DiagCard("Conversación y copiloto") {
-                    ChipRow(listOf("Sigue escuchando tras responder", "Solo con «Hola BMW»"), if (follow) 0 else 1) {
-                        follow = it == 0
-                        settings.assistantFollowUp = follow
-                    }
-                    var sens by remember { mutableStateOf(settings.wakeSensitivity) }
-                    ChipRow(listOf("«Hola BMW»: sensibilidad baja", "Normal", "Alta"), 2 - sens) {
-                        sens = 2 - it
-                        settings.wakeSensitivity = sens
-                    }
-                    ChipRow(listOf("Copiloto activado", "Copiloto desactivado", "Probar ahora"), if (copilot) 0 else 1) {
-                        if (it == 2) assistant.copilotNow(context)
-                        else {
-                            copilot = it == 0
-                            settings.copilotEnabled = copilot
-                        }
-                    }
-                    val options = listOf(5, 10, 15, 20, 30)
-                    ChipRow(options.map { "Cada $it min" }, options.indexOf(minutes)) {
-                        minutes = options[it]
-                        settings.copilotMinutes = minutes
-                    }
-                    ChipRow(listOf(name?.let { "Te llamas $it" } ?: "Sin nombre", "Olvidar nombre y frases"), 0) {
-                        if (it == 1) {
-                            assistant.forgetMemory(context)
-                            name = null
-                        }
-                    }
-                    Info("Tras contestar sigue escuchando unos segundos: puedes decir «otra», «¿y mañana?», «llévame», «repite» o «¿de qué hablábamos?» sin repetir «Hola BMW». " +
-                        "El copiloto habla solo con el coche en marcha (en demo, cada 2 minutos): descansos, autonomía, mal tiempo, destino o una pregunta. Por voz: «activa / desactiva el copiloto», «cállate un rato».", Cockpit.TextDim)
-                }
-            }
-            item {
-                // Avisos en ruta: radares, peligros, combustible, áreas de descanso y sitios turísticos.
-                val pois by com.cockpitf30.nav.RoutePois.state.collectAsStateWithLifecycle()
-                val alertScope = androidx.compose.runtime.rememberCoroutineScope()
-                var alertsOn by remember { mutableStateOf(settings.routeAlerts) }
-                var cats by remember { mutableStateOf(com.cockpitf30.nav.AlertCategory.entries.filter { settings.alertCategory(it) }.toSet()) }
-                DiagCard("Avisos en ruta y puntos de interés") {
-                    ChipRow(listOf("Activados", "Desactivados", "Probar ahora"), if (alertsOn) 0 else 1) {
-                        if (it == 2) com.cockpitf30.nav.RouteAlerts.test(alertScope)
-                        else {
-                            alertsOn = it == 0
-                            settings.routeAlerts = alertsOn
-                            if (!alertsOn) com.cockpitf30.nav.RouteAlerts.hide()
-                        }
-                    }
-                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        com.cockpitf30.nav.AlertCategory.entries.forEach { c ->
-                            val on = c in cats
-                            FocusTile(onClick = {
-                                cats = if (on) cats - c else cats + c
-                                settings.setAlertCategory(c, !on)
-                            }, selected = on && alertsOn) {
-                                Text((if (on) "✓ " else "✗ ") + c.label, Modifier.padding(horizontal = 20.dp, vertical = 12.dp), style = MaterialTheme.typography.bodyLarge,
-                                    color = if (on) Cockpit.Text else Cockpit.TextDim)
-                            }
-                        }
-                    }
-                    Info(
-                        when {
-                            pois.loading -> "Descargando puntos de interés…"
-                            pois.error != null && pois.pois.isEmpty() -> "Puntos de interés: sin conexión (${pois.error})"
-                            else -> "${pois.pois.size} puntos en 12 km (OpenStreetMap) · ${pois.near.size} a menos de 5 km"
-                        }, Cockpit.TextDim,
-                    )
-                    Info("El asistente avisa de radares, peligros señalizados y pasos a nivel, áreas de descanso (tras hora y media al volante), " +
-                        "gasolinera más cercana con poca autonomía y monumentos, miradores o pueblos con artículo en Wikipedia (con foto en una ventanita). " +
-                        "Por voz: «desactiva los avisos», «quita los avisos turísticos», «activa los avisos de radares», «¿qué hay por aquí?», «háblame de eso».", Cockpit.TextDim)
-                }
-            }
-            item {
-                // Asistente «Hola BMW»: activar, voz en alto y estado del micrófono y del modelo.
-                val voice by com.cockpitf30.assistant.VoiceAssistant.state.collectAsStateWithLifecycle()
-                var voiceOn by remember { mutableStateOf(settings.assistantEnabled) }
-                var voiceTalks by remember { mutableStateOf(settings.assistantSpeaks) }
-                DiagCard("Asistente de voz «Hola BMW»") {
-                    ChipRow(listOf("Activado", "Desactivado"), if (voiceOn) 0 else 1) {
-                        voiceOn = it == 0
-                        com.cockpitf30.assistant.VoiceAssistant.setEnabled(context, voiceOn)
-                    }
-                    ChipRow(listOf("Responde en voz alta", "Solo en pantalla"), if (voiceTalks) 0 else 1) {
-                        voiceTalks = it == 0
-                        settings.assistantSpeaks = voiceTalks
-                    }
-                    // Voz al estilo TARS: hombre adulto, grave y pausada; humor ajustable como en la película.
-                    var robot by remember { mutableStateOf(settings.assistantRobotVoice) }
-                    var voiceName by remember { mutableStateOf(settings.assistantVoiceName) }
-                    val assistant = com.cockpitf30.assistant.VoiceAssistant
-                    ChipRow(listOf("Voz estilo TARS", "Voz de la radio", "Probar voz"), if (robot) 0 else 1) {
-                        if (it == 2) assistant.testVoice(context)
-                        else {
-                            robot = it == 0
-                            settings.assistantRobotVoice = robot
-                            assistant.applyVoice()
-                        }
-                    }
-                    if (robot) {
-                        val strengths = com.cockpitf30.assistant.RobotVoice.Strength.entries
-                        var strength by remember { mutableStateOf(settings.assistantRobotStrength) }
-                        ChipRow(strengths.map { it.label }, strengths.indexOf(strength)) {
-                            strength = strengths[it]
-                            settings.assistantRobotStrength = strength
-                            assistant.applyVoice()
-                            assistant.testVoice(context)
-                        }
-                    }
-                    val voices = remember(voice.phase, voiceName) { assistant.spanishVoices() }
-                    if (voices.isNotEmpty()) {
-                        // El motor no siempre dice qué voz es de hombre: «Cambiar voz» las va probando.
-                        ChipRow(listOf("Voz automática", "Cambiar voz ›"), if (voiceName == null) 0 else 1) {
-                            if (it == 0) {
-                                voiceName = null
-                                settings.assistantVoiceName = null
-                                assistant.applyVoice(null)
-                                assistant.testVoice(context)
-                            } else {
-                                voiceName = assistant.nextVoice(context)
-                            }
-                        }
-                    }
-                    val ttsStatus by assistant.ttsStatus.collectAsStateWithLifecycle()
+                val voice by assistant.state.collectAsStateWithLifecycle()
+                val ttsStatus by assistant.ttsStatus.collectAsStateWithLifecycle()
+                DiagCard("Asistente de voz (técnico)") {
                     Info("Motor de voz: ${ttsStatus.text}" + (assistant.ttsEngine?.let { " · $it" } ?: "") + (assistant.ttsLastError?.let { " · $it" } ?: ""),
                         if (ttsStatus == com.cockpitf30.assistant.VoiceAssistant.TtsStatus.READY) Cockpit.TextDim else Cockpit.Alert)
-                    when (ttsStatus) {
-                        com.cockpitf30.assistant.VoiceAssistant.TtsStatus.NO_ENGINE ->
-                            ChipRow(listOf("Instalar «Servicios de voz de Google»", "Volver a probar"), -1) {
-                                if (it == 0) assistant.installVoiceEngine(context) else assistant.restartTts(context)
-                            }
-                        com.cockpitf30.assistant.VoiceAssistant.TtsStatus.NO_SPANISH ->
-                            ChipRow(listOf("Descargar voz española", "Volver a probar"), -1) {
-                                if (it == 0) assistant.installSpanishVoice(context) else assistant.restartTts(context)
-                            }
-                        else -> Unit
-                    }
-                    Info("Voz en uso: ${assistant.currentVoice() ?: "—"} · ${voices.size} voces en español", Cockpit.TextDim)
+                    Info("Voz en uso: ${assistant.currentVoice() ?: "—"} · ${assistant.spanishVoices().size} voces en español", Cockpit.TextDim)
                     Info("Estado: ${voice.phase} · micrófono ${"%.0f".format(voice.level * 100)} %" + (voice.error?.let { " · $it" } ?: ""))
                     Info("Modelo ${com.cockpitf30.assistant.VoiceModel.NAME}: " + if (com.cockpitf30.assistant.VoiceModel.isReady(context)) "instalado" else "no instalado")
                     voice.lastText?.let { Mono("Último reconocido: «$it»") }
                     voice.heard?.let { Mono("Oído: «$it»") }
                     voice.reply?.let { Mono("Respuesta: $it") }
                     Info("Reconocedor de Google: " + if (android.speech.SpeechRecognizer.isRecognitionAvailable(context)) "disponible" else "no disponible", Cockpit.TextDim)
-                }
-            }
-            item {
-                DiagCard("Batería") {
-                    ChipRow(
-                        listOf(if (batteryOk) "Excluida de la optimización ✓" else "Pedir exclusión de optimización"),
-                        if (batteryOk) 0 else -1,
-                    ) {
-                        BatteryOptimization.request(context)
-                    }
                 }
             }
             item {
@@ -847,40 +639,3 @@ internal fun installedVersion(context: android.content.Context): String = runCat
     val code = if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
     "${info.versionName} (build $code)"
 }.getOrDefault("desconocida")
-
-/** ¿Es Cockpit la app de inicio (HOME) por defecto? */
-private fun isDefaultHome(context: android.content.Context): Boolean {
-    val home = android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_HOME)
-    return context.packageManager.resolveActivity(home, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName == context.packageName
-}
-
-/**
- * Abre el ajuste de Android para elegir la app de inicio. Si la radio no lo tiene, los de apps
- * por defecto, y como último recurso la ficha de Cockpit (allí «Borrar valores predeterminados»).
- */
-private fun chooseHome(context: android.content.Context) {
-    val tries = listOf(
-        android.content.Intent(android.provider.Settings.ACTION_HOME_SETTINGS),
-        android.content.Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS),
-        android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:" + context.packageName)),
-    )
-    for (i in tries) {
-        if (runCatching { context.startActivity(i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess) return
-    }
-    android.widget.Toast.makeText(context, "La radio no deja abrir el ajuste de pantalla de inicio", android.widget.Toast.LENGTH_LONG).show()
-}
-
-/** Abre el lanzador BMW de serie de la radio (o cualquier otro lanzador instalado que no sea Cockpit). */
-private fun openStockLauncher(context: android.content.Context) {
-    val pm = context.packageManager
-    val home = android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_HOME)
-    val others = pm.queryIntentActivities(home, 0).map { it.activityInfo }.filter { it.packageName != context.packageName && it.packageName != "com.android.settings" }
-    val target = others.firstOrNull { it.packageName == "com.bmw1.launcher2" } ?: others.firstOrNull()
-    if (target == null) {
-        android.widget.Toast.makeText(context, "No hay otro lanzador instalado", android.widget.Toast.LENGTH_LONG).show()
-        return
-    }
-    runCatching {
-        context.startActivity(android.content.Intent(home).setClassName(target.packageName, target.name).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
-    }
-}

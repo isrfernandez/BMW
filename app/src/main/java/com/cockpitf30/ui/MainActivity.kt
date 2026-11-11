@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import android.content.pm.PackageManager
 import androidx.compose.runtime.DisposableEffect
 import androidx.core.content.ContextCompat
+import com.cockpitf30.ui.components.TripSummaryOverlay
 import com.cockpitf30.assistant.VoiceAssistant
 import com.cockpitf30.ui.components.AssistantOverlay
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -77,6 +78,7 @@ import com.cockpitf30.vehicle.VehicleRepository
 import com.cockpitf30.ui.components.ClusterIntro
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 
@@ -129,7 +131,7 @@ class MainActivity : ComponentActivity() {
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(raw: KeyEvent): Boolean {
         VehicleRepository.logInput(IDriveInput.describe(raw))
-        // Modo aprender (Diagnóstico): la tecla se asigna a la función elegida y no hace nada más.
+        // Modo aprender (Ajustes › Sistema): la tecla se asigna a la función elegida y no hace nada más.
         IDriveInput.learn(raw)?.let { map ->
             AppSettings(this).knobKeys = map
             swallowKey = raw.keyCode
@@ -330,6 +332,11 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
             delay(2 * 60 * 1000L)
         }
     }
+    // Briefing al arrancar: saludo con tiempo, autonomía, radares y mantenimiento.
+    LaunchedEffect(Unit) {
+        com.cockpitf30.ui.components.Startup.splashDone.first { it }
+        com.cockpitf30.assistant.StartupBriefing.maybeRun(ctx)
+    }
     // Al elegir Sport se abre Rendimiento (relojes de potencia y G-meter).
     val selectedMode = com.cockpitf30.ui.theme.DriveModes.selected
     var lastMode by remember { mutableStateOf(selectedMode) }
@@ -356,8 +363,8 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
         SideItem("Rendimiento", SideArt.PERF, screen == Screen.PERFORMANCE) { screen = Screen.PERFORMANCE },
         SideItem("Música", SideArt.MUSIC, false) { openMusic(context) },
         SideItem("Apps", SideArt.APPS, screen == Screen.APPS) { screen = Screen.APPS },
-        // Ajustes de la app: fuente de datos, puerto serie, batería.
-        SideItem("Ajustes", SideArt.SETTINGS, screen == Screen.DIAGNOSTICS) { screen = Screen.DIAGNOSTICS },
+        // Ajustes de la app por secciones (lo técnico está en Diagnóstico, en la tarjeta del Inicio).
+        SideItem("Ajustes", SideArt.SETTINGS, screen == Screen.SETTINGS) { screen = Screen.SETTINGS },
     )
 
     // Al cambiar de modo se rehace la interfaz entera con la paleta nueva.
@@ -365,7 +372,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     Row(
         Modifier
             .fillMaxSize()
-            .background(Cockpit.Background)
+            // El degradado ya termina en el color de fondo opaco: no hace falta pintar el fondo dos veces.
             .background(Brush.radialGradient(listOf(Cockpit.Blue.copy(alpha = 0.10f), Cockpit.Background), radius = 1600f)),
     ) {
         Sidebar(sideItems)
@@ -373,7 +380,18 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
         AnimatedContent(
             screen,
             modifier = Modifier.fillMaxSize(),
-            transitionSpec = { fadeIn() togetherWith fadeOut() },
+            // Deslizamiento con profundidad: la pantalla nueva entra desde un lado y se acerca;
+            // la anterior se aleja y se apaga. Al volver a Home, al revés.
+            transitionSpec = {
+                val back = targetState == Screen.HOME
+                val dir = if (back) -1 else 1
+                val spec = androidx.compose.animation.core.tween<androidx.compose.ui.unit.IntOffset>(380, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                val fspec = androidx.compose.animation.core.tween<Float>(380, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                (androidx.compose.animation.slideInHorizontally(spec) { w -> dir * w / 8 } +
+                    androidx.compose.animation.scaleIn(fspec, initialScale = if (back) 1.05f else 0.92f) + fadeIn(fspec)) togetherWith
+                    (androidx.compose.animation.slideOutHorizontally(spec) { w -> -dir * w / 12 } +
+                        androidx.compose.animation.scaleOut(fspec, targetScale = if (back) 0.92f else 1.04f) + fadeOut(androidx.compose.animation.core.tween(260)))
+            },
             label = "screen",
         ) { current ->
             when (current) {
@@ -383,14 +401,19 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 Screen.TRIP -> TripScreen()
                 Screen.APPS -> AppsScreen()
                 Screen.DIAGNOSTICS -> DiagnosticsScreen()
+                Screen.SETTINGS -> com.cockpitf30.ui.screens.SettingsScreen(onOpen = go)
                 Screen.WEATHER -> WeatherScreen()
                 Screen.PHONE -> PhoneScreen()
                 Screen.FUEL -> FuelScreen()
                 Screen.PERFORMANCE -> com.cockpitf30.ui.screens.PerformanceScreen()
                 Screen.ROUTE -> com.cockpitf30.ui.screens.RouteScreen()
+                Screen.MAINTENANCE -> com.cockpitf30.ui.screens.MaintenanceScreen()
+                Screen.RADIO -> com.cockpitf30.ui.screens.RadioScreen()
             }
         }
             com.cockpitf30.ui.components.RouteAlertPopup(Modifier.align(androidx.compose.ui.Alignment.TopEnd).padding(top = 20.dp, end = 24.dp))
+            com.cockpitf30.ui.components.AmbientGlow()
+            TripSummaryOverlay()
             AssistantOverlay()
         }
     }

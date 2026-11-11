@@ -52,8 +52,8 @@ object RouteAlerts {
     private const val PREFETCH_M = 5000.0
     /** Descanso: solo tras hora y media al volante. */
     const val REST_AFTER_MS = 90 * 60_000L
-    /** Combustible: avisar por debajo de esta autonomía. */
-    const val LOW_RANGE_KM = 60
+    /** Combustible: avisar por debajo de esta autonomía (con margen para elegir la más barata). */
+    const val LOW_RANGE_KM = 80
     /** Entre dos avisos turísticos (en demo, la cuarta parte). */
     private const val TOURISM_GAP_MS = 3 * 60_000L
     private const val REST_GAP_MS = 20 * 60_000L
@@ -126,7 +126,7 @@ object RouteAlerts {
             }
             AlertCategory.FUEL in on -> {
                 val range = VehicleRepository.state.value.rangeKm
-                if (fuelDue(range, memory, now)) fuelAlert(range!!, stationsAhead(pos, bearing, live)) else null
+                if (fuelDue(range, memory, now)) fuelAlert(range!!, stationsAhead(pos, bearing, live), st.tankLiters) else null
             }
             else -> null
         }
@@ -171,30 +171,68 @@ object RouteAlerts {
     fun fuelDue(range: Int?, mem: Memory, now: Long): Boolean {
         if (range == null || range >= LOW_RANGE_KM) { if (range != null && range >= LOW_RANGE_KM + 10) mem.fuelRange = null; return false }
         val last = mem.fuelRange ?: return true
-        if (last >= 30 && range < 30) return true
+        if (last >= 40 && range < 40) return true
         return mem.since(AlertCategory.FUEL, now) >= FUEL_GAP_MS
     }
 
     private fun stationsAhead(pos: GeoPoint, bearing: Float, live: Boolean): List<StationView> {
         val list = if (live) FuelRepository.state.value.stations else FuelRepository.demoStations(com.cockpitf30.ui.screens.DEMO_CENTER)
-        return FuelStations.nearest(list, pos, limit = 20).map {
+        return FuelStations.nearest(list, pos, limit = 40).map {
             StationView(it.station, it.meters, RoutePois.relative(RouteTracker.bearingBetween(pos, it.station.point), bearing))
         }
     }
 
-    fun fuelAlert(range: Int, stations: List<StationView>): RouteAlert {
-        val s = stations.firstOrNull { abs(it.relBearing) < 45 && it.meters < 15_000 } ?: stations.firstOrNull { it.meters < 10_000 }
+    /** Una gasolinera elegida para repostar y lo que se ahorra frente a la más cercana. */
+    data class FuelPick(val view: StationView, val nearest: StationView, val savingEuros: Double?)
+
+    /** Las carreteras no van en línea recta: distancia real ≈ 1,3 veces la recta. */
+    private const val ROAD_FACTOR = 1.3
+    /** Desvío que se acepta por ahorrar: 1 km por cada 5 céntimos/l. */
+    private const val KM_PER_CENT = 0.2
+
+    /**
+     * Repostaje inteligente: de las gasolineras que quedan delante (±60° del rumbo; si no hay,
+     * cualquiera) y a las que se llega con margen (el 80 % de la autonomía contando el rodeo de la
+     * carretera), la de gasóleo más barato. Ir más lejos cuesta: cada km de más resta como
+     * [KM_PER_CENT] céntimos, para no mandar a 30 km a ahorrar uno. [tankLiters] da el ahorro de
+     * llenar el depósito frente a la más cercana.
+     */
+    fun smartFuelPick(range: Int, stations: List<StationView>, tankLiters: Float): FuelPick? {
+        val reach = range * 1000.0 * 0.8 / ROAD_FACTOR
+        val reachable = stations.filter { it.meters <= reach }.ifEmpty { stations.filter { it.meters < 10_000 } }
+        if (reachable.isEmpty()) return null
+        val ahead = reachable.filter { abs(it.relBearing) < 60 }.ifEmpty { reachable }
+        val nearest = ahead.minBy { it.meters }
+        fun cost(v: StationView): Double {
+            val price = v.station.diesel ?: return Double.MAX_VALUE
+            return price * 100 + v.meters / 1000.0 * KM_PER_CENT * 5
+        }
+        val best = ahead.filter { it.station.diesel != null }.minByOrNull(::cost) ?: nearest
+        val saving = if (best !== nearest) {
+            val a = nearest.station.diesel; val b = best.station.diesel
+            if (a != null && b != null && a > b) (a - b) * tankLiters else null
+        } else null
+        return FuelPick(best, nearest, saving)
+    }
+
+    fun fuelAlert(range: Int, stations: List<StationView>, tankLiters: Float = 57f): RouteAlert {
+        val pick = smartFuelPick(range, stations, tankLiters)
         val head = "Te quedan unos $range kilómetros de autonomía."
-        if (s == null) {
+        if (pick == null) {
             return RouteAlert("fuel.none", AlertCategory.FUEL, "Combustible bajo", "$range km de autonomía", "$head No veo gasolineras cerca. Mejor no apurar.")
         }
+        val s = pick.view
         val where = side(s.relBearing)
-        val price = s.station.diesel?.let { " Gasóleo a ${"%.2f".format(Locale("es", "ES"), it)} euros." } ?: ""
+        val es = Locale("es", "ES")
+        val price = s.station.diesel?.let { " Gasóleo a ${"%.2f".format(es, it)} euros." } ?: ""
         val brand = s.station.brand.lowercase().replaceFirstChar { it.uppercase() }
+        val cheaper = pick.savingEuros?.takeIf { it >= 0.5 }?.let {
+            " Es la más barata a tu alcance: llenando ahorras unos ${"%.0f".format(es, it)} euros frente a la más cercana."
+        } ?: ""
         return RouteAlert(
             "fuel.${s.station.id}", AlertCategory.FUEL, "Gasolinera $brand",
-            "${shortDistance(s.meters)} ${where.second} · $range km de autonomía",
-            "$head Hay una gasolinera $brand a ${spokenDistance(s.meters)}, ${where.first}.$price",
+            "${shortDistance(s.meters)} ${where.second} · $range km de autonomía" + (pick.savingEuros?.takeIf { it >= 0.5 }?.let { " · ahorras ${"%.0f".format(es, it)} €" } ?: ""),
+            "$head Hay una gasolinera $brand a ${spokenDistance(s.meters)}, ${where.first}.$price$cheaper",
             text = listOf(s.station.address, s.station.town).filter { it.isNotBlank() }.joinToString(", ") +
                 (s.station.diesel?.let { " · Gasóleo ${FuelStations.formatPrice(it)} €" } ?: ""),
         )

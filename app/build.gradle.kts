@@ -13,8 +13,8 @@ android {
         // Las unidades TopWay/ZQ suelen venir con Android 10–13.
         minSdk = 26
         targetSdk = 34
-        versionCode = 63
-        versionName = "0.9.53"
+        versionCode = 73
+        versionName = "0.9.63"
         // Vosk trae su librería nativa para cada arquitectura (~9 MB cada una): la radio es ARM y el
         // emulador del PC x86_64; la de x86 de 32 bits no hace falta.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
@@ -32,7 +32,12 @@ android {
     }
 
     buildTypes {
+        // Versión para la radio: no depurable, así Android la compila entera y Compose va bastante
+        // más fluido que en la de depuración. Va firmada con la misma clave compartida para que se
+        // instale encima de cualquier APK anterior. Sin R8 (minify) a propósito: la app usa mucha
+        // reflexión con las clases de la radio y Vosk/JNA, y no se puede probar aquí.
         release {
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
@@ -69,6 +74,11 @@ dependencies {
     // Reconocimiento de voz sin conexión para «Hola BMW» (el modelo en español se descarga aparte).
     implementation("com.alphacephei:vosk-android:0.3.47")
     implementation("net.java.dev.jna:jna:5.13.0@aar")
+    // Radio por Internet: ExoPlayer dentro de un MediaSessionService (no lo cierra el sistema con Maps delante).
+    // 1.4.x es la última que compila con compileSdk 34.
+    implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
+    implementation("androidx.media3:media3-session:1.4.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")

@@ -1,5 +1,6 @@
 package com.cockpitf30.ui.screens
 
+import androidx.compose.ui.graphics.graphicsLayer
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -180,7 +181,7 @@ private fun StationMapView(view: FuelView, selected: NearStation?, modifier: Mod
                 StationMark(n.station.point, i + 1, n.station.id == selected?.station?.id, n.station.brand)
             }
         }
-        Canvas(Modifier.fillMaxSize()) {
+        Canvas(Modifier.fillMaxSize().graphicsLayer()) {
             tiles // se vuelve a dibujar cuando llega una tesela
             drawStationMap(
                 Rect(0f, 0f, size.width, size.height), center, zoom, car, view.bearing, marks, tm, numberStyle, labelStyle, phase,
