@@ -1,6 +1,7 @@
 package com.cockpitf30.ui
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -103,6 +104,7 @@ class MainActivity : ComponentActivity() {
             com.cockpitf30.ui.components.Startup.ready.value = true
         }, "precarga").apply { priority = Thread.MIN_PRIORITY + 2 }.start()
 
+        openRequested(intent)
         setContent {
             CockpitTheme {
                 Box(Modifier.fillMaxSize()) {
@@ -163,15 +165,45 @@ class MainActivity : ComponentActivity() {
         return true
     }
 
-    // El asistente solo escucha con la app en pantalla: al salir suelta el micrófono.
+    // Con la app en pantalla el asistente escucha siempre. Al abrir Maps u otra app, si así se ha
+    // elegido en Ajustes, sigue escuchando y aparece el mini cockpit encima; si no, suelta el micrófono.
     override fun onStart() {
         super.onStart()
+        // Se vuelve a arrancar el servicio desde primer plano para que pueda usar el micrófono fuera de la app.
+        VehicleService.start(this)
         VoiceAssistant.resume(this)
+        com.cockpitf30.overlay.MiniCockpit.hide()
     }
 
     override fun onStop() {
-        VoiceAssistant.pause()
+        val settings = AppSettings(this)
+        if (settings.listenOutsideApp && !isChangingConfigurations) VoiceAssistant.background(this) else VoiceAssistant.pause()
+        if (settings.miniCockpit && !isChangingConfigurations) com.cockpitf30.overlay.MiniCockpit.show(this)
         super.onStop()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        openRequested(intent)
+    }
+
+    private fun openRequested(intent: Intent?) {
+        val name = intent?.getStringExtra(EXTRA_SCREEN) ?: return
+        runCatching { Screen.valueOf(name) }.getOrNull()?.let { requestedScreen.value = it }
+    }
+
+    companion object {
+        private const val EXTRA_SCREEN = "screen"
+        /** Pantalla pedida desde fuera (asistente encima de Maps, mini cockpit). */
+        val requestedScreen = kotlinx.coroutines.flow.MutableStateFlow<Screen?>(null)
+
+        /** Vuelve a poner la app delante, en [screen] si se indica. */
+        fun show(context: android.content.Context, screen: Screen? = null) {
+            val i = Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            screen?.let { i.putExtra(EXTRA_SCREEN, it.name) }
+            runCatching { context.startActivity(i) }
+        }
     }
 
     private var swallowKey: Int? = null
@@ -349,6 +381,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     // Vehículo abre el iDrive original del coche (la caja CAN no da puertas ni presiones):
     // allí está «Estado del vehículo» con las ruedas y su presión.
     val go: (Screen) -> Unit = { if (it == Screen.VEHICLE) openOriginalBmw(ctx) else screen = it }
+    LaunchedEffect(Unit) { MainActivity.requestedScreen.collect { s -> if (s != null) { MainActivity.requestedScreen.value = null; go(s) } } }
     DisposableEffect(Unit) {
         val nav: (Screen) -> Unit = go
         VoiceAssistant.navigator = nav
@@ -411,6 +444,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 Screen.RADIO -> com.cockpitf30.ui.screens.RadioScreen()
             }
         }
+            com.cockpitf30.ui.components.MapsGuidanceBanner(Modifier.align(androidx.compose.ui.Alignment.TopCenter).padding(top = 14.dp))
             com.cockpitf30.ui.components.RouteAlertPopup(Modifier.align(androidx.compose.ui.Alignment.TopEnd).padding(top = 20.dp, end = 24.dp))
             com.cockpitf30.ui.components.AmbientGlow()
             TripSummaryOverlay()

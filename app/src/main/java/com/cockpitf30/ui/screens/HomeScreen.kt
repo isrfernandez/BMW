@@ -480,6 +480,10 @@ internal fun openMaps(context: Context) {
     } else {
         maps
     }
+    // Pantalla dividida: Maps en la otra mitad, si el sistema lo permite (si no, lo ignora).
+    if (com.cockpitf30.system.AppSettings(context).splitScreenMaps) {
+        intent.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT)
+    }
     launch(context, intent)
 }
 

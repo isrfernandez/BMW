@@ -122,6 +122,21 @@ fun CockpitTheme(content: @Composable () -> Unit) {
     }
 }
 
+/**
+ * Tema para ventanas fuera de la actividad (mini cockpit encima de Maps): mismos colores y letras,
+ * y la misma escala que el lienzo de diseño, pero sin ocupar la pantalla entera.
+ */
+@Composable
+fun CockpitOverlayTheme(content: @Composable () -> Unit) {
+    val metrics = androidx.compose.ui.platform.LocalContext.current.resources.displayMetrics
+    val density = minOf(metrics.widthPixels / DESIGN_WIDTH_DP, metrics.heightPixels / DESIGN_HEIGHT_DP).coerceAtLeast(0.5f)
+    MaterialTheme(colorScheme = darkColorScheme(primary = Cockpit.Blue, background = Cockpit.Background, surface = Cockpit.Surface), typography = typography) {
+        CompositionLocalProvider(LocalContentColor provides Cockpit.Text, LocalDensity provides Density(density, fontScale = 1f)) {
+            content()
+        }
+    }
+}
+
 /** Lienzo de diseño: toda la interfaz está pensada para 1920x720 dp (la ZQ9109 a 160 dpi). */
 const val DESIGN_WIDTH_DP = 1920f
 const val DESIGN_HEIGHT_DP = 720f

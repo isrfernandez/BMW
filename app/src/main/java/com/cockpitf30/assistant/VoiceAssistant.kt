@@ -199,8 +199,16 @@ object VoiceAssistant {
     /** Solo para capturas de pantalla en tests. */
     internal fun preview(s: AssistantState) { _state.value = s }
 
+    /**
+     * La app está en pantalla. Si no lo está pero el asistente sigue escuchando (encima de Maps),
+     * las respuestas solo se dicen: no se cambia de pantalla salvo que se pida abrir una.
+     */
+    @Volatile var appVisible = false
+        private set
+
     /** La app vuelve a estar en pantalla (o ha cambiado un ajuste / el permiso). */
     fun resume(context: Context) {
+        appVisible = true
         contactsCache = null
         app = context.applicationContext
         scope.launch(Dispatchers.IO) { contactsCache = com.cockpitf30.system.Contacts.load(app).takeIf { it.isNotEmpty() } }
@@ -216,8 +224,19 @@ object VoiceAssistant {
 
     private var recentLoaded = false
 
+    /**
+     * La app sale de pantalla (Maps, Spotify…) pero el conductor quiere seguir usando «Hola BMW»:
+     * el micrófono sigue abierto (lo permite el servicio en primer plano con tipo micrófono) y el
+     * mini cockpit enseña lo que oye y responde.
+     */
+    fun background(context: Context) {
+        if (!resumed) resume(context)
+        appVisible = false
+    }
+
     /** La app sale de pantalla: suelta el micrófono para no molestar a Maps, llamadas, etc. */
     fun pause() {
+        appVisible = false
         resumed = false
         muted = false
         copilotJob?.cancel()
@@ -669,7 +688,16 @@ object VoiceAssistant {
 
     private fun saveRecent() { runCatching { settings().assistantRecentLines = Personality.recent.save() } }
 
-    private fun open(screen: Screen) = navigator?.invoke(screen)
+    /**
+     * Abre una pantalla de la app. Fuera de la app (encima de Maps) solo si se ha pedido
+     * expresamente ([force]); las consultas («¿cuánta gasolina?») se contestan sin quitar el mapa.
+     */
+    private fun open(screen: Screen, force: Boolean = false) {
+        if (appVisible) { navigator?.invoke(screen); return }
+        if (!force) return
+        if (screen == Screen.VEHICLE) { navigator?.invoke(screen); return }
+        afterSpeaking { com.cockpitf30.ui.MainActivity.show(app, screen) }
+    }
 
     /**
      * Busca en la agenda y llama. Con un único contacto que encaja llama al terminar de decirlo;
@@ -738,7 +766,7 @@ object VoiceAssistant {
 
     private fun perform(c: Command, now: Long = System.currentTimeMillis()): String = when (c) {
         is Command.Open -> {
-            open(c.screen)
+            open(c.screen, force = true)
             when (c.screen) {
                 Screen.FUEL -> joke("Te enseño las gasolineras", "open.fuel")
                 Screen.VEHICLE -> joke("Te paso al iDrive original del coche", "open.vehicle")
@@ -962,6 +990,9 @@ object VoiceAssistant {
             }
             InfoTopic.TIME -> LocalTime.now().let { joke("Son las ${it.hour}:${"%02d".format(it.minute)}", "time") }
             InfoTopic.SPEED -> car.speedKmh?.let { joke("Vas a $it kilómetros por hora", "speed") } ?: "No me llega la velocidad"
+            InfoTopic.GUIDANCE -> com.cockpitf30.nav.MapsGuidanceState.current.value?.let { com.cockpitf30.nav.MapsGuidanceState.spoken(it) }
+                ?: if (!com.cockpitf30.nav.MapsGuidanceState.hasAccess(app)) "Para leer las indicaciones de Maps dame acceso a las notificaciones en Ajustes, Junto a Google Maps"
+                else "Maps no está navegando ahora mismo"
         }
     }
 
