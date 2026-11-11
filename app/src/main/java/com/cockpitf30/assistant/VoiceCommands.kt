@@ -4,7 +4,7 @@ import com.cockpitf30.ui.screens.Screen
 import java.text.Normalizer
 
 /** Datos que el asistente sabe contar en voz alta. */
-enum class InfoTopic { RANGE, FUEL_NEAR, TYRES, WEATHER, TIME, DOORS, TRIP, SPEED }
+enum class InfoTopic { RANGE, FUEL_NEAR, TYRES, WEATHER, TIME, DOORS, TRIP, SPEED, GUIDANCE }
 
 /** Lo que el usuario ha pedido, ya interpretado. */
 sealed interface Command {
@@ -287,6 +287,10 @@ object VoiceCommands {
             if (what.startsWith("gasolinera") || what == "donde repostar") return Command.Info(InfoTopic.FUEL_NEAR)
             if (what.length >= 4 && what !in setOf("algo", "eso", "esto")) return Command.Navigate(what)
         }
+
+        // Indicaciones de Google Maps: siguiente giro y llegada.
+        if (has("siguiente giro", "proximo giro", "siguiente indicacion", "proxima indicacion", "siguiente maniobra", "por donde tengo que", "por donde sigo",
+                "donde giro", "cuanto falta", "a que hora llego", "hora de llegada", "cuando llego", "cuando llegamos", "a que hora llegamos")) return Command.Info(InfoTopic.GUIDANCE)
 
         // Preguntas: se contestan en voz alta (y se abre la pantalla que corresponda).
         if (question || has("autonomia", "cuanto queda")) {

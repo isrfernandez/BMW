@@ -115,4 +115,14 @@ class VoiceCommandsTest {
         assertTrue(VoiceCommands.BARGE_GRAMMAR.contains("\"hola be eme uve doble\""))
         assertTrue(VoiceCommands.BARGE_GRAMMAR.contains("\"basta\""))
     }
+
+    @Test
+    fun mapsGuidanceQuestions() {
+        for (t in listOf("¿cuál es el siguiente giro?", "¿cuánto falta?", "¿a qué hora llego?", "próxima indicación", "¿por dónde sigo?")) {
+            assertEquals(t, Command.Info(InfoTopic.GUIDANCE), VoiceCommands.parse(t))
+        }
+        // Lo de antes sigue igual.
+        assertEquals(Command.Info(InfoTopic.TIME), VoiceCommands.parse("¿qué hora es?"))
+        assertEquals(Command.Info(InfoTopic.RANGE), VoiceCommands.parse("¿cuánto queda de autonomía?"))
+    }
 }

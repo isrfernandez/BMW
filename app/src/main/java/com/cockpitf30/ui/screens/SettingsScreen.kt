@@ -75,6 +75,7 @@ enum class SettingsSection(val title: String, val hint: String) {
     DRIVING("Conducción", "Copiloto, briefing, resumen y cambio"),
     ALERTS("Avisos en ruta", "Radares, peligros, descanso y turismo"),
     RADIO("Radio", "Fuente, volumen y atenuación"),
+    MAPS("Junto a Google Maps", "Mini cockpit, voz e indicaciones"),
     SYSTEM("Sistema", "Inicio, botones del iDrive y batería"),
 }
 
@@ -120,6 +121,7 @@ fun SettingsScreen(onOpen: (Screen) -> Unit = {}, initialSection: SettingsSectio
                             SettingsSection.DRIVING -> DrivingSettings(onOpen)
                             SettingsSection.ALERTS -> AlertSettings()
                             SettingsSection.RADIO -> RadioSettings(onOpen)
+                            SettingsSection.MAPS -> MapsSettings()
                             SettingsSection.SYSTEM -> SystemSettings(onOpen)
                         }
                     }
@@ -358,6 +360,73 @@ private fun RadioSettings(onOpen: (Screen) -> Unit) {
             duck = it; settings.radioDuckAssistant = it
         }
         ActionRow("Emisoras y favoritas", null, "Abrir Radio ›") { onOpen(Screen.RADIO) }
+    }
+}
+
+/**
+ * Con Google Maps en pantalla completa: Android no deja meter Maps dentro de la app, así que
+ * la app se queda «al lado»: mini cockpit flotante encima, «Hola BMW» sigue escuchando y las
+ * indicaciones de Maps se ven en el cockpit al volver.
+ */
+@Composable
+private fun MapsSettings() {
+    val ctx = LocalContext.current
+    val settings = remember { AppSettings(ctx) }
+    // Los permisos se dan en pantallas del sistema: al volver se miran otra vez.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    val resumed by lifecycle.currentStateFlow.collectAsStateWithLifecycle()
+    val canOverlay = remember(resumed) { com.cockpitf30.overlay.MiniCockpit.canShow(ctx) }
+    val hasNotif = remember(resumed) { com.cockpitf30.nav.MapsGuidanceState.hasAccess(ctx) }
+
+    SettingGroup("Encima de Maps") {
+        var mini by remember { mutableStateOf(settings.miniCockpit) }
+        ToggleRow(
+            "Mini cockpit flotante",
+            "Barra con velocidad, marcha, rpm, autonomía, radares y el asistente encima de Maps y de otras apps. Se arrastra a donde moleste menos; tocar la velocidad la pliega.",
+            mini && canOverlay,
+        ) {
+            mini = it; settings.miniCockpit = it
+            if (it && !canOverlay) com.cockpitf30.overlay.MiniCockpit.requestPermission(ctx)
+        }
+        if (mini && !canOverlay) {
+            ActionRow("Falta el permiso «Mostrar sobre otras apps»", "Sin él no se puede pintar encima de Maps.", "Dar permiso ›") {
+                com.cockpitf30.overlay.MiniCockpit.requestPermission(ctx)
+            }
+        }
+        var listen by remember { mutableStateOf(settings.listenOutsideApp) }
+        ToggleRow(
+            "«Hola BMW» también con Maps delante",
+            "El micrófono sigue abierto fuera de la app. Las preguntas se contestan sin quitar el mapa; «abre la radio» o «vuelve al inicio» traen la app.",
+            listen,
+        ) {
+            listen = it; settings.listenOutsideApp = it
+            com.cockpitf30.service.VehicleService.start(ctx)
+        }
+    }
+
+    SettingGroup("Indicaciones de Maps en la app") {
+        Hint("Mientras Maps navega, el próximo giro y la llegada salen arriba del cockpit, y puedes preguntar «¿cuál es el siguiente giro?» o «¿cuánto falta?». Se leen de la notificación de Maps.")
+        if (hasNotif) {
+            ActionRow("Acceso a notificaciones: concedido", "Para quitarlo, en los ajustes de Android.", "Abrir ›") {
+                com.cockpitf30.nav.MapsGuidanceState.requestAccess(ctx)
+            }
+        } else {
+            ActionRow("Acceso a notificaciones", "En la lista que se abre, activa Cockpit F30.", "Dar acceso ›") {
+                if (!com.cockpitf30.nav.MapsGuidanceState.requestAccess(ctx)) {
+                    android.widget.Toast.makeText(ctx, "Esta radio no tiene esa pantalla de ajustes", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    SettingGroup("Pantalla dividida (experimental)") {
+        Hint("Android no deja meter Google Maps dentro de otra app: solo el sistema puede incrustar ventanas ajenas. Lo más parecido es la pantalla dividida, si la radio la permite.")
+        var split by remember { mutableStateOf(settings.splitScreenMaps) }
+        ToggleRow(
+            "Abrir Maps al lado del cockpit",
+            "Pide a Android abrir Maps en la otra mitad de la pantalla. Si la radio no tiene pantalla dividida, Maps se abre como siempre (y queda el mini cockpit).",
+            split,
+        ) { split = it; settings.splitScreenMaps = it }
     }
 }
 

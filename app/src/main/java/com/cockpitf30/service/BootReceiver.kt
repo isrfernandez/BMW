@@ -11,7 +11,7 @@ import android.content.Intent
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action !in BOOT_ACTIONS) return
-        VehicleService.start(context)
+        VehicleService.startAtBoot(context)
     }
 
     private companion object {

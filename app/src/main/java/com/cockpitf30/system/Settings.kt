@@ -284,6 +284,31 @@ class AppSettings(context: Context) {
         set(value) = prefs.edit().putBoolean("trip_summary", value).apply()
 
     /** Flecha de cambio de marcha en el cuadro. */
+    /** Con Maps u otra app delante, seguir escuchando «Hola BMW» (servicio en primer plano con micrófono). */
+    var listenOutsideApp: Boolean
+        get() = prefs.getBoolean("listen_outside_app", true)
+        set(value) = prefs.edit().putBoolean("listen_outside_app", value).apply()
+
+    /** Mini cockpit flotante (velocidad, marcha, asistente…) encima de Maps y de otras apps. */
+    var miniCockpit: Boolean
+        get() = prefs.getBoolean("mini_cockpit", true)
+        set(value) = prefs.edit().putBoolean("mini_cockpit", value).apply()
+
+    /** Posición del mini cockpit en la pantalla (px desde arriba a la izquierda; -1 = sin mover). */
+    var miniCockpitPos: Pair<Int, Int>
+        get() = prefs.getInt("mini_cockpit_x", -1) to prefs.getInt("mini_cockpit_y", -1)
+        set(value) = prefs.edit().putInt("mini_cockpit_x", value.first).putInt("mini_cockpit_y", value.second).apply()
+
+    /** Abrir Maps en pantalla dividida junto al cockpit (si la radio lo permite). */
+    var splitScreenMaps: Boolean
+        get() = prefs.getBoolean("split_screen_maps", false)
+        set(value) = prefs.edit().putBoolean("split_screen_maps", value).apply()
+
+    /** Mini cockpit plegado: solo velocidad y micrófono. */
+    var miniCockpitCompact: Boolean
+        get() = prefs.getBoolean("mini_cockpit_compact", false)
+        set(value) = prefs.edit().putBoolean("mini_cockpit_compact", value).apply()
+
     var shiftIndicator: Boolean
         get() = prefs.getBoolean("shift_indicator", true)
         set(value) = prefs.edit().putBoolean("shift_indicator", value).apply()

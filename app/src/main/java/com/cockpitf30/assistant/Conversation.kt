@@ -166,6 +166,7 @@ class Conversation {
                 InfoTopic.DOORS -> "las puertas"
                 InfoTopic.TRIP -> "el viaje"
                 InfoTopic.SPEED -> "la velocidad"
+                InfoTopic.GUIDANCE -> "las indicaciones del navegador"
             }
             is Command.Station -> "las gasolineras cercanas"
             is Command.WeatherDay -> if (c.offset == 1) "el tiempo de mañana" else "el tiempo de los próximos días"

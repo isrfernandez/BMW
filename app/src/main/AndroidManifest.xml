@@ -7,10 +7,14 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
-    <!-- Asistente de voz: escuchar «Hola BMW» (solo con la app en pantalla). -->
+    <!-- Asistente de voz: escuchar «Hola BMW» (también con Maps delante, si se elige en Ajustes). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- «Hola BMW» con Maps delante: el servicio del coche también es de tipo micrófono. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Mini cockpit flotante encima de Maps (y volver a la app desde él o por voz). -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Radio por Internet: servicio multimedia en primer plano. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -101,10 +105,21 @@
         <service
             android:name=".service.VehicleService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="specialUse|microphone">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Lectura continua del CAN bus del vehículo" />
+        </service>
+
+        <!-- Indicaciones de Google Maps (siguiente giro) leídas de su notificación de navegación. -->
+        <service
+            android:name=".nav.MapsGuidanceListener"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
         </service>
 
         <service
