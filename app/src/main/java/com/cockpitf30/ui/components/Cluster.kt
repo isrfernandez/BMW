@@ -1,5 +1,6 @@
 package com.cockpitf30.ui.components
 
+import androidx.compose.foundation.border
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -194,6 +195,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     val measurer = rememberTextMeasurer(cacheSize = 96)
     val scaleStyle = numeric(28, FontWeight.SemiBold)
     val smallStyle = numeric(17, FontWeight.SemiBold)
+    val maxStyle = numeric(19, FontWeight.Bold).copy(letterSpacing = 2.sp)
     val captionStyle = numeric(17, FontWeight.Medium)
     val homeRes = cachedBitmap(R.drawable.home_car_scene)
     val trianglesRes = cachedBitmap(R.drawable.bg_triangles)
@@ -283,8 +285,9 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         // Cada capa captura solo los datos que pinta: la velocidad cambia 10 veces por segundo y no
         // debe repintar el coche ni las cifras.
         val rangeKm = state.rangeKm
+        // Redondeada a medio grado: la capa del coche no se repinta por décimas.
+        val outsideTemp = state.outsideTempC?.let { t -> String.format(java.util.Locale.US, "%.1f", (t * 2).roundToInt() / 2f).replace('.', ',') }
         val fuelLevel = state.fuelLevel
-        val oilTempC = state.oilTempC
         val scene = remember(homeRes, trianglesRes) { CarScene(homeRes, trianglesRes) }
         // El cuadro se pinta en capas independientes: cada una solo se vuelve a dibujar cuando cambia
         // lo suyo. Antes un único lienzo repintaba todo (coche, mapa, marcos, cifras) en cada
@@ -302,7 +305,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             // Posición, zoom y fase solo se leen si el mapa se ve: el mapa se mueve sin recomponer el cuadro.
             val map = if (pg > 0f) smooth.value.let { now -> MapFrame(route, now.position, now.bearing, zoom, phase) }
             else MapFrame(route, route.position, route.bearing, 17f, 0f)
-            drawPanel(geo, scene, rangeKm, measurer, overlay, pg, map, mapText, focused)
+            drawPanel(geo, scene, rangeKm, outsideTemp, measurer, overlay, pg, map, mapText, focused)
         }
         // 2) Franjas vacías de acero: fijas.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
@@ -332,21 +335,20 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
 
             // El 0 no se rotula (no cabe colgando bajo la última marca); su marca sí se dibuja.
             val sMask = speedEngraved
+            // La cifra de arriba del todo (250 / 8) quedaba bajada y descolocada: se rotula "MAX".
             SPEED_MARKS.forEachIndexed { i, v ->
-                if (i > 0) drawMark(geo, measurer, "$v", SPEED_FRACTIONS[i], false, scaleStyle, SpeedLabel, sMask and (1 shl i) != 0, SpeedMetal)
+                val top = i == SPEED_MARKS.lastIndex
+                if (i > 0) drawMark(geo, measurer, if (top) "MAX" else "$v", SPEED_FRACTIONS[i], false, if (top) maxStyle else scaleStyle, SpeedLabel, sMask and (1 shl i) != 0, SpeedMetal)
             }
             val rMask = rpmEngraved
             (1..8).forEach { k ->
-                drawMark(geo, measurer, "$k", RPM_FRACTIONS[k], true, scaleStyle, if (k * 1000 >= RPM_RED) RpmRed else RpmLabel, rMask and (1 shl k) != 0, RpmMetal)
+                drawMark(geo, measurer, if (k == 8) "MAX" else "$k", RPM_FRACTIONS[k], true, if (k == 8) maxStyle else scaleStyle, if (k * 1000 >= RPM_RED) RpmRed else RpmLabel, rMask and (1 shl k) != 0, RpmMetal)
             }
             drawCaption(geo, measurer, "km/h", mirrored = false, captionStyle)
             drawCaption(geo, measurer, "1/min x 1000", mirrored = true, captionStyle)
 
+            // Solo combustible: la temperatura del aceite no llega por ninguna vía (ni CAN ni radio).
             drawMiniBar(geo, measurer, fuelLevel, listOf("1", "1/2", "0"), mirrored = false, smallStyle)
-            // Temperatura del aceite (50–150 °C): solo si llega el dato; la caja CAN del F30 no la manda.
-            oilTempC?.let { t ->
-                drawMiniBar(geo, measurer, ((t - 50) / 100f).coerceIn(0f, 1f), listOf("150", "100", "50"), mirrored = true, smallStyle)
-            }
         }
 
         // Velocidad y marcha en pestañas oscuras sobre el panel, con halo del color de su barra.
@@ -363,6 +365,17 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             Spacer(Modifier.weight(1.5f))
             TabValue(gearText ?: "--", shownRpm?.let { "$it rpm" } ?: "-- rpm", Modifier.weight(1f), alignEnd = true, glow = RpmGlow, intensity = rpmGlow, shift = shift)
         }
+        // Datos de apoyo bajo las cifras grandes, solo en la vista del coche (se van con el mapa).
+        CarInfoChips(
+            state.avgConsumption, state.fuelLevel,
+            Modifier.fillMaxWidth().height(g.frameBottom)
+                .graphicsLayer {
+                    val p = page.value
+                    alpha = (1f - p * 1.6f).coerceIn(0f, 1f)
+                    translationY = p * 24.dp.toPx()
+                },
+            inset = g.contentInset + 34.dp,
+        )
         StatusLine(
             state, status,
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(g.statusHeight)
@@ -498,7 +511,7 @@ private class Overlay(val value: TextStyle, val unit: TextStyle, val caption: Te
 private class CarScene(val home: ImageBitmap, val triangles: ImageBitmap)
 
 private fun DrawScope.drawPanel(
-    g: GeoPx, scene: CarScene, rangeKm: Int?, tm: TextMeasurer, st: Overlay,
+    g: GeoPx, scene: CarScene, rangeKm: Int?, outsideTemp: String?, tm: TextMeasurer, st: Overlay,
     page: Float, map: MapFrame, mapText: MapText, focused: Boolean,
 ) {
     val inset = g.band + g.dp(14f)
@@ -519,7 +532,7 @@ private fun DrawScope.drawPanel(
         if (page > 0f) drawFacets(g, pts, scene.triangles, bounds)
         // Página del mapa, entrando por la derecha.
         if (page > 0f) translate(left = (1f - page) * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawMap(bounds, map, tm, mapText) } }
-        if (page < 1f) translate(left = -page * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawCar(g, scene, rangeKm, tm, st, bounds) } }
+        if (page < 1f) translate(left = -page * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawCar(g, scene, rangeKm, outsideTemp, tm, st, bounds) } }
     }
     // Sport y Night tiñen la escena (coche y mapa) del color del modo, manteniendo luces y sombras.
     DriveModes.palette.tint?.let { tint ->
@@ -579,7 +592,7 @@ private fun DrawScope.drawPageDots(g: GeoPx, bottom: Float, page: Float) {
  * maletero abiertos (brillo rojo) y se rotula arriba qué está abierto.
  */
 private fun DrawScope.drawCar(
-    g: GeoPx, scene: CarScene, rangeKm: Int?, tm: TextMeasurer, st: Overlay, bounds: Rect,
+    g: GeoPx, scene: CarScene, rangeKm: Int?, outsideTemp: String?, tm: TextMeasurer, st: Overlay, bounds: Rect,
 ) {
     run {
         val top = bounds.top
@@ -606,7 +619,10 @@ private fun DrawScope.drawCar(
         fun at(px: Float, py: Float) = Offset(bounds.left + (px - sl) * sc, top + (py - st0) * sc)
         // Sin presiones de rueda: la caja CAN no las manda (se ven en el iDrive original).
         // Autonomía arriba a la derecha, sin línea.
-        marker(tm, st, "AUTONOMÍA", rangeKm?.toString() ?: "--", " km", null, at(905f, 250f), alignRight = false)
+        val range = at(905f, 250f)
+        marker(tm, st, "AUTONOMÍA", rangeKm?.toString() ?: "--", " km", null, range, alignRight = false)
+        // Y en simetría, a la izquierda del coche, la temperatura exterior.
+        marker(tm, st, "EXTERIOR", outsideTemp ?: "--", " °C", null, Offset(2 * bounds.center.x - range.x, range.y), alignRight = true)
     }
 }
 
@@ -1106,3 +1122,63 @@ private fun FuelPump(modifier: Modifier = Modifier) {
     }
 }
 
+
+/**
+ * Fichas de cristal bajo la velocidad (consumo y depósito) y bajo la marcha (viaje en curso:
+ * distancia y tiempo). Redundan con otras pantallas, pero llenan la vista del coche con datos
+ * útiles. El viaje se lee aquí para que sus cambios solo recompongan las fichas.
+ */
+@Composable
+private fun CarInfoChips(avgConsumption: Float?, fuelLevel: Float?, modifier: Modifier, inset: Dp) {
+    val trips by com.cockpitf30.vehicle.trip.TripComputer.state.collectAsStateWithLifecycle()
+    val trip = trips.current ?: trips.last
+    val consumption = avgConsumption ?: trip?.avgConsumption(trips.tankLiters)
+    val liters = fuelLevel?.let { (it * trips.tankLiters).roundToInt() }
+    val km = trip?.distanceKm
+    val minutes = trip?.let { (it.durationMillis / 60_000L).toInt() }
+    Box(modifier) {
+        Row(
+            Modifier.align(Alignment.BottomStart).padding(start = inset, bottom = 22.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            InfoChip("CONSUMO", consumption?.let { String.format(java.util.Locale.US, "%.1f", it).replace('.', ',') } ?: "--", "l/100")
+            InfoChip("DEPÓSITO", liters?.toString() ?: "--", "l", warn = fuelLevel != null && fuelLevel < 0.15f)
+        }
+        Row(
+            Modifier.align(Alignment.BottomEnd).padding(end = inset, bottom = 22.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            InfoChip("VIAJE", km?.let { if (it < 100) String.format(java.util.Locale.US, "%.1f", it).replace('.', ',') else "${it.roundToInt()}" } ?: "--", "km")
+            InfoChip("TIEMPO", minutes?.let { "${it / 60}:${(it % 60).toString().padStart(2, '0')}" } ?: "--", "h")
+        }
+    }
+}
+
+private val ChipShape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
+
+@Composable
+private fun InfoChip(caption: String, value: String, unit: String, warn: Boolean = false) {
+    val accent = if (warn) Color(0xFFFFB347) else Cockpit.BlueLight
+    Column(
+        Modifier
+            .width(150.dp)
+            .background(Color(0xFF050B14).copy(alpha = 0.58f), ChipShape)
+            .border(
+                1.dp,
+                Brush.linearGradient(listOf(Color.White.copy(alpha = 0.38f), Color.White.copy(alpha = 0.06f), accent.copy(alpha = 0.45f))),
+                ChipShape,
+            )
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(7.dp).background(accent, androidx.compose.foundation.shape.CircleShape))
+            Spacer(Modifier.width(7.dp))
+            Text(caption, style = MaterialTheme.typography.labelMedium.copy(fontSize = 13.sp, letterSpacing = 1.sp), color = Color.White.copy(alpha = 0.7f), maxLines = 1)
+        }
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(value, style = numeric(30, FontWeight.SemiBold), color = if (warn) accent else Cockpit.Text, maxLines = 1)
+            Spacer(Modifier.width(4.dp))
+            Text(unit, style = numeric(15, FontWeight.Medium), color = Cockpit.TextDim, maxLines = 1, modifier = Modifier.padding(bottom = 5.dp))
+        }
+    }
+}
