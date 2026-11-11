@@ -325,7 +325,8 @@ object VoiceCommands {
             has("tiempo", "clima", "prevision", "meteo") -> Command.Open(Screen.WEATHER)
             has("telefono", "llama", "llamar", "contacto", "marcador", "agenda") -> Command.Open(Screen.PHONE)
             has("aplicacion", "apps", "app") -> Command.Open(Screen.APPS)
-            has("diagnostico", "ajuste", "configuracion") -> Command.Open(Screen.DIAGNOSTICS)
+            has("diagnostico", "depuracion") -> Command.Open(Screen.DIAGNOSTICS)
+            has("ajuste", "configuracion") -> Command.Open(Screen.SETTINGS)
             has("inicio", "principal", "home") -> Command.Open(Screen.HOME)
             has("musica", "spotify", "cancion", "reproductor") -> Command.Music
             has("mapa", "navegacion", "navegador", "maps", "gps") -> Command.Maps

@@ -131,7 +131,7 @@ class MainActivity : ComponentActivity() {
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(raw: KeyEvent): Boolean {
         VehicleRepository.logInput(IDriveInput.describe(raw))
-        // Modo aprender (Diagnóstico): la tecla se asigna a la función elegida y no hace nada más.
+        // Modo aprender (Ajustes › Sistema): la tecla se asigna a la función elegida y no hace nada más.
         IDriveInput.learn(raw)?.let { map ->
             AppSettings(this).knobKeys = map
             swallowKey = raw.keyCode
@@ -363,8 +363,8 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
         SideItem("Rendimiento", SideArt.PERF, screen == Screen.PERFORMANCE) { screen = Screen.PERFORMANCE },
         SideItem("Música", SideArt.MUSIC, false) { openMusic(context) },
         SideItem("Apps", SideArt.APPS, screen == Screen.APPS) { screen = Screen.APPS },
-        // Ajustes de la app: fuente de datos, puerto serie, batería.
-        SideItem("Ajustes", SideArt.SETTINGS, screen == Screen.DIAGNOSTICS) { screen = Screen.DIAGNOSTICS },
+        // Ajustes de la app por secciones (lo técnico está en Diagnóstico, en la tarjeta del Inicio).
+        SideItem("Ajustes", SideArt.SETTINGS, screen == Screen.SETTINGS) { screen = Screen.SETTINGS },
     )
 
     // Al cambiar de modo se rehace la interfaz entera con la paleta nueva.
@@ -401,6 +401,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 Screen.TRIP -> TripScreen()
                 Screen.APPS -> AppsScreen()
                 Screen.DIAGNOSTICS -> DiagnosticsScreen()
+                Screen.SETTINGS -> com.cockpitf30.ui.screens.SettingsScreen(onOpen = go)
                 Screen.WEATHER -> WeatherScreen()
                 Screen.PHONE -> PhoneScreen()
                 Screen.FUEL -> FuelScreen()
