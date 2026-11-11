@@ -47,6 +47,7 @@ enum class CardTheme(val from: Color, val to: Color) {
     MODE(Color(0xFFD0160C), Color(0xFFFFB238)),
     RADAR(Color(0xFFFF3B30), Color(0xFFFFC94D)),
     SERVICE(Color(0xFF00A88F), Color(0xFF9CFFD9)),
+    RADIO(Color(0xFF1C69D8), Color(0xFF3DDC97)),
 }
 
 /**
@@ -111,7 +112,7 @@ fun BoxScope.CardArt(theme: CardTheme) {
             Canvas(Modifier.fillMaxSize()) { rings(theme) }
             GlassBadge(theme, Modifier.align(Alignment.Center).size(110.dp)) { GradientIcon(Icons.Filled.DateRange, theme, 50) }
         }
-        CardTheme.WEATHER, CardTheme.MODE, CardTheme.RADAR -> Unit
+        CardTheme.WEATHER, CardTheme.MODE, CardTheme.RADAR, CardTheme.RADIO -> Unit
     }
 }
 

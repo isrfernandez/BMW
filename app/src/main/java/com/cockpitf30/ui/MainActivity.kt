@@ -407,6 +407,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 Screen.PERFORMANCE -> com.cockpitf30.ui.screens.PerformanceScreen()
                 Screen.ROUTE -> com.cockpitf30.ui.screens.RouteScreen()
                 Screen.MAINTENANCE -> com.cockpitf30.ui.screens.MaintenanceScreen()
+                Screen.RADIO -> com.cockpitf30.ui.screens.RadioScreen()
             }
         }
             com.cockpitf30.ui.components.RouteAlertPopup(Modifier.align(androidx.compose.ui.Alignment.TopEnd).padding(top = 20.dp, end = 24.dp))

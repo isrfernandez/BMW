@@ -12,6 +12,8 @@ class CockpitApp : Application() {
             .apply { setShowBadge(false) }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         com.cockpitf30.nav.MapTiles.init(this)
+        com.cockpitf30.radio.Radio.init(this)
+        com.cockpitf30.radio.AssistantDuck.start(this)
     }
 
     companion object {

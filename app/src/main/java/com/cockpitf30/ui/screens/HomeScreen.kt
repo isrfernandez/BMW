@@ -135,6 +135,8 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
             // Radares cercanos (barrido) y el tiempo en ruta.
             Card("radar", "Radares", "", CardTheme.RADAR, { onOpen(Screen.ROUTE) }),
             Card("mode", "Modo", "", CardTheme.MODE, { com.cockpitf30.ui.theme.DriveModes.cycle(it) }),
+            // Radio: FM por la antena si la unidad tiene sintonizador; si no, por Internet.
+            Card("radio", "Radio", "", CardTheme.RADIO, { onOpen(Screen.RADIO) }),
             Card("trip", "Datos de viaje", "Duración, km y consumo", CardTheme.TRIP, { onOpen(Screen.TRIP) }, Alignment.BottomStart) { TripBody() },
             Card("weather", "Tiempo", "", CardTheme.WEATHER, { onOpen(Screen.WEATHER) }),
             Card("vehicle", "Vehículo", "iDrive original del coche", CardTheme.VEHICLE, { onOpen(Screen.VEHICLE) }),
@@ -275,6 +277,8 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                             AssistantCardBody()
                         } else if (card.id == "radar") {
                             RadarCardBody()
+                        } else if (card.id == "radio") {
+                            RadioCardBody()
                         } else if (card.id == "mode") {
                             val mode = com.cockpitf30.ui.theme.DriveModes.current
                             Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
@@ -308,6 +312,35 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                 }
             }
         }
+    }
+}
+
+/** Tarjeta de radio: fuente (antena o Internet), lo que suena y si está sonando. */
+@Composable
+private fun RadioCardBody() {
+    val st by com.cockpitf30.radio.Radio.state.collectAsStateWithLifecycle()
+    val fm = st.source == com.cockpitf30.radio.RadioSource.FM
+    val c = sourceColor(st.source)
+    Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(9.dp).background(if (st.playing) c else Cockpit.TextDim, androidx.compose.foundation.shape.RoundedCornerShape(5.dp)))
+            Text("  " + st.source.label.uppercase(), style = MaterialTheme.typography.labelMedium, color = c)
+        }
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+            if (fm) {
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(com.cockpitf30.radio.RadioLogic.formatFm(st.fmFreq), style = numeric(44, FontWeight.Medium))
+                    Text(" MHz", style = numeric(18), color = Cockpit.TextDim, modifier = Modifier.padding(bottom = 8.dp))
+                }
+            } else {
+                Text(st.station?.name ?: "Elige emisora", style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        Text("Radio", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            (if (st.playing) (if (fm) st.fmRds else st.nowPlaying) ?: "Sonando" else "Parada") + if (st.ducked) " · bajada" else "",
+            style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -485,4 +518,4 @@ internal fun launch(context: Context, intent: Intent) {
     }
 }
 
-enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, WEATHER, PHONE, FUEL, PERFORMANCE, ROUTE, MAINTENANCE }
+enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, WEATHER, PHONE, FUEL, PERFORMANCE, ROUTE, MAINTENANCE, RADIO }

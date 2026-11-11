@@ -302,6 +302,35 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean("ambient_light", true)
         set(value) = prefs.edit().putBoolean("ambient_light", value).apply()
 
+    // ---- Radio
+    /** Última fuente elegida (FM o INTERNET). */
+    var radioSource: String?
+        get() = prefs.getString("radio_source", null)
+        set(value) = prefs.edit().putString("radio_source", value).apply()
+
+    /** Última frecuencia FM (10 kHz). */
+    var radioFmFreq: Int
+        get() = prefs.getInt("radio_fm_freq", 9800)
+        set(value) = prefs.edit().putInt("radio_fm_freq", value).apply()
+
+    var radioFmFavorites: String?
+        get() = prefs.getString("radio_fm_favorites", null)
+        set(value) = prefs.edit().putString("radio_fm_favorites", value).apply()
+
+    /** Favoritas de Internet (JSON). */
+    var radioFavorites: String?
+        get() = prefs.getString("radio_favorites", null)
+        set(value) = prefs.edit().putString("radio_favorites", value).apply()
+
+    var radioLastStation: String?
+        get() = prefs.getString("radio_last_station", null)
+        set(value) = prefs.edit().putString("radio_last_station", value).apply()
+
+    /** Bajar la radio (y otras apps) mientras el asistente escucha o habla. */
+    var radioDuckAssistant: Boolean
+        get() = prefs.getBoolean("radio_duck_assistant", true)
+        set(value) = prefs.edit().putBoolean("radio_duck_assistant", value).apply()
+
     private companion object {
         const val KEY_CAN_ASK_SPEED = "can_ask_speed"
         const val KEY_ASSISTANT = "assistant_enabled"
