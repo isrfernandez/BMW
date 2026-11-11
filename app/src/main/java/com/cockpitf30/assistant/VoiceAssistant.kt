@@ -1271,11 +1271,17 @@ object VoiceAssistant {
             muted = true
             if (settings().assistantRobotVoice && settings().assistantRobotStrength.filter && !robotBroken && synthesizeRobot(t, text)) {
                 // La síntesis a archivo tarda un poco más; el tiempo real se ajusta al reproducir.
-                unmuteJob = scope.launch { delay(6_000L + text.length * 120L); doneSpeaking() }
+                unmuteJob = scope.launch {
+                    delay(6_000L + text.length * 120L)
+                    // Una tablet lenta puede tardar más en preparar la voz: mientras siga pendiente, se espera.
+                    var waited = 0L
+                    while (waited < 30_000L && robotText.isNotEmpty()) { delay(300); waited += 300 }
+                    doneSpeaking()
+                }
             } else {
                 t.speak(text, TextToSpeech.QUEUE_FLUSH, null, "reply")
                 // El aviso real es onDone; esto es solo por si el motor no lo manda.
-                unmuteJob = scope.launch { delay(4_000L + text.length * 140L); doneSpeaking() }
+                unmuteJob = finishWhenSilent(4_000L + text.length * 140L)
             }
         } else {
             if (settings().assistantSpeaks) {
@@ -1284,6 +1290,23 @@ object VoiceAssistant {
             }
             unmuteJob = scope.launch { delay(1_200); doneSpeaking() }
         }
+    }
+
+    /**
+     * Plan B por si el motor de voz no avisa al terminar (onDone): pasado el tiempo estimado, solo da
+     * por terminada la frase cuando el motor ya no está hablando. Antes se cortaba a la hora
+     * estimada aunque siguiera hablando (en una tablet, con avisos largos o voz más lenta): se
+     * quitaba el texto, subía la radio y se pisaban los audios.
+     */
+    private fun finishWhenSilent(estimateMs: Long) = scope.launch {
+        delay(estimateMs)
+        var waited = 0L
+        while (waited < 120_000L && (runCatching { tts?.isSpeaking == true }.getOrDefault(false) ||
+                player?.playState == AudioTrack.PLAYSTATE_PLAYING)) {
+            delay(300)
+            waited += 300
+        }
+        doneSpeaking()
     }
 
     private fun robotFile(id: String) = java.io.File(app.cacheDir, "$id.wav")
@@ -1308,7 +1331,7 @@ object VoiceAssistant {
         if (_state.value.phase != AssistantPhase.ANSWERING) return
         unmuteJob?.cancel()
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "reply")
-        unmuteJob = scope.launch { delay(2_000L + text.length * 90L); doneSpeaking() }
+        unmuteJob = finishWhenSilent(2_000L + text.length * 90L)
     }
 
     private suspend fun playRobot(id: String) {
@@ -1332,6 +1355,13 @@ object VoiceAssistant {
         unmuteJob?.cancel()
         unmuteJob = scope.launch {
             delay(pcm.durationMs + 300)
+            // Por si la duración calculada se queda corta: se espera a que el audio llegue al final.
+            var waited = 0L
+            while (waited < 60_000L && player === track &&
+                runCatching { track.playState == AudioTrack.PLAYSTATE_PLAYING && track.playbackHeadPosition < pcm.samples.size }.getOrDefault(false)) {
+                delay(200)
+                waited += 200
+            }
             if (player === track) stopPlayer()
             doneSpeaking()
         }
