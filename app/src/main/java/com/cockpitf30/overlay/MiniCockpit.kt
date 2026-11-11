@@ -79,6 +79,7 @@ import com.cockpitf30.nav.SpeedCameras
 import com.cockpitf30.system.AppSettings
 import com.cockpitf30.ui.MainActivity
 import com.cockpitf30.ui.components.glassPanel
+import com.cockpitf30.ui.components.lingeringReply
 import com.cockpitf30.ui.components.radarDistance
 import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.ui.theme.CockpitOverlayTheme
@@ -306,9 +307,9 @@ internal fun MiniCockpitBar(
 
 /** Lo que se enseña bajo la barra: lo que oye mientras escucha y la respuesta unos segundos. */
 private fun bubbleText(s: AssistantState, now: Long): String? = when (s.phase) {
-    AssistantPhase.LISTENING -> s.heard?.takeIf { it.isNotBlank() }?.let { "«$it»" } ?: if (s.paused) "En pausa · di «sigue»" else "Te escucho…"
+    AssistantPhase.LISTENING -> s.heard?.takeIf { it.isNotBlank() }?.let { "«$it»" } ?: s.lingeringReply(now) ?: if (s.paused) "En pausa · di «sigue»" else "Te escucho…"
     AssistantPhase.ANSWERING -> s.reply
-    else -> s.reply?.takeIf { now - s.replyAt < REPLY_MS }
+    else -> s.reply?.takeIf { now - s.replyAt < REPLY_MS || now < s.replyUntil }
 }
 
 @Composable

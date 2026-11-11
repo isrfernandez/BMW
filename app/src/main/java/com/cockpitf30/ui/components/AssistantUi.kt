@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -57,6 +58,22 @@ private const val REPLY_VISIBLE_MS = 7_000L
 
 private val AssistantState.active get() = phase == AssistantPhase.LISTENING || phase == AssistantPhase.ANSWERING
 
+/** La respuesta recién dicha, mientras aún toca dejarla a la vista para leerla (o null). */
+fun AssistantState.lingeringReply(now: Long): String? =
+    reply?.takeIf { it.isNotBlank() && phase != AssistantPhase.ANSWERING && now < replyUntil }
+
+/** true mientras [AssistantState.replyUntil] no ha pasado; se apaga solo al llegar la hora. */
+@Composable
+fun rememberLingering(s: AssistantState): Boolean {
+    var on by remember { mutableStateOf(false) }
+    LaunchedEffect(s.replyUntil) {
+        val left = s.replyUntil - System.currentTimeMillis()
+        on = left > 0
+        if (left > 0) { delay(left); on = false }
+    }
+    return on
+}
+
 /** Hora actual que se refresca cada segundo, para ocultar respuestas viejas. */
 @Composable
 private fun rememberNow(): Long {
@@ -72,10 +89,10 @@ fun assistantStatus(s: AssistantState, now: Long): String = when (s.phase) {
     AssistantPhase.DOWNLOADING -> "Descargando la voz (${VoiceModel.SIZE_MB} MB)… ${((s.progress ?: 0f) * 100).toInt()} %"
     AssistantPhase.NO_MODEL -> "Sin voz sin conexión" + (s.error?.let { " ($it)" } ?: "") + " · toca para hablar"
     AssistantPhase.LOADING -> "Preparando el reconocimiento…"
-    AssistantPhase.LISTENING -> s.heard?.let { "«$it»" } ?: if (s.paused) "En pausa · di «sigue»" else if (s.followUp) "Sigo escuchando…" else "Te escucho…"
+    AssistantPhase.LISTENING -> s.heard?.let { "«$it»" } ?: s.lingeringReply(now) ?: if (s.paused) "En pausa · di «sigue»" else if (s.followUp) "Sigo escuchando…" else "Te escucho…"
     AssistantPhase.ANSWERING -> s.reply ?: ""
     AssistantPhase.WAITING, AssistantPhase.PAUSED ->
-        s.reply?.takeIf { now - s.replyAt < REPLY_VISIBLE_MS } ?: "Di «Hola BMW» o toca aquí"
+        s.reply?.takeIf { now - s.replyAt < REPLY_VISIBLE_MS || now < s.replyUntil } ?: "Di «Hola BMW» o toca aquí"
 }
 
 /** Ilustración de la tarjeta: onda de voz que se mueve con el micrófono y un orbe de cristal. */
@@ -162,8 +179,10 @@ fun AssistantCardBody() {
 @Composable
 fun BoxScope.AssistantOverlay() {
     val s by VoiceAssistant.state.collectAsStateWithLifecycle()
+    // Al terminar de hablar no se quita de golpe: se deja unos segundos para acabar de leerla.
+    val lingering = rememberLingering(s) && !s.reply.isNullOrBlank()
     AnimatedVisibility(
-        s.active,
+        s.active || (lingering && s.phase != AssistantPhase.PAUSED),
         Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp),
         enter = fadeIn() + slideInVertically { it / 2 },
         exit = fadeOut() + slideOutVertically { it / 2 },
@@ -176,7 +195,11 @@ fun BoxScope.AssistantOverlay() {
             Box(Modifier.size(width = 150.dp, height = 64.dp)) { VoiceWave(CardTheme.ASSIST, s, Modifier.fillMaxSize()) }
             Column(Modifier.weight(1f)) {
                 val heard = s.heard
-                if (s.phase == AssistantPhase.LISTENING) {
+                val showReply = lingering && heard.isNullOrBlank()
+                if (s.phase == AssistantPhase.LISTENING && showReply) {
+                    Text(s.reply.orEmpty(), Modifier.fillMaxWidth(), style = MaterialTheme.typography.headlineSmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    Text(if (s.paused) "En pausa · di «sigue» para continuar" else "Puedes seguir sin decir «Hola BMW»", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
+                } else if (s.phase == AssistantPhase.LISTENING) {
                     Text(if (heard.isNullOrBlank()) (if (s.paused) "En pausa · di «sigue» para continuar" else if (s.followUp) "Sigo escuchando…" else "Te escucho…") else "«$heard»", style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(if (s.engine == "Google") "Con el reconocedor de Google" else if (s.followUp) "Puedes seguir sin decir «Hola BMW»" else "Di qué quieres: gasolineras, vehículo, tiempo…", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
                 } else {

@@ -129,16 +129,35 @@ object VoiceCommands {
     /** Retomar lo que estaba diciendo. */
     private val RESUME_WORDS = listOf("continua", "continúa", "sigue", "sigue hablando", "continua hablando", "continúa hablando", "sigue por favor")
     /** Cortar sin perder el hilo y escuchar lo que viene («espera, ¿y mañana?»). */
-    private val HOLD_WORDS = listOf("espera", "un momento", "a ver", "aclarame", "aclárame", "aclarame esto", "aclárame esto", "perdona", "oye")
+    // Sin «a ver», «oye» ni «perdona»: salen a menudo en sus propias respuestas y se cortaba sola.
+    private val HOLD_WORDS = listOf("espera", "un momento", "aclarame", "aclárame", "aclarame esto", "aclárame esto")
+
+    /**
+     * Palabras de relleno que se añaden a la gramática de interrupción. Con una gramática cerrada
+     * Vosk mete cualquier sonido en una de sus frases, así que su propia voz acababa «sonando» a
+     * «para» o «espera». Con estas, lo que dice la radio cae aquí y no corta nada.
+     */
+    private val BARGE_DECOYS = listOf(
+        "el", "la", "los", "las", "un", "una", "de", "del", "en", "con", "por", "que", "y", "o", "a", "al", "es", "son",
+        "hay", "está", "esta", "este", "eso", "esto", "muy", "más", "menos", "no", "sí", "si", "ya", "hoy", "mañana", "ahora", "luego",
+        "bien", "vale", "claro", "kilómetros", "metros", "minutos", "grados", "litros", "por ciento", "hora", "horas",
+        "derecha", "izquierda", "recto", "gasolinera", "radar", "tiempo", "lluvia", "sol", "calle", "carretera",
+        "coche", "motor", "velocidad", "llegada", "destino", "tienes", "quieres", "puedo", "te", "lo", "le", "me", "se",
+        "mi", "tu", "su", "cómo", "como", "cuando", "dónde", "todo", "nada", "algo", "siguiente", "cerca", "lejos", "uno", "dos",
+        "tres", "cuatro", "cinco", "diez", "cien", "mil",
+    )
 
     /** Gramática mientras habla la radio: «Hola BMW» o una palabra para cortarla. */
     val BARGE_GRAMMAR: String = (Regex("\"([^\"]+)\"").findAll(WAKE_GRAMMAR).map { it.groupValues[1] }.filter { it != "[unk]" }.toList() +
-        STOP_WORDS + PAUSE_WORDS + HOLD_WORDS + RESUME_WORDS + "[unk]").distinct().joinToString(",", "[", "]") { "\"$it\"" }
+        STOP_WORDS + PAUSE_WORDS + HOLD_WORDS + RESUME_WORDS + BARGE_DECOYS + "[unk]").distinct().joinToString(",", "[", "]") { "\"$it\"" }
 
     private val BARGE_PHRASES: List<String> by lazy {
-        Regex("\"([^\"]+)\"").findAll(BARGE_GRAMMAR).map { normalize(it.groupValues[1]) }.filter { it.isNotBlank() && it != "unk" }
+        Regex("\"([^\"]+)\"").findAll(BARGE_GRAMMAR).map { normalize(it.groupValues[1]) }
+            .filter { it.isNotBlank() && it != "unk" && it !in BARGE_DECOY_SET }
             .distinct().sortedByDescending { it.length }.toList()
     }
+
+    private val BARGE_DECOY_SET: Set<String> by lazy { BARGE_DECOYS.map { normalize(it) }.toSet() }
 
     /** La orden de interrupción con la que termina [text] (resultado de la gramática), o null. */
     fun bargePhraseAtEnd(text: String): String? {

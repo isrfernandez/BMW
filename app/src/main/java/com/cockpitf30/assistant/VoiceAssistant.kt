@@ -88,6 +88,11 @@ data class AssistantState(
     /** Lo último que ha respondido. */
     val reply: String? = null,
     val replyAt: Long = 0,
+    /**
+     * Hasta cuándo se deja el texto de la respuesta a la vista después de decirla (tiempo para
+     * leerla). Mientras responde ([AssistantPhase.ANSWERING]) se ve siempre.
+     */
+    val replyUntil: Long = 0,
     /** Volumen del micrófono, 0..1, para la animación. */
     val level: Float = 0f,
     /** Descarga del modelo, 0..1. */
@@ -128,7 +133,9 @@ object VoiceAssistant {
     /** Al empezar a hablar no se atiende a interrupciones (aún se oye el final de lo que dijo el conductor). */
     private const val BARGE_GRACE_MS = 1_000L
     /** Tiempo que debe mantenerse en el parcial una orden de interrupción para hacerle caso. */
-    private const val BARGE_STABLE_MS = 300L
+    private const val BARGE_STABLE_MS = 700L
+    /** Confianza mínima de cada palabra de una interrupción (frase completa). */
+    private const val BARGE_MIN_CONF = 0.85
     /** Tras una pregunta del copiloto, algo más. */
     private const val COPILOT_FOLLOW_MS = 9_000L
 
@@ -350,7 +357,7 @@ object VoiceAssistant {
         val cmdRec = Recognizer(m, RATE.toFloat())
         // Mientras habla la radio solo se escucha «Hola BMW» o «basta», para poder interrumpirla
         // (con gramática cerrada: su propia voz no se confunde con eso).
-        val bargeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.BARGE_GRAMMAR)
+        val bargeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.BARGE_GRAMMAR).apply { setWords(true) }
         var usingCmd = false
         var bargeHit: String? = null
         var bargeSince = 0L
@@ -412,8 +419,11 @@ object VoiceAssistant {
                     // también el parcial, pero solo si termina en una orden de interrupción y se mantiene
                     // BARGE_STABLE_MS (un parcial suelto de su propia voz no basta).
                     val final = bargeRec.acceptWaveForm(buf, n)
-                    val raw = if (final) JSONObject(bargeRec.result).optString("text") else JSONObject(bargeRec.partialResult).optString("partial")
-                    val hit = VoiceCommands.bargePhraseAtEnd(raw)
+                    val json = JSONObject(if (final) bargeRec.result else bargeRec.partialResult)
+                    val raw = if (final) json.optString("text") else json.optString("partial")
+                    // Frase completa: solo vale si Vosk está seguro de las palabras de la orden (su
+                    // propia voz da confianzas bajas). Parcial: tiene que mantenerse más tiempo.
+                    val hit = VoiceCommands.bargePhraseAtEnd(raw)?.takeIf { !final || bargeConfident(json, it) }
                     if (hit != bargeHit) { bargeHit = hit; bargeSince = now }
                     if (hit != null && (final || now - bargeSince >= BARGE_STABLE_MS)) {
                         bargeHit = null
@@ -488,6 +498,10 @@ object VoiceAssistant {
      * Un fallo al ejecutar una orden no debe matar la escucha (antes, tras un error, «Hola BMW» dejaba
      * de funcionar hasta reiniciar la app): se avisa y se vuelve a esperar.
      */
+    /** Último fallo atendiendo una orden, con hora y lo último oído (Diagnóstico). */
+    @Volatile var lastFailure: String? = null
+        private set
+
     private inline fun safely(what: String, block: () -> Unit) {
         try { block() } catch (e: Throwable) {
             if (e is kotlinx.coroutines.CancellationException) throw e
@@ -496,7 +510,12 @@ object VoiceAssistant {
             followUp = false
             muted = false
             resetRecognizer = true
-            _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, paused = false, reply = "Algo ha fallado. Vuelve a intentarlo", replyAt = System.currentTimeMillis(), error = "$what: ${e.message ?: e.javaClass.simpleName}") }
+            val err = "$what: ${e.message ?: e.javaClass.simpleName}"
+            lastFailure = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()) + " · " + err +
+                " · oído «${_state.value.lastText.orEmpty()}»" + if (appVisible) "" else " (con otra app delante)"
+            // Encima de Maps un «algo ha fallado» solo distrae: se recupera en silencio y queda en Diagnóstico.
+            if (appVisible) _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, paused = false, reply = "Algo ha fallado. Vuelve a intentarlo", replyAt = System.currentTimeMillis(), error = err) }
+            else _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, paused = false, error = err) }
         }
     }
 
@@ -514,6 +533,14 @@ object VoiceAssistant {
         val ok = minConf >= needed && (sensitivity > 0 || full)
         _state.update { it.copy(lastText = "$text (confianza ${"%.2f".format(minConf)}${if (ok) "" else ", descartada"})") }
         return ok
+    }
+
+    /** ¿Están las últimas palabras (la orden [hit]) reconocidas con confianza alta? */
+    private fun bargeConfident(json: JSONObject, hit: String): Boolean {
+        val words = json.optJSONArray("result") ?: return true
+        val n = hit.split(' ').size
+        if (words.length() < n) return true
+        return (words.length() - n until words.length()).all { words.getJSONObject(it).optDouble("conf", 1.0) >= BARGE_MIN_CONF }
     }
 
     private suspend fun coroutineScopeActive() = kotlin.coroutines.coroutineContext.isActive
@@ -1171,11 +1198,22 @@ object VoiceAssistant {
                     @Suppress("DEPRECATION") onError(utteranceId)
                 }
                 override fun onDone(utteranceId: String?) {
-                    if (utteranceId?.startsWith(ROBOT_ID) == true) scope.launch { playRobot(utteranceId) }
-                    else scope.launch { doneSpeaking() }
+                    when {
+                        utteranceId?.startsWith(ROBOT_ID) == true -> scope.launch { playRobot(utteranceId) }
+                        // Solo cuenta el aviso de la frase en curso: el de una anterior (cortada por la
+                        // nueva) llegaba tarde y daba por terminada la nueva a medias, quitando el texto.
+                        utteranceId == replyId -> scope.launch { if (utteranceId == replyId) finishSoon() }
+                    }
                 }
                 @Deprecated("Deprecated in Java")
-                override fun onError(utteranceId: String?) { scope.launch { if (utteranceId?.startsWith(ROBOT_ID) == true) robotFailed(utteranceId) else doneSpeaking() } }
+                override fun onError(utteranceId: String?) {
+                    scope.launch {
+                        when {
+                            utteranceId?.startsWith(ROBOT_ID) == true -> robotFailed(utteranceId)
+                            utteranceId == replyId -> doneSpeaking()
+                        }
+                    }
+                }
             })
         }
         tts = if (engine != null) TextToSpeech(app, listener, engine) else TextToSpeech(app, listener)
@@ -1206,6 +1244,10 @@ object VoiceAssistant {
     }
 
     private const val ROBOT_ID = "robot-"
+    private const val REPLY_ID = "reply-"
+    private var replySeq = 0
+    /** Id de la frase que se está diciendo: los avisos de otras se ignoran. */
+    @Volatile private var replyId = REPLY_ID + 0
     private var robotSeq = 0
     /** Texto pendiente de cada síntesis a archivo, por si falla y hay que decirlo con la voz normal. */
     private val robotText = HashMap<String, String>()
@@ -1293,6 +1335,7 @@ object VoiceAssistant {
     private fun say(text: String, listenAfter: Long = 0L) {
         listenAfterReply = listenAfter
         spokenPos = 0
+        replyId = REPLY_ID + (++replySeq)
         _state.update { it.copy(phase = AssistantPhase.ANSWERING, reply = text, replyAt = System.currentTimeMillis(), engine = null, paused = false) }
         unmuteJob?.cancel()
         stopPlayer()
@@ -1310,7 +1353,7 @@ object VoiceAssistant {
                     doneSpeaking()
                 }
             } else {
-                t.speak(text, TextToSpeech.QUEUE_FLUSH, null, "reply")
+                t.speak(text, TextToSpeech.QUEUE_FLUSH, null, replyId)
                 // El aviso real es onDone; esto es solo por si el motor no lo manda.
                 unmuteJob = finishWhenSilent(4_000L + text.length * 140L)
             }
@@ -1340,6 +1383,15 @@ object VoiceAssistant {
         doneSpeaking()
     }
 
+    /**
+     * El motor dice que ha terminado. Algunos motores lo avisan al acabar de generar el audio, no al
+     * acabar de sonar: si aún suena, se espera a que calle.
+     */
+    private fun finishSoon() {
+        unmuteJob?.cancel()
+        unmuteJob = finishWhenSilent(0L)
+    }
+
     private fun robotFile(id: String) = java.io.File(app.cacheDir, "$id.wav")
 
     /** Pide al motor la frase en un WAV, que luego se pasa por [RobotVoice] y se reproduce. */
@@ -1361,7 +1413,7 @@ object VoiceAssistant {
         robotBroken = true
         if (_state.value.phase != AssistantPhase.ANSWERING) return
         unmuteJob?.cancel()
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "reply")
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, replyId)
         unmuteJob = finishWhenSilent(2_000L + text.length * 90L)
     }
 
@@ -1437,11 +1489,18 @@ object VoiceAssistant {
         if (action != VoiceCommands.Barge.STOP && rest != null) { pausedText = rest; pausedAt = now } else pausedText = null
         when (action) {
             null -> wake()
-            VoiceCommands.Barge.STOP -> _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, paused = false) }
+            VoiceCommands.Barge.STOP -> _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, paused = false, replyUntil = 0) }
             VoiceCommands.Barge.PAUSE -> listenFollowUp(PAUSE_MS, paused = rest != null)
             else -> listenFollowUp(FOLLOW_MS, paused = false)
         }
     }
+
+    /** Hasta cuándo dejar a la vista una respuesta ya dicha: 3 s más, y al menos lo que se tarda en leerla. */
+    internal fun readUntil(reply: String?, replyAt: Long, now: Long): Long =
+        maxOf(now + LINGER_MS, replyAt + (reply?.length ?: 0) * READ_MS_PER_CHAR)
+
+    private const val LINGER_MS = 3_000L
+    private const val READ_MS_PER_CHAR = 75L
 
     private fun listenFollowUp(ms: Long, paused: Boolean) {
         followUp = true
@@ -1473,6 +1532,9 @@ object VoiceAssistant {
         runAfterSpeech()
         // Si ya se interrumpió y está escuchando, no se borra lo que se está oyendo.
         if (_state.value.phase != AssistantPhase.ANSWERING) return
+        // El texto se queda un poco más para acabar de leerlo.
+        val now = System.currentTimeMillis()
+        _state.update { it.copy(replyUntil = readUntil(it.reply, it.replyAt, now)) }
         resetRecognizer = true
         val follow = listenAfterReply
         listenAfterReply = 0
