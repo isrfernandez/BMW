@@ -51,6 +51,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -301,9 +302,9 @@ object VoiceAssistant {
 
     // ---------------------------------------------------------------- Vosk (escucha continua)
 
-    private fun startAudio() {
+    private fun startAudio(quiet: Boolean = false) {
         audioJob?.cancel()
-        set(AssistantPhase.LOADING)
+        if (!quiet) set(AssistantPhase.LOADING)
         audioJob = scope.launch(Dispatchers.IO) {
             try {
                 val m = model ?: run {
@@ -412,7 +413,8 @@ object VoiceAssistant {
                     utterance.clear(); speaking = false
                 }
                 // Por si no llega el aviso de fin de la voz: nunca más de 30 s sordo.
-                if (muted) { if (mutedSince == 0L) mutedSince = now else if (now - mutedSince > 30_000) { muted = false; resetRecognizer = true } }
+                // Una explicación larga (con la voz TARS, lenta) pasa de 30 s: solo se da por perdido si ya no suena.
+                if (muted) { if (mutedSince == 0L) mutedSince = now else if (now - mutedSince > 30_000 && (now - mutedSince > 180_000 || !stillTalking())) { muted = false; resetRecognizer = true } }
                 else mutedSince = 0L
                 if (muted) {
                     // Hablando: solo se atiende a la interrupción, y solo con frases completas (los
@@ -573,7 +575,8 @@ object VoiceAssistant {
         when (_state.value.phase) {
             AssistantPhase.WAITING -> {
                 val rest = VoiceCommands.afterWakeWord(text) ?: return
-                if (rest.isBlank()) wake() else execute(rest)
+                // «Hola BMW pon la radio» de un tirón: si Vosk lo ha entendido se hace; si no, se escucha con Google.
+                if (rest.isBlank() || (useGoogle() && VoiceCommands.parse(rest) is Command.Unknown)) wake() else execute(rest)
             }
             AssistantPhase.LISTENING -> {
                 val rest = VoiceCommands.stripWakeWords(VoiceCommands.afterWakeWord(text) ?: text)
@@ -596,6 +599,9 @@ object VoiceAssistant {
 
     /** «Hola BMW»: pitido y a escuchar la orden. */
     private fun wake() {
+        // Las órdenes las entiende mucho mejor el reconocedor de Google (si la radio lo tiene); Vosk
+        // solo escucha «Hola BMW» y las interrupciones.
+        if (useGoogle()) { listenWithGoogle(); return }
         followUp = false
         listenUntil = System.currentTimeMillis() + LISTEN_MS
         _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, reply = null, engine = "Vosk", followUp = false, paused = false) }
@@ -641,43 +647,110 @@ object VoiceAssistant {
         }
     }
 
-    private fun listenWithGoogle() {
+    /** Ajustes: órdenes con Google, y la radio tiene su reconocedor. */
+    private fun useGoogle(): Boolean = settings().commandsWithGoogle && googleAvailable()
+
+    fun googleAvailable(): Boolean = ::app.isInitialized && runCatching { SpeechRecognizer.isRecognitionAvailable(app) }.getOrDefault(false)
+
+    /**
+     * Escucha una orden con el reconocedor de Google (entiende el habla normal mucho mejor que el
+     * modelo pequeño de Vosk). El micrófono de Vosk se suelta mientras tanto y se vuelve a abrir al
+     * acabar, para oír «Hola BMW» y las interrupciones. [followUp]: conversación seguida, sin pitido
+     * ni «No te he oído» si no se dice nada.
+     */
+    private fun listenWithGoogle(followUp: Boolean = false, timeoutMs: Long = LISTEN_MS) {
         if (!SpeechRecognizer.isRecognitionAvailable(app)) {
-            if (!openGoogleAssistant(null)) say("Aún no tengo el modelo de voz y la radio no tiene el reconocedor de Google")
+            if (!followUp && !openGoogleAssistant(null)) say("Aún no tengo el modelo de voz y la radio no tiene el reconocedor de Google")
             return
         }
-        stopAudio()
+        this.followUp = followUp
+        listenUntil = 0
+        _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, reply = if (followUp) it.reply else null, engine = "Google", followUp = followUp, paused = false) }
+        val vosk = audioJob
+        audioJob = null
         stopGoogle()
-        val r = SpeechRecognizer.createSpeechRecognizer(app)
+        scope.launch {
+            // Hasta que Vosk suelta el micrófono, Google no puede abrirlo (error «ocupado»).
+            vosk?.cancelAndJoin()
+            if (_state.value.phase != AssistantPhase.LISTENING || _state.value.engine != "Google") { backToVosk(); return@launch }
+            startGoogle(followUp, timeoutMs)
+        }
+    }
+
+    /** Vuelve a abrir el micrófono de Vosk sin tocar la fase (puede estar respondiendo). */
+    private fun backToVosk() {
+        if (!resumed || audioJob?.isActive == true || !VoiceModel.isReady(app) || !settings().assistantEnabled) return
+        startAudio(quiet = true)
+    }
+
+    private fun startGoogle(followUp: Boolean, timeoutMs: Long) {
+        val r = runCatching { SpeechRecognizer.createSpeechRecognizer(app) }.getOrNull()
+        if (r == null) { _state.update { it.copy(engine = "Vosk") }; settingsFallback(); return }
         google = r
-        _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, reply = null, engine = "Google") }
+        var started = false
+        fun finish(text: String?, error: Int?) {
+            if (google !== r) return
+            stopGoogle()
+            this.followUp = false
+            // Primero se reabre Vosk (para poder interrumpir la respuesta) y luego se contesta.
+            if (_state.value.phase == AssistantPhase.LISTENING) set(if (VoiceModel.isReady(app)) AssistantPhase.WAITING else AssistantPhase.NO_MODEL)
+            backToVosk()
+            when {
+                !text.isNullOrBlank() -> {
+                    val cmd = VoiceCommands.afterWakeWord(text)?.ifBlank { null } ?: text
+                    execute(cmd, followUp)
+                }
+                followUp -> Unit
+                error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || error == null ->
+                    _state.update { it.copy(reply = "No te he oído", replyAt = System.currentTimeMillis(), replyUntil = System.currentTimeMillis() + 3_000) }
+                else -> {
+                    lastFailure = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()) + " · reconocedor de Google: error $error"
+                    say("El reconocedor de Google ha fallado. Prueba otra vez")
+                }
+            }
+        }
         r.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) = beep()
-            override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) = _state.update { it.copy(level = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)) }
+            override fun onReadyForSpeech(params: Bundle?) { if (!followUp) beep() }
+            override fun onBeginningOfSpeech() { started = true }
+            override fun onRmsChanged(rmsdB: Float) {
+                val l = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
+                if (kotlin.math.abs(l - _state.value.level) >= 0.04f) _state.update { it.copy(level = l) }
+            }
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
-            override fun onError(error: Int) {
-                stopGoogle()
-                say(if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) "No te he oído" else "El reconocedor de Google ha fallado (error $error)")
-            }
-            override fun onResults(results: Bundle?) {
-                val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
-                stopGoogle()
-                if (text.isBlank()) say("No te he oído") else execute(VoiceCommands.afterWakeWord(text)?.ifBlank { null } ?: text)
-            }
+            override fun onError(error: Int) = finish(null, error)
+            override fun onResults(results: Bundle?) = finish(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull(), null)
             override fun onPartialResults(partialResults: Bundle?) {
-                partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.let { t -> _state.update { it.copy(heard = t) } }
+                partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.takeIf { it.isNotBlank() }
+                    ?.let { t -> _state.update { it.copy(heard = t) } }
             }
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
-        r.startListening(
-            Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES")
-                .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, app.packageName),
-        )
+        runCatching {
+            r.startListening(
+                Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES")
+                    .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                    .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                    // Que no corte a la primera pausa («llévame a… la gasolinera»).
+                    .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1_200L)
+                    .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1_200L)
+                    .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, app.packageName),
+            )
+        }.onFailure { finish(null, -1); return }
+        // Si nadie habla en el tiempo de escucha, se cierra (Google a veces espera mucho más).
+        scope.launch {
+            delay(timeoutMs + 1_000)
+            if (google === r && !started) { r.cancel(); finish(null, SpeechRecognizer.ERROR_SPEECH_TIMEOUT) }
+        }
+    }
+
+    /** Google no ha podido arrancar: se sigue con Vosk. */
+    private fun settingsFallback() {
+        followUp = false
+        set(AssistantPhase.WAITING)
+        backToVosk()
     }
 
     private fun stopGoogle() {
@@ -1523,6 +1596,10 @@ object VoiceAssistant {
         }
     }
 
+    /** ¿Sigue sonando su voz? (motor de voz o el audio de la voz TARS) */
+    private fun stillTalking(): Boolean =
+        runCatching { tts?.isSpeaking == true }.getOrDefault(false) || runCatching { player?.playState == AudioTrack.PLAYSTATE_PLAYING }.getOrDefault(false) || robotText.isNotEmpty()
+
     private fun stopPlayer() {
         player?.let { runCatching { it.stop() }; it.release() }
         player = null
@@ -1590,8 +1667,10 @@ object VoiceAssistant {
         val reply = _state.value.reply.orEmpty()
         val w = VoiceCommands.normalize(word)
         val pos = spokenPos
+        // Todo lo que ya ha dicho (y un poco más): el eco llega con 1-3 s de retraso, y en una
+        // explicación larga («construida para la defensa…») una «para» de hace 40 letras la cortaba.
         // Sin posición (voz con filtro, o el motor no la da) se mira la frase entera.
-        val window = if (pos <= 0) reply else reply.substring((pos - 30).coerceAtLeast(0), (pos + 40).coerceAtMost(reply.length))
+        val window = if (pos <= 0) reply else reply.substring(0, (pos + 60).coerceAtMost(reply.length))
         return " ${VoiceCommands.normalize(window)} ".contains(" $w ")
     }
 
@@ -1616,6 +1695,7 @@ object VoiceAssistant {
         val follow = listenAfterReply
         listenAfterReply = 0
         when {
+            audioJob?.isActive == true && resumed && follow > 0 && useGoogle() -> listenWithGoogle(followUp = true, timeoutMs = follow)
             audioJob?.isActive == true && resumed && follow > 0 -> {
                 // Conversación seguida: se puede contestar sin volver a decir «Hola BMW».
                 followUp = true

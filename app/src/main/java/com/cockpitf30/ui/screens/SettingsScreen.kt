@@ -206,6 +206,16 @@ private fun AssistantSettings() {
                 secs = opts[it]; settings.assistantFollowSeconds = secs
             }
         }
+        var withGoogle by remember { mutableStateOf(settings.commandsWithGoogle) }
+        val hasGoogle = remember { assistant.googleAvailable() }
+        ChoiceRow(
+            "Entender las órdenes con",
+            if (hasGoogle) "Google entiende el habla normal mucho mejor (necesita conexión o el idioma descargado). «Hola BMW» lo sigue oyendo el reconocedor sin conexión."
+            else "Esta radio no tiene el reconocedor de Google: se usa el de sin conexión.",
+            listOf("Google", "Sin conexión"), if (withGoogle && hasGoogle) 0 else 1,
+        ) {
+            withGoogle = it == 0; settings.commandsWithGoogle = withGoogle
+        }
         var sens by remember { mutableStateOf(settings.wakeSensitivity) }
         ChoiceRow("Sensibilidad al oír «Hola BMW»", "Alta lo oye mejor con ruido, pero salta más veces sin querer.", listOf("Baja", "Normal", "Alta"), 2 - sens) {
             sens = 2 - it; settings.wakeSensitivity = sens

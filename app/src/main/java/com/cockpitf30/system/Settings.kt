@@ -79,6 +79,11 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean("assistant_follow_up", true)
         set(value) = prefs.edit().putBoolean("assistant_follow_up", value).apply()
 
+    /** Las órdenes (lo que va tras «Hola BMW») con el reconocedor de Google, si la radio lo tiene. */
+    var commandsWithGoogle: Boolean
+        get() = prefs.getBoolean("commands_with_google", true)
+        set(value) = prefs.edit().putBoolean("commands_with_google", value).apply()
+
     /** Segundos que sigue escuchando sin «Hola BMW» tras responder (antes 12 s fijos: demasiado). */
     var assistantFollowSeconds: Int
         get() = prefs.getInt("assistant_follow_seconds", 5)
