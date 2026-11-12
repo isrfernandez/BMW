@@ -84,6 +84,12 @@ class RouteAlertsTest {
     @Test fun wikiText() {
         assertEquals("es" to "Alcázar de Segovia", Wiki.parseTag("es:Alcázar de Segovia"))
         assertEquals("El acueducto es romano.", Wiki.firstSentences("El acueducto (en latín, aqueductus) es romano. " + "Otra frase muy larga ".repeat(20), 60))
+        // Una primera frase larguísima: se corta en una coma y acaba en punto, nunca a media palabra con «…».
+        val long = "La catedral de Santa María, de estilo gótico, " + "con capillas, retablos y vidrieras de varios siglos, ".repeat(12) + "es la mayor de la ciudad."
+        val said = Wiki.firstSentences(long)
+        assertTrue(said, said.endsWith(".") && !said.contains("…") && said.length <= 360)
+        assertTrue(said, !said.endsWith(",.") && said.split(" ").last().length > 2)
+        assertEquals("Coca es un municipio.", Wiki.firstSentences("Coca es un municipio"))
         val s = Wiki.parseSummary("""{"type":"standard","title":"Coca","extract":"Coca es un municipio.","thumbnail":{"source":"https://x/y.jpg"}}""")
         assertEquals("https://x/y.jpg", s?.third)
     }

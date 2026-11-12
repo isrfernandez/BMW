@@ -79,6 +79,11 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean("assistant_follow_up", true)
         set(value) = prefs.edit().putBoolean("assistant_follow_up", value).apply()
 
+    /** Segundos que sigue escuchando sin «Hola BMW» tras responder (antes 12 s fijos: demasiado). */
+    var assistantFollowSeconds: Int
+        get() = prefs.getInt("assistant_follow_seconds", 5)
+        set(value) = prefs.edit().putInt("assistant_follow_seconds", value.coerceIn(2, 20)).apply()
+
     /** Modo copiloto: el asistente habla por su cuenta cada [copilotMinutes] (cada 2 min en demo). */
     var copilotEnabled: Boolean
         get() = prefs.getBoolean("copilot_enabled", true)

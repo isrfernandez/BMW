@@ -185,6 +185,13 @@ private fun AssistantSettings() {
         ToggleRow("Sigue escuchando tras responder", "Puedes decir «otra», «¿y mañana?» o «repite» sin volver a decir «Hola BMW».", follow, enabled = on) {
             follow = it; settings.assistantFollowUp = it
         }
+        if (follow) {
+            var secs by remember { mutableStateOf(settings.assistantFollowSeconds) }
+            val opts = listOf(3, 5, 8, 12)
+            ChoiceRow("Tiempo de escucha tras responder", "Lo que espera tu respuesta antes de volver a «Hola BMW». Si empiezas a hablar, espera a que acabes.", opts.map { "$it s" }, opts.indexOf(secs).let { if (it < 0) 1 else it }) {
+                secs = opts[it]; settings.assistantFollowSeconds = secs
+            }
+        }
         var sens by remember { mutableStateOf(settings.wakeSensitivity) }
         ChoiceRow("Sensibilidad al oír «Hola BMW»", "Alta lo oye mejor con ruido, pero salta más veces sin querer.", listOf("Baja", "Normal", "Alta"), 2 - sens) {
             sens = 2 - it; settings.wakeSensitivity = sens

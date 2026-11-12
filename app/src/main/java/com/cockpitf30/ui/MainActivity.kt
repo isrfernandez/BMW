@@ -346,7 +346,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
             if (AppSettings(ctx).alertOn(com.cockpitf30.nav.AlertCategory.RADAR)) {
                 val limit = v.camera.maxspeed?.let { ", límite $it" } ?: ""
                 val what = if (v.camera.kind == "Tramo") "Tramo de radar" else "Radar"
-                VoiceAssistant.announce("$what a ${com.cockpitf30.ui.components.radarDistance(v.meters).replace(" m", " metros").replace(" km", " kilómetros")}$limit")
+                VoiceAssistant.announce(urgent = true, text = "$what a ${com.cockpitf30.ui.components.radarDistance(v.meters).replace(" m", " metros").replace(" km", " kilómetros")}$limit")
             }
         }
         onDispose { com.cockpitf30.nav.SpeedCameras.onAlert = null }

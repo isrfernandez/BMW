@@ -419,6 +419,7 @@ fun DiagnosticsScreen() {
                     voice.heard?.let { Mono("Oído: «$it»") }
                     voice.reply?.let { Mono("Respuesta: $it") }
                     assistant.lastFailure?.let { Info("Último fallo: $it", Cockpit.Alert) }
+                    assistant.lastCut?.let { Info("Último corte de voz: $it", Cockpit.TextDim) }
                     Info("Reconocedor de Google: " + if (android.speech.SpeechRecognizer.isRecognitionAvailable(context)) "disponible" else "no disponible", Cockpit.TextDim)
                 }
             }

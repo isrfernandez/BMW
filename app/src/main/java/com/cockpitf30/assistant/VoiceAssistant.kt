@@ -122,8 +122,8 @@ object VoiceAssistant {
     private const val RATE = 16_000
     /** Tiempo para decir la orden después de «Hola BMW». */
     private const val LISTEN_MS = 7_000L
-    /** Tras responder, tiempo para seguir la conversación sin «Hola BMW». */
-    private const val FOLLOW_MS = 12_000L
+    /** Tras «espera» / «un momento», tiempo mínimo para seguir sin «Hola BMW». */
+    private const val HOLD_MS = 8_000L
     /** Silencio tras la última palabra para dar la frase por terminada (Vosk corta en cada pausa). */
     private const val END_SILENCE_MS = 1_200L
     /** Tras «pausa», tiempo para decir «sigue» sin «Hola BMW». */
@@ -136,8 +136,10 @@ object VoiceAssistant {
     private const val BARGE_STABLE_MS = 700L
     /** Confianza mínima de cada palabra de una interrupción (frase completa). */
     private const val BARGE_MIN_CONF = 0.85
-    /** Tras una pregunta del copiloto, algo más. */
-    private const val COPILOT_FOLLOW_MS = 9_000L
+    /** Tras una pregunta del copiloto, algo más que tras una respuesta. */
+    private const val COPILOT_EXTRA_MS = 2_000L
+    /** Lo que espera un aviso a que acabe la frase en curso antes de darse por perdido. */
+    private const val ANNOUNCE_WAIT_MS = 60_000L
 
     private val _humor = MutableStateFlow(Personality.DEFAULT_HUMOR)
     /** Nivel de humor, 0..100 % (se guarda en Ajustes). */
@@ -243,6 +245,7 @@ object VoiceAssistant {
 
     /** La app sale de pantalla: suelta el micrófono para no molestar a Maps, llamadas, etc. */
     fun pause() {
+        noteCut("la app salió de pantalla (activa «Escuchar fuera de la app» para que siga)")
         appVisible = false
         resumed = false
         muted = false
@@ -614,6 +617,7 @@ object VoiceAssistant {
         app = context.applicationContext
         when (_state.value.phase) {
             AssistantPhase.WAITING, AssistantPhase.ANSWERING -> {
+                noteCut("tocaste el asistente")
                 stopSpeaking()
                 muted = false
                 resetRecognizer = true
@@ -710,7 +714,7 @@ object VoiceAssistant {
             command is Command.Navigate || command is Command.Call || command == Command.Maps || command == Command.Music ||
             command is Command.AskGoogle || (command is Command.Station && command.action == StationAction.GO) ||
             command is Command.RadioPlay || command == Command.RadioStop || command is Command.RadioNext || command is Command.RadioVolume
-        say(reply, listenAfter = if (ends || !settings().assistantFollowUp) 0L else FOLLOW_MS)
+        say(reply, listenAfter = if (ends || !settings().assistantFollowUp) 0L else followMs())
     }
 
     private fun saveRecent() { runCatching { settings().assistantRecentLines = Personality.recent.save() } }
@@ -763,13 +767,48 @@ object VoiceAssistant {
      * Aviso hablado que no viene de una orden (p. ej. un radar): solo con la app en pantalla y si
      * no se está escuchando al conductor en ese momento.
      */
-    fun announce(text: String) {
+    fun announce(text: String, urgent: Boolean = false) {
         scope.launch {
-            val phase = _state.value.phase
-            if (!resumed || phase == AssistantPhase.LISTENING) return@launch
+            if (!resumed || _state.value.phase == AssistantPhase.LISTENING) return@launch
+            if (_state.value.phase == AssistantPhase.ANSWERING) {
+                if (urgent) {
+                    // Un radar no espera: corta lo que estaba diciendo, lo dice y luego sigue donde iba.
+                    val rest = remainingText(_state.value.reply.orEmpty(), spokenPos)
+                    noteCut("aviso urgente: «${text.take(40)}»")
+                    conversation.record(null, null, text, System.currentTimeMillis())
+                    say(text)
+                    if (rest != null) sayWhenFree(rest, replyId)
+                    return@launch
+                }
+                // Antes un aviso (radar, briefing…) cortaba a medias lo que estaba diciendo, por ejemplo
+                // la explicación de un sitio turístico: ahora espera a que termine.
+                var waited = 0L
+                while (waited < ANNOUNCE_WAIT_MS && _state.value.phase == AssistantPhase.ANSWERING) { delay(300); waited += 300 }
+                if (!resumed || _state.value.phase != AssistantPhase.WAITING && _state.value.phase != AssistantPhase.NO_MODEL) return@launch
+            }
             conversation.record(null, null, text, System.currentTimeMillis())
             say(text)
         }
+    }
+
+    /** Dice [text] cuando acabe la frase [afterId] (si entretanto no ha empezado otra ni se escucha). */
+    private fun sayWhenFree(text: String, afterId: String) = scope.launch {
+        var waited = 0L
+        while (waited < ANNOUNCE_WAIT_MS && replyId == afterId && _state.value.phase == AssistantPhase.ANSWERING) { delay(300); waited += 300 }
+        val p = _state.value.phase
+        if (replyId == afterId && resumed && (p == AssistantPhase.WAITING || p == AssistantPhase.NO_MODEL)) say(text)
+    }
+
+    /** Último corte de una frase a medias y por qué (Diagnóstico), para encontrar cortes raros. */
+    @Volatile var lastCut: String? = null; private set
+
+    private fun noteCut(why: String) {
+        if (_state.value.phase != AssistantPhase.ANSWERING) return
+        val said = _state.value.reply.orEmpty()
+        val pos = spokenPos
+        lastCut = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()) + " · " + why +
+            " · iba por " + (if (pos > 0) "${pos}/${said.length}" else "?/${said.length}") + " letras de «${said.take(40)}…»"
+        Log.i(TAG, "Corte: $lastCut")
     }
 
     /**
@@ -1088,7 +1127,7 @@ object VoiceAssistant {
         conversation.ask(line.yes?.let { Pending.Confirm(it) }, now)
         conversation.record(null, null, text, now)
         saveRecent()
-        say(text, listenAfter = if (question && st.assistantFollowUp) COPILOT_FOLLOW_MS else 0L)
+        say(text, listenAfter = if (question && st.assistantFollowUp) followMs() + COPILOT_EXTRA_MS else 0L)
     }
 
     private fun copilotSnapshot(now: Long): CopilotSnapshot {
@@ -1333,6 +1372,7 @@ object VoiceAssistant {
     }
 
     private fun say(text: String, listenAfter: Long = 0L) {
+        noteCut("otra frase: «${text.take(40)}»")
         listenAfterReply = listenAfter
         spokenPos = 0
         replyId = REPLY_ID + (++replySeq)
@@ -1476,6 +1516,7 @@ object VoiceAssistant {
         // Si esa palabra la está diciendo ella misma ahora («para llegar…»), es su eco: no se corta.
         if (!wake && saysItNow(text)) return
         Log.i(TAG, "Interrumpida ($action): «$text»")
+        noteCut("me has interrumpido: oí «$text»")
         // «Hola BMW» = orden nueva: lo pendiente se descarta. «Para», «espera»…: se hace ya.
         if (wake) afterSpeech = null else runAfterSpeech()
         val reply = _state.value.reply.orEmpty()
@@ -1491,7 +1532,7 @@ object VoiceAssistant {
             null -> wake()
             VoiceCommands.Barge.STOP -> _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, paused = false, replyUntil = 0) }
             VoiceCommands.Barge.PAUSE -> listenFollowUp(PAUSE_MS, paused = rest != null)
-            else -> listenFollowUp(FOLLOW_MS, paused = false)
+            else -> listenFollowUp(maxOf(HOLD_MS, followMs()), paused = false)
         }
     }
 
@@ -1501,6 +1542,9 @@ object VoiceAssistant {
 
     private const val LINGER_MS = 3_000L
     private const val READ_MS_PER_CHAR = 75L
+
+    /** Tiempo de escucha tras responder, de Ajustes (5 s por defecto). */
+    private fun followMs() = settings().assistantFollowSeconds * 1_000L
 
     private fun listenFollowUp(ms: Long, paused: Boolean) {
         followUp = true
