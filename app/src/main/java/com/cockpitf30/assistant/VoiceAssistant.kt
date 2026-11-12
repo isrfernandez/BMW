@@ -696,7 +696,11 @@ object VoiceAssistant {
         Log.i(TAG, "«$text» -> $command")
         val words = VoiceCommands.normalize(text).split(' ').count { it.isNotBlank() }
         // En la escucha seguida se descarta lo suelto (ruido, la radio); una frase de verdad se contesta.
-        if (inFollowUp && !waitingAnswer && ((command is Command.Unknown && words < 3) || command == Command.Yes || command == Command.Another)) {
+        // Lo oído justo después de hablar puede ser el final de su propia voz (en una tablet el altavoz
+        // sigue sonando cuando el motor ya dice que ha terminado): contestarlo cortaba la respuesta.
+        val echo = inFollowUp && !waitingAnswer && command !is Command.Cancel && VoiceCommands.isEcho(text, lastSaid)
+        if (echo) Log.i(TAG, "Eco de su propia voz, se ignora: «$text»")
+        if (echo || inFollowUp && !waitingAnswer && ((command is Command.Unknown && words < 3) || command == Command.Yes || command == Command.Another)) {
             // Sin «Hola BMW» y sin sentido: será la radio o alguien hablando. No se contesta.
             _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, paused = false) }
             return
@@ -788,6 +792,20 @@ object VoiceAssistant {
             }
             conversation.record(null, null, text, System.currentTimeMillis())
             say(text)
+        }
+    }
+
+    /**
+     * Una respuesta que llega después (p. ej. el resumen de Wikipedia que se estaba descargando):
+     * espera a que acabe lo que está diciendo, sin cortarlo, y no se mete si ya se está con otra orden.
+     */
+    private fun sayLater(text: String) = scope.launch {
+        var waited = 0L
+        while (waited < ANNOUNCE_WAIT_MS && _state.value.phase == AssistantPhase.ANSWERING) { delay(300); waited += 300 }
+        val p = _state.value.phase
+        if (p == AssistantPhase.WAITING || p == AssistantPhase.NO_MODEL || (p == AssistantPhase.LISTENING && followUp && _state.value.heard == null)) {
+            conversation.record(null, Command.TourInfo, text, System.currentTimeMillis())
+            say(text, listenAfter = if (settings().assistantFollowUp) followMs() else 0L)
         }
     }
 
@@ -892,7 +910,7 @@ object VoiceAssistant {
         Command.Help -> "Puedo abrir gasolineras, viaje, tiempo, teléfono o apps; decirte la autonomía, el tiempo de hoy o de mañana " +
             "y la gasolinera más cercana; llevarte a un sitio, llamar a alguien, contarte un chiste o preguntar a Google. " +
             "Después de contestarte sigo escuchando unos segundos, así que puedes seguir: otra, y mañana, llévame. " +
-            "Y puedes ajustar mi humor, decir activa el copiloto, qué hay por aquí, o desactiva los avisos turísticos."
+            "Y puedes ajustar mi humor, decir activa el copiloto, qué hay por aquí, información turística, o desactiva los avisos turísticos."
         Command.Cancel -> joke(Personality.line("cancel"), "cancel")
         Command.Thanks -> joke(Personality.line("thanks"), "thanks")
         Command.No -> Personality.line("no")
@@ -935,6 +953,7 @@ object VoiceAssistant {
         is Command.Alerts -> alerts(c)
         Command.Nearby -> com.cockpitf30.nav.RouteAlerts.nearby(scope)
         Command.AboutThat -> com.cockpitf30.nav.RouteAlerts.more() ?: "Todavía no te he hablado de ningún sitio. Pregúntame qué hay por aquí."
+        Command.TourInfo -> com.cockpitf30.nav.RouteAlerts.tourInfo(scope) { text -> sayLater(text) }
         Command.Quiet -> {
             copilotSnoozeUntil = now + 30 * 60_000L
             joke("Vale, me callo media hora", "cancel")
@@ -1379,8 +1398,12 @@ object VoiceAssistant {
         runCatching { a() }.onFailure { Log.w(TAG, "Tras hablar", it) }
     }
 
+    /** Lo último que dijo (para no tomar su eco por una orden). */
+    private var lastSaid = ""
+
     private fun say(text: String, listenAfter: Long = 0L) {
         noteCut("otra frase: «${text.take(40)}»")
+        lastSaid = text
         listenAfterReply = listenAfter
         spokenPos = 0
         replyId = REPLY_ID + (++replySeq)
@@ -1437,7 +1460,9 @@ object VoiceAssistant {
      */
     private fun finishSoon() {
         unmuteJob?.cancel()
-        unmuteJob = finishWhenSilent(0L)
+        // Margen: algunos motores (tablets Xiaomi) avisan y dejan de decir «hablando» con el final
+        // aún en el altavoz; se volvía a escuchar antes de tiempo y se oía a sí misma.
+        unmuteJob = finishWhenSilent(500L)
     }
 
     private fun robotFile(id: String) = java.io.File(app.cacheDir, "$id.wav")

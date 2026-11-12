@@ -68,6 +68,8 @@ sealed interface Command {
     data object Nearby : Command
     /** «Háblame de eso»: más del último sitio del que se avisó. */
     data object AboutThat : Command
+    /** «Información turística»: el sitio de interés más cercano, contado con su resumen de Wikipedia. */
+    data object TourInfo : Command
     /** Una de las gasolineras de las que se acaba de hablar (lo crea [Conversation]). */
     data class Station(val index: Int, val action: StationAction) : Command
 
@@ -92,6 +94,14 @@ enum class StationAction { DESCRIBE, PRICE, GO }
 object VoiceCommands {
 
     /** Minúsculas, sin tildes ni signos, palabras separadas por un espacio. */
+    /** ¿[heard] son, casi todas, palabras de lo que acaba de decir ([said])? Entonces es su propio eco. */
+    fun isEcho(heard: String, said: String): Boolean {
+        val h = normalize(heard).split(' ').filter { it.length > 1 }
+        if (h.size < 2) return false
+        val s = normalize(said).split(' ').toSet()
+        return h.count { it in s } >= h.size * 0.7
+    }
+
     fun normalize(text: String): String =
         Normalizer.normalize(text.lowercase(), Normalizer.Form.NFD)
             .replace(Regex("\\p{M}+"), "")
@@ -247,6 +257,10 @@ object VoiceCommands {
         }
         radio(t, ::has)?.let { return it }
 
+        // «Información turística», «dame información turística», «guía turística»: que cuente el sitio
+        // más cercano. Con «activa / desactiva / avisos» sigue siendo encender o apagar los avisos.
+        if (has("informacion turistica", "info turistica", "guia turistica", "informacion de turismo", "cuentame algo de la zona", "cuentame algo de aqui", "que ver cerca") &&
+            !has("activa", "desactiva", "quita", "apaga", "enciende", "aviso", "avisos", "deja de", "para de", "no quiero", "sin ", "vuelve a")) return Command.TourInfo
         // Avisos en ruta: «desactiva los avisos», «quita los avisos turísticos», «activa avisos de radares».
         val alertWords = has("aviso", "avisos", "puntos de interes", "informacion turistica", "turistic", "turismo")
         val toggle = has("activa", "desactiva", "quita", "apaga", "enciende", "pon ", "quiero", "sin ", "no quiero", "deja de", "para de", "vuelve a")

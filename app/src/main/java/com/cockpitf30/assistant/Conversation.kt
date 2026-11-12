@@ -186,7 +186,7 @@ class Conversation {
             is Command.Open -> "la pantalla de ${c.screen.name.lowercase().let(::screenName)}"
             is Command.Copilot -> "el modo copiloto"
             is Command.Alerts -> "los avisos en ruta"
-            Command.Nearby, Command.AboutThat -> "lo que hay por aquí"
+            Command.Nearby, Command.AboutThat, Command.TourInfo -> "lo que hay por aquí"
             else -> null
         }
 
