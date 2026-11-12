@@ -88,7 +88,12 @@ fun RadioScreen() {
                         Spacer(Modifier.weight(1f))
                         st.error?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = Color(0xFFFFC94D), maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(520.dp)) }
                     }
-                    if (tab == RadioSource.FM) FmList(st) else InternetList(st)
+                    val test by Radio.fmTest.collectAsStateWithLifecycle()
+                    when {
+                        test != null -> FmTestPanel(test!!)
+                        tab == RadioSource.FM -> FmList(st)
+                        else -> InternetList(st)
+                    }
                 }
             }
         }
@@ -165,6 +170,7 @@ private fun NowPlaying(st: RadioState, modifier: Modifier, first: FocusRequester
                 SmallButton("◂ Buscar") { Radio.fmSeek(-1) }
                 SmallButton("Buscar ▸") { Radio.fmSeek(1) }
                 SmallButton("Explorar") { Radio.fmScan() }
+                SmallButton("Prueba FM") { Radio.runFmTest() }
             }
         }
     }
@@ -198,6 +204,30 @@ private fun quality(s: StreamStation): String = listOfNotNull(
     s.codec.takeIf { it.isNotBlank() }, s.bitrate.takeIf { it > 0 }?.let { "$it kbps" }, s.mbPerHour?.let { "~$it MB/h" },
 ).joinToString(" · ")
 
+/** Resultado de «Prueba FM»: qué se pidió al sintonizador y qué contestó, para compartirlo. */
+@Composable
+private fun FmTestPanel(test: Radio.FmTest) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(if (test.running) "Probando el sintonizador…" else "Prueba FM", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+            if (!test.running) {
+                SmallButton("Compartir") { shareReport(context, test.lines.joinToString("\n"), "Cockpit F30 prueba FM") }
+                SmallButton("Guardar en Descargas") { saveReport(context, test.lines.joinToString("\n"), "cockpit-prueba-fm") }
+                SmallButton("Cerrar") { Radio.closeFmTest() }
+            }
+        }
+        test.lines.firstOrNull { it.startsWith("Resultado:") }?.let {
+            Text(it, style = MaterialTheme.typography.titleMedium, color = sourceColor(RadioSource.FM))
+        }
+        androidx.compose.foundation.lazy.LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+            items(test.lines.size) { i ->
+                Text(test.lines[i], style = MaterialTheme.typography.labelMedium.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace), color = Cockpit.TextDim)
+            }
+        }
+    }
+}
+
 @Composable
 private fun FmList(st: RadioState) {
     if (st.tunerAvailable != true) {
@@ -210,6 +240,7 @@ private fun FmList(st: RadioState) {
             )
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 SmallButton("Volver a comprobar") { Radio.recheckTuner() }
+                SmallButton("Prueba FM") { Radio.runFmTest() }
                 SmallButton("Usar Internet") { Radio.selectSource(RadioSource.INTERNET) }
             }
         }

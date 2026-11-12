@@ -580,6 +580,11 @@ private fun canBoxSummary(values: Map<String, String>): String {
 
 private fun radioReport(values: Map<String, String>, changes: List<String>, canbus: List<String>, vehicle: com.cockpitf30.vehicle.VehicleState): String = buildString {
     appendLine()
+    appendLine("== Sintonizador FM")
+    com.cockpitf30.radio.FactoryTuner.lastProbe?.let { appendLine("Comprobación: ${it.reason}") }
+    com.cockpitf30.radio.Radio.fmTest.value?.takeIf { !it.running }?.lines?.forEach(::appendLine)
+        ?: run { appendLine("(sin «Prueba FM»; últimas órdenes:)"); com.cockpitf30.radio.FactoryTuner.trace.value.forEach(::appendLine) }
+    appendLine()
     appendLine("== Datos del coche (radio)")
     appendLine(vehicleSummary(vehicle))
     appendLine()
@@ -599,10 +604,10 @@ private fun radioReport(values: Map<String, String>, changes: List<String>, canb
     canbus.forEach(::appendLine)
 }
 
-private fun shareReport(context: android.content.Context, text: String) {
+internal fun shareReport(context: android.content.Context, text: String, subject: String = "Cockpit F30 diagnóstico") {
     val send = android.content.Intent(android.content.Intent.ACTION_SEND)
         .setType("text/plain")
-        .putExtra(android.content.Intent.EXTRA_SUBJECT, "Cockpit F30 diagnóstico")
+        .putExtra(android.content.Intent.EXTRA_SUBJECT, subject)
         // El texto va en el propio Intent: lo recortamos para no pasar del límite de Binder.
         .putExtra(android.content.Intent.EXTRA_TEXT, text.take(150_000))
     runCatching {
@@ -610,8 +615,8 @@ private fun shareReport(context: android.content.Context, text: String) {
     }.onFailure { android.widget.Toast.makeText(context, "No hay apps para compartir", android.widget.Toast.LENGTH_SHORT).show() }
 }
 
-private fun saveReport(context: android.content.Context, text: String) {
-    val name = "cockpit-diagnostico-${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))}.txt"
+internal fun saveReport(context: android.content.Context, text: String, prefix: String = "cockpit-diagnostico") {
+    val name = "$prefix-${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))}.txt"
     val where = runCatching {
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             val values = android.content.ContentValues().apply {
