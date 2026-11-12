@@ -81,15 +81,11 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
         modifier
             .width(132.dp)
             .fillMaxHeight()
-            .background(
-                // Diurno: columna clara como el resto, con un filo gris a la derecha.
-                if (Cockpit.Light) Brush.horizontalGradient(listOf(Color(0xFFDCE2EA), Color(0xFFEEF1F5)))
-                else Brush.horizontalGradient(listOf(Color(0xFF080B12), Color(0xFF0B0F18).copy(alpha = 0.7f))),
+            .then(
+                // Diurno: sin fondo propio, se ve el mismo fondo claro que el resto de la pantalla.
+                if (Cockpit.Light) Modifier
+                else Modifier.background(Brush.horizontalGradient(listOf(Color(0xFF080B12), Color(0xFF0B0F18).copy(alpha = 0.7f)))),
             )
-            .drawWithContent {
-                drawContent()
-                if (Cockpit.Light) drawLine(Cockpit.Ink.copy(alpha = 0.14f), Offset(size.width - 1f, 0f), Offset(size.width - 1f, size.height), 2f)
-            }
             // Desplazable: si la pantalla es más baja de lo previsto, nada queda fuera de alcance.
             .verticalScroll(rememberScrollState())
             .padding(vertical = 16.dp, horizontal = 10.dp),

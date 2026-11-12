@@ -406,7 +406,10 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
         Modifier
             .fillMaxSize()
             // El degradado ya termina en el color de fondo opaco: no hace falta pintar el fondo dos veces.
-            .background(Brush.radialGradient(listOf(Cockpit.Blue.copy(alpha = 0.10f), Cockpit.Background), radius = 1600f)),
+            .background(
+                if (Cockpit.Light) com.cockpitf30.ui.components.dayBackdrop()
+                else Brush.radialGradient(listOf(Cockpit.Blue.copy(alpha = 0.10f), Cockpit.Background), radius = 1600f),
+            ),
     ) {
         Sidebar(sideItems)
         Box(Modifier.weight(1f).fillMaxHeight()) {

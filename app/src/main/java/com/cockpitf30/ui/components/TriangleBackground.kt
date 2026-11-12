@@ -43,7 +43,7 @@ fun TriangleBackground(modifier: Modifier = Modifier, dim: Float = 0.12f, conten
         // Diurno: la malla oscura se ve como una mancha al sol. Fondo claro liso con un degradado
         // muy suave y los paneles blancos encima.
         Box(
-            modifier.background(Brush.verticalGradient(listOf(Color(0xFFF4F6F9), Cockpit.Background, Color(0xFFDDE3EA)))),
+            modifier.background(dayBackdrop()),
         ) { content() }
         return
     }
@@ -74,6 +74,9 @@ fun TriangleBackground(modifier: Modifier = Modifier, dim: Float = 0.12f, conten
         content()
     }
 }
+
+/** Fondo del tema diurno, el mismo detrás de la barra lateral, del Inicio y de las demás pantallas. */
+fun dayBackdrop(): Brush = Brush.verticalGradient(listOf(Color(0xFFF4F6F9), Cockpit.Background, Color(0xFFDDE3EA)))
 
 /**
  * Panel de cristal ahumado para poner datos sobre el fondo de triángulos: relleno oscuro
