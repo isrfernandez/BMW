@@ -64,13 +64,15 @@ import com.cockpitf30.ui.components.glassPanel
 import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.ui.theme.DriveMode
 import com.cockpitf30.ui.theme.DriveModes
+import com.cockpitf30.ui.theme.DayTheme
+import com.cockpitf30.ui.theme.TextSize
 import com.cockpitf30.ui.theme.NightDetector
 import com.cockpitf30.ui.theme.numeric
 import com.cockpitf30.vehicle.trip.TripComputer
 
 /** Secciones de Ajustes, en el orden de la columna de la izquierda. */
 enum class SettingsSection(val title: String, val hint: String) {
-    DISPLAY("Pantalla e iluminación", "Modo, Night automático y luz ambiente"),
+    DISPLAY("Pantalla e iluminación", "Modo diurno, tamaño de letra, Night y luz ambiente"),
     ASSISTANT("Asistente de voz", "«Hola BMW», voz y personalidad"),
     DRIVING("Conducción", "Copiloto, briefing, resumen y cambio"),
     ALERTS("Avisos en ruta", "Radares, peligros, descanso y turismo"),
@@ -156,6 +158,18 @@ private fun DisplaySettings() {
             DriveModes.setAutoNight(ctx, it > 0)
             if (it > 0) DriveModes.setNightWithHeadlights(ctx, it == 2)
         }
+    }
+    SettingGroup("Legibilidad") {
+        ChoiceRow(
+            "Modo diurno",
+            "Fondos claros y letra oscura para leer a pleno sol. Automático: de día sí, al oscurecer pasa a Night. También por voz («modo diurno»).",
+            DayTheme.entries.map { it.label }, DriveModes.dayTheme.ordinal,
+        ) { DriveModes.setDayTheme(ctx, DayTheme.entries[it]) }
+        ChoiceRow(
+            "Tamaño de letra",
+            "Agranda todos los textos de la app para leerlos conduciendo.",
+            TextSize.entries.map { it.label }, DriveModes.textSize.ordinal,
+        ) { DriveModes.setTextSize(ctx, TextSize.entries[it]) }
     }
     SettingGroup("Iluminación") {
         var glow by remember { mutableStateOf(settings.ambientLight) }

@@ -89,6 +89,9 @@ class VoiceCommandsTest {
     fun driveModes() {
         assertEquals(Command.Mode(com.cockpitf30.ui.theme.DriveMode.SPORT), VoiceCommands.parse("modo sport"))
         assertEquals(Command.Mode(com.cockpitf30.ui.theme.DriveMode.NIGHT), VoiceCommands.parse("pon el modo noche"))
+        assertEquals(Command.Daylight(com.cockpitf30.ui.theme.DayTheme.ON), VoiceCommands.parse("pon el modo diurno"))
+        assertEquals(Command.Daylight(com.cockpitf30.ui.theme.DayTheme.OFF), VoiceCommands.parse("quita el modo diurno"))
+        assertEquals(Command.Daylight(com.cockpitf30.ui.theme.DayTheme.OFF), VoiceCommands.parse("modo oscuro"))
         assertEquals(Command.Open(Screen.PERFORMANCE), VoiceCommands.parse("abre rendimiento"))
     }
 

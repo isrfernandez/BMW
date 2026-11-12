@@ -401,7 +401,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     )
 
     // Al cambiar de modo se rehace la interfaz entera con la paleta nueva.
-    androidx.compose.runtime.key(com.cockpitf30.ui.theme.DriveModes.current) {
+    androidx.compose.runtime.key(com.cockpitf30.ui.theme.DriveModes.palette, com.cockpitf30.ui.theme.DriveModes.textSize) {
     Row(
         Modifier
             .fillMaxSize()

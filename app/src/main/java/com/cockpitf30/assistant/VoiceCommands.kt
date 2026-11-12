@@ -24,6 +24,8 @@ sealed interface Command {
     /** «Llama a Manuel»: [who] es lo dicho tras «llama a» (nombre o número). */
     data class Call(val who: String) : Command
     data class Mode(val mode: com.cockpitf30.ui.theme.DriveMode) : Command
+    /** Tema diurno (fondos claros): «modo diurno», «quita el modo diurno», «modo oscuro». */
+    data class Daylight(val theme: com.cockpitf30.ui.theme.DayTheme) : Command
     data class Unknown(val text: String) : Command
 
     // ---- conversación
@@ -330,6 +332,11 @@ object VoiceCommands {
         // Modos de conducción: «modo sport», «pon el modo noche», «modo normal».
         if (has("modo")) {
             when {
+                has("diurno", "de dia", "dia", "claro") && has("quita", "desactiva", "apaga", "sin") ->
+                    return Command.Daylight(com.cockpitf30.ui.theme.DayTheme.OFF)
+                has("diurno", "de dia", "claro") -> return Command.Daylight(com.cockpitf30.ui.theme.DayTheme.ON)
+                has("oscuro") -> return Command.Daylight(com.cockpitf30.ui.theme.DayTheme.OFF)
+                has("automatico") && has("diurno", "dia") -> return Command.Daylight(com.cockpitf30.ui.theme.DayTheme.AUTO)
                 has("sport", "deportivo", "sporty", "espor") -> return Command.Mode(com.cockpitf30.ui.theme.DriveMode.SPORT)
                 has("noche", "night", "nocturno", "naight") -> return Command.Mode(com.cockpitf30.ui.theme.DriveMode.NIGHT)
                 has("normal", "confort", "comfort") -> return Command.Mode(com.cockpitf30.ui.theme.DriveMode.NORMAL)

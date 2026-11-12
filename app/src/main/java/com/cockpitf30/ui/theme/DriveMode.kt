@@ -33,7 +33,31 @@ data class ModePalette(
     val tint: Color?,
     /** Oscurecimiento extra de los fondos (de noche deslumbra menos). */
     val dim: Float,
+    /** Tema diurno: fondos claros y letra oscura, para leer a pleno sol. */
+    val light: Boolean = false,
+    val background: Color = Color(0xFF0B0C10),
+    val surface: Color = Color(0xFF121212),
+    val surfaceHigh: Color = Color(0xFF1C1F26),
+    val track: Color = Color(0xFF262B33),
+    /** Color base de líneas, rayas y bordes finos (se usa con transparencia). */
+    val ink: Color = Color.White,
+    /** Color de las veladuras que separan el texto del fondo (se usa con transparencia). */
+    val shade: Color = Color.Black,
 )
+
+/** Tema diurno (fondos claros): apagado, automático (de día, si no está oscuro) o siempre. */
+enum class DayTheme(val label: String) {
+    OFF("Desactivado"),
+    AUTO("Automático"),
+    ON("Siempre"),
+}
+
+/** Tamaño de la letra de toda la app (multiplica todos los textos sin mover el resto). */
+enum class TextSize(val label: String, val scale: Float) {
+    NORMAL("Normal", 1.0f),
+    LARGE("Grande", 1.15f),
+    XLARGE("Muy grande", 1.3f),
+}
 
 object DriveModes {
     val NORMAL_PALETTE = ModePalette(
@@ -58,6 +82,23 @@ object DriveModes {
         steelDark = Color(0xFF3A2608), steel = Color(0xFFD08A2A), steelLight = Color(0xFFFFD9A0),
         text = Color(0xFFFFF1DC), textDim = Color(0xFFC2B096), tint = Color(0xFFFF9A10), dim = 0.18f,
     )
+
+    /**
+     * Diurno: fondo casi blanco y letra casi negra, con acentos más oscuros para que tengan
+     * contraste sobre blanco (el azul claro del modo Normal no se leería al sol).
+     */
+    private fun daylight(base: ModePalette, accent: Color, accentDark: Color, metal: Color, metalDark: Color) = base.copy(
+        blue = accent, blueLight = accentDark,
+        copperDark = Color(0xFFB8BEC8), copper = metal, copperLight = metalDark,
+        steelDark = Color(0xFFD5DCE6), steel = Color(0xFF5B7393), steelLight = Color(0xFF2E4766),
+        text = Color(0xFF070B12), textDim = Color(0xFF3A4352), tint = null, dim = 0f,
+        light = true,
+        background = Color(0xFFE9EDF2), surface = Color(0xFFFFFFFF), surfaceHigh = Color(0xFFFFFFFF),
+        track = Color(0xFFC9D0DA), ink = Color(0xFF0B1320), shade = Color.White,
+    )
+
+    val NORMAL_DAY = daylight(NORMAL_PALETTE, Color(0xFF0B5CD5), Color(0xFF0A4DB3), Color(0xFF8A5634), Color(0xFF5E3519))
+    val SPORT_DAY = daylight(SPORT_PALETTE, Color(0xFFD0160C), Color(0xFFB00F07), Color(0xFF59616C), Color(0xFF2E343C))
 
     /** El modo que eligió el conductor. */
     var selected by mutableStateOf(DriveMode.NORMAL)
@@ -91,12 +132,57 @@ object DriveModes {
     /** true si el modo Night lo ha puesto la oscuridad y no el conductor. */
     val nightIsAuto: Boolean get() = current == DriveMode.NIGHT && selected == DriveMode.NORMAL
 
+    /** Tema diurno elegido en Ajustes. */
+    var dayTheme by mutableStateOf(DayTheme.AUTO)
+        private set
+
+    /** Tamaño de letra elegido en Ajustes. */
+    var textSize by mutableStateOf(TextSize.LARGE)
+        private set
+
+    /**
+     * Si se ve el tema diurno. Night (puesto a mano u oscuro) siempre manda: de noche el blanco
+     * deslumbra. En automático, de día; con «Siempre», también en túneles (pero no con Night).
+     */
+    val daylight: Boolean
+        get() = current != DriveMode.NIGHT && when (dayTheme) {
+            DayTheme.OFF -> false
+            DayTheme.AUTO -> !dark
+            DayTheme.ON -> true
+        }
+
     val palette: ModePalette
+        get() = when (current) {
+            DriveMode.NORMAL -> if (daylight) NORMAL_DAY else NORMAL_PALETTE
+            DriveMode.SPORT -> if (daylight) SPORT_DAY else SPORT_PALETTE
+            DriveMode.NIGHT -> NIGHT_PALETTE
+        }
+
+    /** Paleta oscura del modo actual (para lo que sigue oscuro con el tema diurno). */
+    val darkPalette: ModePalette
         get() = when (current) {
             DriveMode.NORMAL -> NORMAL_PALETTE
             DriveMode.SPORT -> SPORT_PALETTE
             DriveMode.NIGHT -> NIGHT_PALETTE
         }
+
+    fun setDayTheme(context: Context, theme: DayTheme) {
+        dayTheme = theme
+        prefs(context).edit().putString(KEY_DAY_THEME, theme.name).apply()
+    }
+
+    fun setTextSize(context: Context, size: TextSize) {
+        textSize = size
+        prefs(context).edit().putString(KEY_TEXT_SIZE, size.name).apply()
+    }
+
+    /** Solo para las capturas de prueba (Paparazzi no tiene preferencias). */
+    fun testDaylight(on: Boolean, size: TextSize = TextSize.LARGE) {
+        textSize = size
+        selected = DriveMode.NORMAL
+        darkState = false
+        dayTheme = if (on) DayTheme.ON else DayTheme.OFF
+    }
 
     fun load(context: Context) {
         val prefs = prefs(context)
@@ -106,6 +192,8 @@ object DriveModes {
         nightOverridden = false
         autoNight = prefs.getBoolean(KEY_AUTO_NIGHT, true)
         nightWithHeadlights = prefs.getBoolean(KEY_NIGHT_LIGHTS, true)
+        dayTheme = runCatching { DayTheme.valueOf(prefs.getString(KEY_DAY_THEME, null) ?: "") }.getOrDefault(DayTheme.AUTO)
+        textSize = runCatching { TextSize.valueOf(prefs.getString(KEY_TEXT_SIZE, null) ?: "") }.getOrDefault(TextSize.LARGE)
     }
 
     fun select(context: Context?, mode: DriveMode) {
@@ -132,4 +220,6 @@ object DriveModes {
     private const val KEY_MODE = "drive_mode"
     private const val KEY_AUTO_NIGHT = "auto_night"
     private const val KEY_NIGHT_LIGHTS = "night_headlights"
+    private const val KEY_DAY_THEME = "day_theme"
+    private const val KEY_TEXT_SIZE = "text_size"
 }

@@ -109,7 +109,8 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
                             fontSize = 15.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp,
                             shadow = Shadow(Color.Black.copy(alpha = 0.9f), Offset(0f, 1f), 6f),
                         ),
-                        color = Cockpit.Text,
+                        // Va sobre la ilustración oscura del botón: blanco también en el tema diurno.
+                        color = Cockpit.OnDark,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.align(Alignment.BottomStart).padding(start = 10.dp, end = 6.dp, bottom = 8.dp),

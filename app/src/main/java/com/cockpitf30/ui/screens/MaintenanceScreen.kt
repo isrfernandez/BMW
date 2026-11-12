@@ -236,7 +236,7 @@ private fun ServiceBar(st: ServiceStatus, modifier: Modifier) {
     val color = serviceColor(st.level)
     Canvas(modifier) {
         val r = CornerRadius(size.height / 2)
-        drawRoundRect(Color.White.copy(alpha = 0.08f), cornerRadius = r)
+        drawRoundRect(Cockpit.Ink.copy(alpha = 0.08f), cornerRadius = r)
         val f = st.used.coerceIn(0f, 1f)
         if (f > 0f && st.level != ServiceLevel.UNKNOWN) {
             val w = size.width * f

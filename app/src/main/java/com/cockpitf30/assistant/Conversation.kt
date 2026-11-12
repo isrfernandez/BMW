@@ -174,6 +174,7 @@ class Conversation {
             is Command.Call -> "llamar a ${c.who}"
             is Command.Joke -> "chistes"
             is Command.Mode -> "el modo de conducción"
+            is Command.Daylight -> "el modo diurno"
             is Command.Humor -> "mi humor"
             is Command.SetName, Command.AskName -> "tu nombre"
             is Command.Chat -> when (c.key) {

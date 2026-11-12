@@ -180,7 +180,7 @@ fun ScoreRing(score: Int?, modifier: Modifier) {
             val arcSize = Size(size.width - inset * 2, size.height - inset * 2)
             val tl = Offset(inset, inset)
             drawCircle(Brush.radialGradient(listOf(color.copy(alpha = 0.16f), Color.Transparent)), size.minDimension / 2)
-            drawArc(Color.White.copy(alpha = 0.08f), 135f, 270f, false, tl, arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
+            drawArc(Cockpit.Ink.copy(alpha = 0.08f), 135f, 270f, false, tl, arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
             val sweep = 270f * fill.value
             if (sweep > 0.5f) {
                 drawArc(color.copy(alpha = 0.30f), 135f, sweep, false, tl, arcSize, style = Stroke(stroke * 2.2f, cap = StrokeCap.Round), blendMode = BlendMode.Plus)
@@ -224,9 +224,9 @@ fun WeekChart(w: WeekSummary, modifier: Modifier, title: String = "Esta semana")
                 val h = (v / max * chartH).toFloat().coerceAtLeast(if (v > 0) 4.dp.toPx() else 0f)
                 val today = i == w.today
                 val future = i > w.today
-                drawRoundRect(Color.White.copy(alpha = if (future) 0.03f else 0.06f), Offset(x, top), Size(bw, chartH), CornerRadius(6.dp.toPx()))
+                drawRoundRect(Cockpit.Ink.copy(alpha = if (future) 0.03f else 0.06f), Offset(x, top), Size(bw, chartH), CornerRadius(6.dp.toPx()))
                 if (h > 0f) {
-                    val c = if (today) Color.White else accent
+                    val c = if (today) Cockpit.Ink else accent
                     drawRoundRect(
                         Brush.verticalGradient(listOf(c, accent.copy(alpha = 0.35f)), startY = top + chartH - h, endY = top + chartH),
                         Offset(x, top + chartH - h), Size(bw, h), CornerRadius(6.dp.toPx()),
@@ -234,11 +234,11 @@ fun WeekChart(w: WeekSummary, modifier: Modifier, title: String = "Esta semana")
                     if (today) drawRoundRect(accent.copy(alpha = 0.35f), Offset(x - 2.dp.toPx(), top + chartH - h - 2.dp.toPx()), Size(bw + 4.dp.toPx(), h + 4.dp.toPx()), CornerRadius(8.dp.toPx()), style = Stroke(3.dp.toPx()), blendMode = BlendMode.Plus)
                     if (v >= 1) {
                         val t = tm.measure(v.roundToInt().toString(), label)
-                        drawText(t, Color.White.copy(alpha = 0.85f), Offset(x + bw / 2 - t.size.width / 2, top + chartH - h - t.size.height - 2.dp.toPx()))
+                        drawText(t, Cockpit.Ink.copy(alpha = 0.85f), Offset(x + bw / 2 - t.size.width / 2, top + chartH - h - t.size.height - 2.dp.toPx()))
                     }
                 }
                 val l = tm.measure(labels[i], label)
-                drawText(l, if (today) Color.White else Color.White.copy(alpha = 0.5f), Offset(x + bw / 2 - l.size.width / 2, size.height - l.size.height))
+                drawText(l, if (today) Cockpit.Ink else Cockpit.Ink.copy(alpha = 0.5f), Offset(x + bw / 2 - l.size.width / 2, size.height - l.size.height))
             }
         }
         Spacer(Modifier.height(10.dp))

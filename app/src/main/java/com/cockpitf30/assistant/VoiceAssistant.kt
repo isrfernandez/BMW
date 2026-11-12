@@ -859,6 +859,14 @@ object VoiceAssistant {
                 com.cockpitf30.ui.theme.DriveMode.NORMAL -> joke("Modo normal", "mode.normal")
             }
         }
+        is Command.Daylight -> {
+            com.cockpitf30.ui.theme.DriveModes.setDayTheme(app, c.theme)
+            when (c.theme) {
+                com.cockpitf30.ui.theme.DayTheme.ON -> "Modo diurno puesto"
+                com.cockpitf30.ui.theme.DayTheme.OFF -> "Quito el modo diurno"
+                com.cockpitf30.ui.theme.DayTheme.AUTO -> "Modo diurno automático"
+            }
+        }
         is Command.Navigate -> {
             afterSpeaking { navigateTo(c.destination) }
             joke("Vamos a ${c.destination}", "nav")

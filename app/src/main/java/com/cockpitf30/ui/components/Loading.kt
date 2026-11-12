@@ -168,9 +168,11 @@ private const val TEXT_Y = 554f
  */
 @Composable
 fun BrandTitle() {
-    val silver = androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0xFFF4F8FC), Cockpit.SteelBlueLight, Color(0xFF8FA6BF)))
-    val copper = androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Cockpit.CopperLight, Cockpit.Copper, Color(0xFF8A4A28)))
-    val glow = androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(Cockpit.BlueLight.copy(alpha = 0.55f), androidx.compose.ui.geometry.Offset.Zero, 18f))
+    // Arranque sobre negro: colores de la paleta oscura también con el modo diurno.
+    val pal = com.cockpitf30.ui.theme.DriveModes.darkPalette
+    val silver = androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0xFFF4F8FC), pal.steelLight, Color(0xFF8FA6BF)))
+    val copper = androidx.compose.ui.graphics.Brush.verticalGradient(listOf(pal.copperLight, pal.copper, Color(0xFF8A4A28)))
+    val glow = androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(pal.blueLight.copy(alpha = 0.55f), androidx.compose.ui.geometry.Offset.Zero, 18f))
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             androidx.compose.ui.text.buildAnnotatedString {
@@ -184,7 +186,7 @@ fun BrandTitle() {
         Spacer(Modifier.height(10.dp))
         Box(
             Modifier.size(width = 420.dp, height = 2.dp).background(
-                androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color.Transparent, Cockpit.BlueLight.copy(alpha = 0.9f), Cockpit.CopperLight.copy(alpha = 0.8f), Color.Transparent)),
+                androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color.Transparent, pal.blueLight.copy(alpha = 0.9f), pal.copperLight.copy(alpha = 0.8f), Color.Transparent)),
             ),
         )
     }
