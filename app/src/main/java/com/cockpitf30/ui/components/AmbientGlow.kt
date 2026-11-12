@@ -48,11 +48,22 @@ internal fun glowMood(longG: Float, radarAhead: Boolean): Pair<GlowMood, Float> 
  * Rodea los cuatro bordes. Se aviva al acelerar, se vuelve rojo al frenar fuerte y late en rojo con un radar delante.
  * Va en su propia capa (graphicsLayer) y solo cambia por pasos de 0,05 g.
  */
+/** Si la luz ambiente está puesta. Es estado de Compose: el interruptor de Ajustes se aplica al momento. */
+object AmbientLight {
+    private val holder = androidx.compose.runtime.mutableStateOf<Boolean?>(null)
+
+    fun enabled(ctx: android.content.Context): Boolean = holder.value ?: AppSettings(ctx).ambientLight.also { holder.value = it }
+
+    fun set(ctx: android.content.Context, on: Boolean) {
+        AppSettings(ctx).ambientLight = on
+        holder.value = on
+    }
+}
+
 @Composable
 fun AmbientGlow(modifier: Modifier = Modifier) {
     val ctx = LocalContext.current
-    val enabled = remember { AppSettings(ctx).ambientLight }
-    if (!enabled) return
+    if (!AmbientLight.enabled(ctx)) return
     val g: State<Float> = remember {
         Telemetry.state.map { (it.longG / 0.05f).roundToInt() * 0.05f }.distinctUntilChanged()
     }.collectAsState(0f)
@@ -69,18 +80,20 @@ fun AmbientGlow(modifier: Modifier = Modifier) {
     } else remember { mutableFloatStateOf(1f) }
 
     Canvas(modifier.fillMaxSize().graphicsLayer { alpha = (strength * pulse.value).coerceIn(0f, 1f) }) {
-        val edge = 22.dp.toPx()
+        val edge = (if (Cockpit.Light) 26.dp else 22.dp).toPx()
         val c = color
+        // Sumar luz (Plus) sobre blanco no se ve: en diurno se pinta el color tal cual.
+        val blendMode = if (Cockpit.Light) BlendMode.SrcOver else BlendMode.Plus
         // Los cuatro bordes: envuelve la pantalla.
-        drawRect(Brush.verticalGradient(listOf(c, Color.Transparent), endY = edge), size = Size(size.width, edge), blendMode = BlendMode.Plus)
-        drawRect(Brush.horizontalGradient(listOf(c, Color.Transparent), endX = edge), size = Size(edge, size.height), blendMode = BlendMode.Plus)
+        drawRect(Brush.verticalGradient(listOf(c, Color.Transparent), endY = edge), size = Size(size.width, edge), blendMode = blendMode)
+        drawRect(Brush.horizontalGradient(listOf(c, Color.Transparent), endX = edge), size = Size(edge, size.height), blendMode = blendMode)
         drawRect(
             Brush.horizontalGradient(listOf(Color.Transparent, c), startX = size.width - edge, endX = size.width),
-            topLeft = Offset(size.width - edge, 0f), size = Size(edge, size.height), blendMode = BlendMode.Plus,
+            topLeft = Offset(size.width - edge, 0f), size = Size(edge, size.height), blendMode = blendMode,
         )
         drawRect(
             Brush.verticalGradient(listOf(Color.Transparent, c), startY = size.height - edge * 1.4f, endY = size.height),
-            topLeft = Offset(0f, size.height - edge * 1.4f), size = Size(size.width, edge * 1.4f), blendMode = BlendMode.Plus,
+            topLeft = Offset(0f, size.height - edge * 1.4f), size = Size(size.width, edge * 1.4f), blendMode = blendMode,
         )
     }
 }

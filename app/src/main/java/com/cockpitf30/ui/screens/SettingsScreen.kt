@@ -172,9 +172,9 @@ private fun DisplaySettings() {
         ) { DriveModes.setTextSize(ctx, TextSize.entries[it]) }
     }
     SettingGroup("Iluminación") {
-        var glow by remember { mutableStateOf(settings.ambientLight) }
-        ToggleRow("Luz ambiente", "Halo de color en los bordes de la pantalla, como la luz ambiente del coche. Se aplica al volver a abrir la pantalla.", glow) {
-            glow = it; settings.ambientLight = it
+        val glow = com.cockpitf30.ui.components.AmbientLight.enabled(ctx)
+        ToggleRow("Luz ambiente", "Halo de color en los bordes de la pantalla, como la luz ambiente del coche.", glow) {
+            com.cockpitf30.ui.components.AmbientLight.set(ctx, it)
         }
     }
 }

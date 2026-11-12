@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
@@ -680,6 +681,8 @@ private fun DragPanel(d: com.cockpitf30.vehicle.telemetry.DragState, modifier: M
                 Spacer(Modifier.weight(1f))
                 Text("${run.kmh.roundToInt()} km/h", style = numeric(20, FontWeight.Medium), color = Cockpit.TextDim, modifier = Modifier.padding(bottom = 8.dp))
             }
+        } else if (d.fresh != null) {
+            FreshMark(d.fresh, isBest = d.best[d.fresh.test]?.at == d.fresh.at, Modifier.weight(1f).fillMaxWidth())
         } else {
             com.cockpitf30.vehicle.telemetry.DragTest.entries.forEach { test ->
                 val best = d.best[test]
@@ -695,8 +698,52 @@ private fun DragPanel(d: com.cockpitf30.vehicle.telemetry.DragState, modifier: M
                 }
             }
         }
-        Spacer(Modifier.weight(1f))
+        if (run != null || d.fresh == null) Spacer(Modifier.weight(1f))
         SmallAction("Ver marcas", Modifier.fillMaxWidth().height(46.dp), onDetails)
+    }
+}
+
+/**
+ * Marca recién lograda: la cifra entra grande con un rebote, late con un halo del color del
+ * modo y, si es la mejor, lo dice. Se ve de un vistazo que se ha completado la prueba.
+ */
+@Composable
+private fun FreshMark(r: com.cockpitf30.vehicle.telemetry.DragResult, isBest: Boolean, modifier: Modifier) {
+    val pop = remember(r.at) { Animatable(0.4f) }
+    LaunchedEffect(r.at) {
+        pop.animateTo(1.25f, tween(260, easing = FastOutSlowInEasing))
+        pop.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 300f))
+    }
+    val pulse by rememberInfiniteTransition(label = "fresh").animateFloat(
+        0f, 1f, infiniteRepeatable(tween(700, easing = LinearEasing), RepeatMode.Reverse), label = "freshPulse",
+    )
+    val accent = if (isBest) Cockpit.Ok else Cockpit.BlueLight
+    Box(
+        modifier.drawBehind {
+            val r0 = size.minDimension * 0.62f
+            drawCircle(
+                Brush.radialGradient(listOf(accent.copy(alpha = 0.18f + 0.22f * pulse), Color.Transparent), center, r0 * (1f + 0.15f * pulse)),
+                r0 * (1f + 0.15f * pulse), center,
+            )
+        },
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.graphicsLayer {
+            scaleX = pop.value; scaleY = pop.value
+        }) {
+            Text(
+                if (isBest) "¡NUEVA MEJOR MARCA!" else "¡${r.test.label}!",
+                style = MaterialTheme.typography.labelLarge, color = accent, maxLines = 1,
+            )
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(secs(r.seconds), style = numeric(64, FontWeight.Bold), color = Cockpit.Text, maxLines = 1)
+                Text(" s", style = numeric(22, FontWeight.Medium), color = Cockpit.TextDim, modifier = Modifier.padding(bottom = 12.dp))
+            }
+            Text(
+                if (isBest) r.test.label else "${r.endKmh.roundToInt()} km/h",
+                style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim, maxLines = 1,
+            )
+        }
     }
 }
 
