@@ -1331,28 +1331,32 @@ object VoiceAssistant {
             _tts.value = if (ttsReady) TtsStatus.READY else TtsStatus.NO_SPANISH
             applyVoice()
             t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) { ttsLastError = null }
+                override fun onStart(utteranceId: String?) {
+                    ttsLastError = null
+                    chunkIndex(utteranceId)?.let { i -> speechOffsets.getOrNull(i)?.let { spokenPos = maxOf(spokenPos, it) } }
+                }
                 // Palabra que está diciendo: para saber dónde seguir tras «pausa» y no confundir su voz con una orden.
-                override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) { spokenPos = start }
+                override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
+                    chunkIndex(utteranceId)?.let { i -> spokenPos = (speechOffsets.getOrNull(i) ?: 0) + start }
+                }
                 override fun onError(utteranceId: String?, errorCode: Int) {
                     ttsLastError = "error $errorCode al hablar"
                     @Suppress("DEPRECATION") onError(utteranceId)
                 }
                 override fun onDone(utteranceId: String?) {
                     when {
-                        utteranceId?.startsWith(ROBOT_ID) == true -> scope.launch { playRobot(utteranceId) }
-                        // Solo cuenta el aviso de la frase en curso: el de una anterior (cortada por la
-                        // nueva) llegaba tarde y daba por terminada la nueva a medias, quitando el texto.
-                        utteranceId == replyId -> scope.launch { if (utteranceId == replyId) finishSoon() }
+                        utteranceId?.startsWith(ROBOT_ID) == true -> robotReady[utteranceId] = true
+                        // Solo cuenta el aviso del último trozo de la frase en curso: el de una anterior
+                        // (cortada por la nueva) o el de un trozo intermedio daba por terminada la frase a medias.
+                        utteranceId != null && utteranceId == lastChunkId -> scope.launch { if (utteranceId == lastChunkId) finishSoon("aviso del motor") }
                     }
                 }
                 @Deprecated("Deprecated in Java")
                 override fun onError(utteranceId: String?) {
+                    if (utteranceId?.startsWith(ROBOT_ID) == true) { robotReady[utteranceId] = false; return }
                     scope.launch {
-                        when {
-                            utteranceId?.startsWith(ROBOT_ID) == true -> robotFailed(utteranceId)
-                            utteranceId == replyId -> doneSpeaking()
-                        }
+                        // Un trozo que falla no corta los siguientes (ya están en cola); solo el último termina.
+                        if (utteranceId != null && utteranceId == lastChunkId) doneSpeaking("error del motor de voz")
                     }
                 }
             })
@@ -1390,8 +1394,21 @@ object VoiceAssistant {
     /** Id de la frase que se está diciendo: los avisos de otras se ignoran. */
     @Volatile private var replyId = REPLY_ID + 0
     private var robotSeq = 0
-    /** Texto pendiente de cada síntesis a archivo, por si falla y hay que decirlo con la voz normal. */
-    private val robotText = HashMap<String, String>()
+    /** Síntesis a archivo de la voz TARS: true = lista, false = falló (por id). */
+    private val robotReady = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    private var robotJob: Job? = null
+    /** Dónde empieza cada trozo de la frase en curso (letra) y el id del último trozo. */
+    @Volatile private var speechOffsets: List<Int> = emptyList()
+    @Volatile private var lastChunkId: String? = null
+    private var speechStartedAt = 0L
+    private var speechEstimateMs = 0L
+    /** Cómo acabó la última frase (Diagnóstico): para ver si se corta y por qué. */
+    @Volatile var lastSpeechEnd: String? = null; private set
+
+    private fun chunkIndex(id: String?): Int? {
+        val p = "$replyId#"
+        return if (id != null && id.startsWith(p)) id.substring(p.length).toIntOrNull() else null
+    }
     private var player: AudioTrack? = null
     @Volatile private var robotBroken = false
 
@@ -1490,32 +1507,134 @@ object VoiceAssistant {
         replyId = REPLY_ID + (++replySeq)
         _state.update { it.copy(phase = AssistantPhase.ANSWERING, reply = text, replyAt = System.currentTimeMillis(), engine = null, paused = false) }
         unmuteJob?.cancel()
-        stopPlayer()
+        stopSpeaking()
+        // Por frases: empieza a sonar antes (no espera a preparar todo el texto, que con poca
+        // conexión o la voz TARS tardaba) y una explicación larga no depende de una sola síntesis.
+        val chunks = SpeechChunks.split(text)
+        speechOffsets = SpeechChunks.offsets(text, chunks)
+        lastChunkId = "$replyId#${chunks.size - 1}"
+        speechStartedAt = System.currentTimeMillis()
+        speechEstimateMs = text.length * 75L
         val t = tts
-        if (t != null && ttsReady && settings().assistantSpeaks) {
+        if (t != null && ttsReady && settings().assistantSpeaks && chunks.isNotEmpty()) {
             // No escuchar mientras habla la radio: se oiría a sí misma.
             muted = true
-            if (settings().assistantRobotVoice && settings().assistantRobotStrength.filter && !robotBroken && synthesizeRobot(t, text)) {
-                // La síntesis a archivo tarda un poco más; el tiempo real se ajusta al reproducir.
-                unmuteJob = scope.launch {
-                    delay(6_000L + text.length * 120L)
-                    // Una tablet lenta puede tardar más en preparar la voz: mientras siga pendiente, se espera.
-                    var waited = 0L
-                    while (waited < 30_000L && robotText.isNotEmpty()) { delay(300); waited += 300 }
-                    doneSpeaking()
-                }
+            if (settings().assistantRobotVoice && settings().assistantRobotStrength.filter && !robotBroken && startRobot(t, chunks)) {
+                // El final lo marca la reproducción ([playRobotChunks]).
             } else {
-                t.speak(text, TextToSpeech.QUEUE_FLUSH, null, replyId)
-                // El aviso real es onDone; esto es solo por si el motor no lo manda.
-                unmuteJob = finishWhenSilent(4_000L + text.length * 140L)
+                speakPlain(t, chunks, 0)
             }
         } else {
             if (settings().assistantSpeaks) {
                 ttsLastError = "no habla: motor de voz ${_tts.value.text}"
                 initTts() // por si ya se ha instalado
             }
-            unmuteJob = scope.launch { delay(1_200); doneSpeaking() }
+            unmuteJob = scope.launch { delay(1_200); doneSpeaking("sin voz") }
         }
+    }
+
+    /** Dice con la voz normal los trozos desde [from] (en cola, uno tras otro). */
+    private fun speakPlain(t: TextToSpeech, chunks: List<String>, from: Int) {
+        for (i in from until chunks.size) {
+            t.speak(chunks[i], if (i == from) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, "$replyId#$i")
+        }
+        // El aviso real es onDone del último trozo; esto es solo por si el motor no lo manda.
+        val left = chunks.drop(from).sumOf { it.length }
+        unmuteJob?.cancel()
+        unmuteJob = finishWhenSilent(4_000L + left * 140L, "tiempo estimado")
+    }
+
+    /** Pide al motor cada trozo en un WAV (en cola) y arranca la reproducción con efecto TARS. */
+    private fun startRobot(t: TextToSpeech, chunks: List<String>): Boolean {
+        robotReady.clear()
+        val ids = chunks.map { ROBOT_ID + (++robotSeq) }
+        for (i in chunks.indices) {
+            val r = runCatching { t.synthesizeToFile(chunks[i], Bundle(), robotFile(ids[i]), ids[i]) }.getOrDefault(TextToSpeech.ERROR)
+            if (r != TextToSpeech.SUCCESS) {
+                if (i == 0) { robotReady.clear(); return false }
+                robotReady[ids[i]] = false
+            }
+        }
+        val rid = replyId
+        robotJob = scope.launch { playRobotChunks(rid, ids, chunks) }
+        return true
+    }
+
+    /**
+     * Reproduce los trozos TARS según van estando listos, en un solo AudioTrack en modo stream (antes
+     * todo el texto iba a un búfer estático, que en algunas radios/tablets no admite tanto audio).
+     */
+    private suspend fun playRobotChunks(rid: String, ids: List<String>, chunks: List<String>) {
+        var track: AudioTrack? = null
+        var rate = 0
+        var written = 0L
+        try {
+            for (i in ids.indices) {
+                var w = 0L
+                while (robotReady[ids[i]] == null && w < 30_000L) { delay(50); w += 50 }
+                if (replyId != rid) return
+                val file = robotFile(ids[i])
+                val pcm = if (robotReady[ids[i]] == true) withContext(Dispatchers.Default) {
+                    val st = settings().assistantRobotStrength
+                    RobotVoice.readWav(file)?.let { RobotVoice.process(it, st) }
+                } else null
+                file.delete()
+                if (replyId != rid) return
+                if (pcm == null || pcm.samples.isEmpty()) {
+                    // La voz TARS no sale: lo que falta, con la voz normal (y no se reintenta hasta reiniciar).
+                    Log.w(TAG, "Voz robot no disponible en el trozo $i; voz normal")
+                    robotBroken = true
+                    track?.let { tr -> waitPlayed(tr, written) }
+                    if (replyId != rid) return
+                    stopPlayer()
+                    tts?.let { speakPlain(it, chunks, i) } ?: doneSpeaking("sin voz TARS")
+                    return
+                }
+                if (track == null || pcm.rate != rate) {
+                    track?.let { tr -> waitPlayed(tr, written) }
+                    stopPlayer()
+                    rate = pcm.rate
+                    written = 0
+                    val minBuf = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+                    track = runCatching {
+                        AudioTrack.Builder()
+                            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                            .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                            .setBufferSizeInBytes(maxOf(minBuf, rate)) // ~0,5 s
+                            .setTransferMode(AudioTrack.MODE_STREAM)
+                            .build().also { it.play() }
+                    }.onFailure { Log.w(TAG, "AudioTrack", it) }.getOrNull()
+                    if (track == null) {
+                        robotBroken = true
+                        tts?.let { speakPlain(it, chunks, i) } ?: doneSpeaking("sin AudioTrack")
+                        return
+                    }
+                    player = track
+                }
+                // Mientras suena este trozo, todo él cuenta como «ya dicho» (para no tomar su eco por una orden).
+                spokenPos = speechOffsets.getOrNull(i + 1) ?: (_state.value.reply?.length ?: 0)
+                val tr = track
+                val n = withContext(Dispatchers.IO) { runCatching { tr.write(pcm.samples, 0, pcm.samples.size) }.getOrDefault(-1) }
+                if (n < 0 || replyId != rid) return
+                written += n
+            }
+            track?.let { waitPlayed(it, written) }
+            if (replyId != rid) return
+            stopPlayer()
+            doneSpeaking("voz TARS terminada")
+        } finally {
+            ids.forEach { robotFile(it).delete() }
+        }
+    }
+
+    /** Espera a que el AudioTrack haya sonado [frames] muestras (o se pare). */
+    private suspend fun waitPlayed(track: AudioTrack, frames: Long) {
+        var w = 0L
+        while (w < 60_000L && player === track &&
+            runCatching { track.playState == AudioTrack.PLAYSTATE_PLAYING && (track.playbackHeadPosition.toLong() and 0xffffffffL) < frames }.getOrDefault(false)) {
+            delay(100); w += 100
+        }
+        delay(150)
     }
 
     /**
@@ -1524,7 +1643,7 @@ object VoiceAssistant {
      * estimada aunque siguiera hablando (en una tablet, con avisos largos o voz más lenta): se
      * quitaba el texto, subía la radio y se pisaban los audios.
      */
-    private fun finishWhenSilent(estimateMs: Long) = scope.launch {
+    private fun finishWhenSilent(estimateMs: Long, why: String) = scope.launch {
         delay(estimateMs)
         var waited = 0L
         while (waited < 120_000L && (runCatching { tts?.isSpeaking == true }.getOrDefault(false) ||
@@ -1532,81 +1651,25 @@ object VoiceAssistant {
             delay(300)
             waited += 300
         }
-        doneSpeaking()
+        doneSpeaking(why)
     }
 
     /**
      * El motor dice que ha terminado. Algunos motores lo avisan al acabar de generar el audio, no al
      * acabar de sonar: si aún suena, se espera a que calle.
      */
-    private fun finishSoon() {
+    private fun finishSoon(why: String) {
         unmuteJob?.cancel()
         // Margen: algunos motores (tablets Xiaomi) avisan y dejan de decir «hablando» con el final
         // aún en el altavoz; se volvía a escuchar antes de tiempo y se oía a sí misma.
-        unmuteJob = finishWhenSilent(500L)
+        unmuteJob = finishWhenSilent(500L, why)
     }
 
     private fun robotFile(id: String) = java.io.File(app.cacheDir, "$id.wav")
 
-    /** Pide al motor la frase en un WAV, que luego se pasa por [RobotVoice] y se reproduce. */
-    private fun synthesizeRobot(t: TextToSpeech, text: String): Boolean {
-        robotText.keys.toList().forEach { robotFile(it).delete() }
-        robotText.clear()
-        val id = ROBOT_ID + (++robotSeq)
-        robotText[id] = text
-        val r = runCatching { t.synthesizeToFile(text, Bundle(), robotFile(id), id) }.getOrDefault(TextToSpeech.ERROR)
-        if (r != TextToSpeech.SUCCESS) { robotText.remove(id); return false }
-        return true
-    }
-
-    /** No se pudo hacer el WAV: se dice con la voz normal (y no se reintenta hasta reiniciar la app). */
-    private fun robotFailed(id: String) {
-        val text = robotText.remove(id) ?: return
-        robotFile(id).delete()
-        Log.w(TAG, "Voz robot no disponible; voz normal")
-        robotBroken = true
-        if (_state.value.phase != AssistantPhase.ANSWERING) return
-        unmuteJob?.cancel()
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, replyId)
-        unmuteJob = finishWhenSilent(2_000L + text.length * 90L)
-    }
-
-    private suspend fun playRobot(id: String) {
-        if (!robotText.containsKey(id)) return // ya se canceló o llegó otra frase
-        val file = robotFile(id)
-        val pcm = withContext(Dispatchers.Default) { val st = settings().assistantRobotStrength
-            RobotVoice.readWav(file)?.let { RobotVoice.process(it, st) } }
-        file.delete()
-        if (pcm == null || pcm.samples.isEmpty()) { robotFailed(id); return }
-        if (robotText.remove(id) == null || _state.value.phase != AssistantPhase.ANSWERING) return
-        val track = runCatching {
-            AudioTrack.Builder()
-                .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-                .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(pcm.rate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-                .setBufferSizeInBytes(pcm.samples.size * 2)
-                .setTransferMode(AudioTrack.MODE_STATIC)
-                .build().also { it.write(pcm.samples, 0, pcm.samples.size); it.play() }
-        }.onFailure { Log.w(TAG, "AudioTrack", it) }.getOrNull()
-        if (track == null) { robotBroken = true; doneSpeaking(); return }
-        player = track
-        unmuteJob?.cancel()
-        unmuteJob = scope.launch {
-            delay(pcm.durationMs + 300)
-            // Por si la duración calculada se queda corta: se espera a que el audio llegue al final.
-            var waited = 0L
-            while (waited < 60_000L && player === track &&
-                runCatching { track.playState == AudioTrack.PLAYSTATE_PLAYING && track.playbackHeadPosition < pcm.samples.size }.getOrDefault(false)) {
-                delay(200)
-                waited += 200
-            }
-            if (player === track) stopPlayer()
-            doneSpeaking()
-        }
-    }
-
     /** ¿Sigue sonando su voz? (motor de voz o el audio de la voz TARS) */
     private fun stillTalking(): Boolean =
-        runCatching { tts?.isSpeaking == true }.getOrDefault(false) || runCatching { player?.playState == AudioTrack.PLAYSTATE_PLAYING }.getOrDefault(false) || robotText.isNotEmpty()
+        runCatching { tts?.isSpeaking == true }.getOrDefault(false) || runCatching { player?.playState == AudioTrack.PLAYSTATE_PLAYING }.getOrDefault(false) || robotJob?.isActive == true
 
     private fun stopPlayer() {
         player?.let { runCatching { it.stop() }; it.release() }
@@ -1615,7 +1678,9 @@ object VoiceAssistant {
 
     private fun stopSpeaking() {
         tts?.stop()
-        robotText.clear()
+        robotJob?.cancel()
+        robotJob = null
+        robotReady.clear()
         stopPlayer()
     }
 
@@ -1690,7 +1755,12 @@ object VoiceAssistant {
         return reply.substring(cut + 1).trim().takeIf { it.length > 2 }
     }
 
-    private fun doneSpeaking() {
+    private fun doneSpeaking(why: String = "?") {
+        if (_state.value.phase == AssistantPhase.ANSWERING) {
+            val took = System.currentTimeMillis() - speechStartedAt
+            lastSpeechEnd = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()) +
+                " · $why · ${took / 1000} s (lectura ~${speechEstimateMs / 1000} s) · ${speechOffsets.size} trozos · «${_state.value.reply.orEmpty().take(30)}…»"
+        }
         unmuteJob?.cancel()
         muted = false
         runAfterSpeech()

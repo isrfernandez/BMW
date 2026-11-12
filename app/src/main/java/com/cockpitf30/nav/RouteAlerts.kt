@@ -91,6 +91,12 @@ object RouteAlerts {
     private var pending: RouteAlert? = null
     private var prefetch: Job? = null
 
+    /**
+     * Hasta cuándo no se avisa de nada en ruta: al arrancar, el briefing va primero (antes salía la
+     * información turística y el briefing se quedaba sin decir).
+     */
+    @Volatile var holdUntil = 0L
+
     fun hide() { _current.value = null }
     fun show(a: RouteAlert) { _current.value = a }
     fun visible(a: RouteAlert?, now: Long) = a != null && now - a.at < VISIBLE_MS
@@ -101,6 +107,7 @@ object RouteAlerts {
         val on = AlertCategory.entries.filter { st.alertOn(it) && it != AlertCategory.RADAR }.toSet()
         val now = System.currentTimeMillis()
         if (on.isEmpty()) { pending = null; return }
+        if (now < holdUntil) return
         val demo = VehicleRepository.status.value.sourceName == "Demo"
         val near = RoutePois.state.value.near
 

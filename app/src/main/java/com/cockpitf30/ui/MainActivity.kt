@@ -366,6 +366,8 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     }
     // Briefing al arrancar: saludo con tiempo, autonomía, radares y mantenimiento.
     LaunchedEffect(Unit) {
+        // Los avisos en ruta esperan al briefing (antes salía antes la información turística).
+        if (com.cockpitf30.assistant.StartupBriefing.due(ctx)) com.cockpitf30.nav.RouteAlerts.holdUntil = System.currentTimeMillis() + 45_000
         com.cockpitf30.ui.components.Startup.splashDone.first { it }
         com.cockpitf30.assistant.StartupBriefing.maybeRun(ctx)
     }
