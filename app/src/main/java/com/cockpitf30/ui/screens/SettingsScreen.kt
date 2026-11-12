@@ -89,7 +89,10 @@ enum class SettingsSection(val title: String, val hint: String) {
 @Composable
 fun SettingsScreen(onOpen: (Screen) -> Unit = {}, initialSection: SettingsSection = SettingsSection.DISPLAY) {
     val context = LocalContext.current
-    var section by rememberSaveable { mutableStateOf(initialSection) }
+    var section by rememberSaveable { mutableStateOf(com.cockpitf30.ui.components.DemoTour.settingsSection ?: initialSection) }
+    // El modo demo pasa por todas las secciones.
+    val demoSection = com.cockpitf30.ui.components.DemoTour.settingsSection
+    androidx.compose.runtime.LaunchedEffect(demoSection) { demoSection?.let { section = it } }
     val first = remember { FocusRequester() }
     InitialFocus(first)
 

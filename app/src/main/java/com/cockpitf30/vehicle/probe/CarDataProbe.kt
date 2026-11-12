@@ -486,20 +486,24 @@ object CarDataProbe {
                 reply?.writeString(descriptor)
                 return true
             }
-            val name = names[code] ?: "código $code"
             raw.clear()
+            // Sin Diagnóstico delante, los avisos que solo sirven para leer el coche (las tramas de
+            // la caja CAN, 10 por segundo) se leen sin convertirlos a texto ni apuntarlos.
+            verbose = onRaw == null || com.cockpitf30.system.DiagnosticsGate.active
             val args = runCatching {
                 data.enforceInterface(descriptor)
                 val sig = signatures[code]
                 if (sig == null) "${data.dataAvail()} bytes" else sig.joinToString(", ") { readArg(data, it) }
             }.getOrElse { "no decodificado (${it.javaClass.simpleName})" }
             val handled = onRaw?.let { cb -> runCatching { cb(raw.toList()) }.getOrDefault(false) } ?: false
-            if (!handled) log("$name($args)")
+            if (!handled && verbose) log("${names[code] ?: "código $code"}($args)")
             reply?.writeNoException()
             return true
         }
 
-        private fun readArg(p: Parcel, type: Class<*>): String = when (type) {
+        private var verbose = true
+
+        private fun readArg(p: Parcel, type: Class<*>): String = if (!verbose) { readQuiet(p, type); "" } else when (type) {
             Int::class.javaPrimitiveType -> p.readInt().toString()
             Long::class.javaPrimitiveType -> p.readLong().toString()
             Boolean::class.javaPrimitiveType -> (p.readInt() != 0).toString()
@@ -514,6 +518,23 @@ object CarDataProbe {
                 Bundle.CREATOR.createFromParcel(p).apply { classLoader = loader }.also { raw += it }.let { BroadcastSniffer.describe(it) }
             } else "null".also { raw += null }
             else -> readParcelable(p, type)
+        }
+
+        /** Lee el argumento (para no descolocar los siguientes) y guarda lo que necesita [onRaw], sin texto. */
+        private fun readQuiet(p: Parcel, type: Class<*>) {
+            when (type) {
+                Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType -> p.readInt()
+                Long::class.javaPrimitiveType -> p.readLong()
+                Float::class.javaPrimitiveType -> p.readFloat()
+                Double::class.javaPrimitiveType -> p.readDouble()
+                String::class.java -> raw += p.readString()
+                ByteArray::class.java -> raw += p.createByteArray()
+                IntArray::class.java -> p.createIntArray()
+                FloatArray::class.java -> p.createFloatArray()
+                Array<String>::class.java -> p.createStringArray()
+                Bundle::class.java -> raw += if (p.readInt() != 0) Bundle.CREATOR.createFromParcel(p).apply { classLoader = loader } else null
+                else -> readParcelable(p, type)
+            }
         }
 
         /** Parcelable propio del fabricante (p. ej. info de puertas): lo crea con su CREATOR y enseña sus campos. */

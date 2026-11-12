@@ -82,8 +82,10 @@ class RadioCarSource(private val context: Context) : VehicleDataSource {
                     // Las claves "can.*" van al final: mandan sobre las del almacén si coinciden.
                     val can = CanBoxData.values()
                     val all = values + RadioCarData.broadcastValues() + can
-                    // La lista de Diagnóstico no necesita 10 refrescos por segundo.
-                    if (now - lastPublish >= POLL_MS) { RadioCarData.publish(all); lastPublish = now }
+                    // La lista de Diagnóstico no necesita 10 refrescos por segundo; sin Diagnóstico
+                    // delante solo hace falta para los faros (modo Night, mirado cada 5 s).
+                    val publishEvery = if (com.cockpitf30.system.DiagnosticsGate.active) POLL_MS else IDLE_PUBLISH_MS
+                    if (now - lastPublish >= publishEvery) { RadioCarData.publish(all); lastPublish = now }
                     val tank = settings.tankLiters
                     VehicleRepository.updateState { st ->
                         val mapped = CarKeyMapper.apply(st, all)
@@ -150,6 +152,7 @@ class RadioCarSource(private val context: Context) : VehicleDataSource {
 
     companion object {
         private const val POLL_MS = 300L
+        private const val IDLE_PUBLISH_MS = 2000L
         private const val QUERY_MS = 100L
         private const val DEFAULT_L_100KM = 5.5f
         private val BROADCASTS = listOf(
@@ -185,7 +188,8 @@ object RadioCarData {
     fun publish(all: Map<String, Any?>) {
         val shown = all.mapValues { describe(it.value) }
         val before = _values.value
-        if (before.isNotEmpty()) {
+        // El historial de cambios solo se mira en Diagnóstico.
+        if (before.isNotEmpty() && com.cockpitf30.system.DiagnosticsGate.active) {
             val now = LocalTime.now().format(time)
             val diff = buildList {
                 shown.forEach { (k, v) -> val old = before[k]; if (old != v) add("$now $k: ${old ?: "∅"} → $v") }

@@ -125,9 +125,13 @@ object DriveModes {
     var nightWithHeadlights by mutableStateOf(true)
         private set
 
+    /** Modo y tema diurno impuestos por el modo demo (null = los del conductor). No se guardan. */
+    var demoMode by mutableStateOf<DriveMode?>(null)
+    var demoDaylight by mutableStateOf<Boolean?>(null)
+
     /** El modo que se ve. */
     val current: DriveMode
-        get() = if (selected == DriveMode.NORMAL && autoNight && dark && !nightOverridden) DriveMode.NIGHT else selected
+        get() = demoMode ?: if (selected == DriveMode.NORMAL && autoNight && dark && !nightOverridden) DriveMode.NIGHT else selected
 
     /** true si el modo Night lo ha puesto la oscuridad y no el conductor. */
     val nightIsAuto: Boolean get() = current == DriveMode.NIGHT && selected == DriveMode.NORMAL
@@ -145,7 +149,7 @@ object DriveModes {
      * deslumbra. En automático, de día; con «Siempre», también en túneles (pero no con Night).
      */
     val daylight: Boolean
-        get() = current != DriveMode.NIGHT && when (dayTheme) {
+        get() = current != DriveMode.NIGHT && demoDaylight ?: when (dayTheme) {
             DayTheme.OFF -> false
             DayTheme.AUTO -> !dark
             DayTheme.ON -> true

@@ -66,6 +66,11 @@ import com.cockpitf30.ui.theme.appliedDesignDensity
 @Composable
 fun DiagnosticsScreen() {
     val context = LocalContext.current
+    // Los registros de depuración solo se preparan mientras esta pantalla está abierta.
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        com.cockpitf30.system.DiagnosticsGate.enter()
+        onDispose { com.cockpitf30.system.DiagnosticsGate.leave() }
+    }
     val settings = remember { AppSettings(context) }
     val status by VehicleRepository.status.collectAsStateWithLifecycle()
     val raw by VehicleRepository.rawLog.collectAsStateWithLifecycle()
@@ -235,6 +240,14 @@ fun DiagnosticsScreen() {
                     DiagStat("Fuente", status.sourceName, if (status.connected) Cockpit.Ok else Cockpit.Alert)
                     DiagStat("Tramas", "${status.framesReceived}", Color(0xFF7FD3FF))
                     DiagStat("Bytes leídos", "${status.bytesReceived}", Color(0xFFFFB74D))
+                }
+            }
+            item {
+                DiagCard("Modo demo") {
+                    Info("Recorre sola toda la app: cada pantalla, los modos Sport, Night y diurno y las secciones de Ajustes, " +
+                        "con datos de demostración (unos ${com.cockpitf30.ui.components.DemoTour.steps.sumOf { it.seconds } / 60 + 1} minutos). " +
+                        "Abajo se ve qué es cada pantalla; «Detener» o atrás la para. Al acabar todo vuelve a como estaba.", Cockpit.TextDim)
+                    ChipRow(listOf("Empezar demo"), -1) { com.cockpitf30.ui.components.DemoTour.start(context) }
                 }
             }
             item {

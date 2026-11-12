@@ -29,6 +29,11 @@ class AppSettings(context: Context) {
         }
         set(value) = prefs.edit().putString(KEY_SOURCE, value.name).apply()
 
+    /** Fuente de datos que había antes de una demo sin terminar (null si no hay demo a medias). */
+    var demoRestoreSource: String?
+        get() = prefs.getString("demo_restore_source", null)
+        set(value) = prefs.edit().putString("demo_restore_source", value).apply()
+
     var serialPath: String
         get() = prefs.getString(KEY_PATH, "/dev/ttyMT1")!!
         set(value) = prefs.edit().putString(KEY_PATH, value).apply()
