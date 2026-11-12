@@ -788,6 +788,7 @@ object VoiceAssistant {
         conversation.record(text, command, reply, now)
         saveRecent()
         val ends = command == Command.Cancel || command == Command.Thanks || command == Command.No || command == Command.Quiet ||
+            command == Command.TourInfo || command == Command.AboutThat ||
             command is Command.Navigate || command is Command.Call || command == Command.Maps || command == Command.Music ||
             command is Command.AskGoogle || (command is Command.Station && command.action == StationAction.GO) ||
             command is Command.RadioPlay || command == Command.RadioStop || command is Command.RadioNext || command is Command.RadioVolume
@@ -878,7 +879,8 @@ object VoiceAssistant {
         val p = _state.value.phase
         if (p == AssistantPhase.WAITING || p == AssistantPhase.NO_MODEL || (p == AssistantPhase.LISTENING && followUp && _state.value.heard == null)) {
             conversation.record(null, Command.TourInfo, text, System.currentTimeMillis())
-            say(text, listenAfter = if (settings().assistantFollowUp) followMs() else 0L)
+            // Tras una explicación larga no se queda escuchando: «Hola BMW» si quieres algo más.
+            say(text)
         }
     }
 
@@ -1476,6 +1478,12 @@ object VoiceAssistant {
 
     private fun say(text: String, listenAfter: Long = 0L) {
         noteCut("otra frase: «${text.take(40)}»")
+        // Al hablar se acaba cualquier escucha. Antes, si la explicación llegaba durante la escucha
+        // seguida (p. ej. «información turística» tras «un momento»), el reconocedor de Google seguía
+        // abierto mientras hablaba: se oía a sí misma, o se acababa el tiempo, y cortaba la frase.
+        listenUntil = 0
+        followUp = false
+        if (google != null) { stopGoogle(); backToVosk() }
         lastSaid = text
         listenAfterReply = listenAfter
         spokenPos = 0
@@ -1695,7 +1703,15 @@ object VoiceAssistant {
         val follow = listenAfterReply
         listenAfterReply = 0
         when {
-            audioJob?.isActive == true && resumed && follow > 0 && useGoogle() -> listenWithGoogle(followUp = true, timeoutMs = follow)
+            audioJob?.isActive == true && resumed && follow > 0 && useGoogle() -> {
+                // Se abre Google solo cuando su voz ya ha callado del todo (si no, se oye a sí misma).
+                val id = replyId
+                scope.launch {
+                    var waited = 0L
+                    do { delay(300); waited += 300 } while (stillTalking() && waited < 60_000)
+                    if (replyId == id && _state.value.phase == AssistantPhase.ANSWERING) listenWithGoogle(followUp = true, timeoutMs = follow)
+                }
+            }
             audioJob?.isActive == true && resumed && follow > 0 -> {
                 // Conversación seguida: se puede contestar sin volver a decir «Hola BMW».
                 followUp = true

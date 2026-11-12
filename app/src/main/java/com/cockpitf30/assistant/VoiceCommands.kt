@@ -135,7 +135,7 @@ object VoiceCommands {
 
     /** Palabras para cortar al asistente mientras habla. */
     /** Cortar y callarse. */
-    private val STOP_WORDS = listOf("para", "para ya", "detente", "cancela", "silencio", "calla", "callate", "cállate", "basta", "vale ya", "stop")
+    private val STOP_WORDS = listOf("para", "para ya", "detente", "cancela", "cancelar", "cancélalo", "cancela ya", "silencio", "calla", "callate", "cállate", "basta", "vale ya", "stop")
     /** Pausar para luego seguir («continúa»). */
     private val PAUSE_WORDS = listOf("pausa", "haz una pausa")
     /** Retomar lo que estaba diciendo. */
