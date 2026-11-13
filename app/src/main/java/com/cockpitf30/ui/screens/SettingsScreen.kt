@@ -209,6 +209,10 @@ private fun AssistantSettings() {
                 secs = opts[it]; settings.assistantFollowSeconds = secs
             }
         }
+        var barge by remember { mutableStateOf(settings.bargeWords) }
+        ToggleRow("Cortar con «para», «cállate»…", "Mientras habla, además de «Hola BMW» o tocarlo, se le puede parar con palabras sueltas. Desactivado por defecto: el micrófono oye su propia voz y a veces se cortaba solo.", barge, enabled = on) {
+            barge = it; settings.bargeWords = it
+        }
         var withGoogle by remember { mutableStateOf(settings.commandsWithGoogle) }
         val hasGoogle = remember { assistant.googleAvailable() }
         ChoiceRow(

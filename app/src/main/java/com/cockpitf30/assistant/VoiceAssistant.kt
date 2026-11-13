@@ -123,6 +123,8 @@ object VoiceAssistant {
     private const val RATE = 16_000
     /** Tiempo para decir la orden después de «Hola BMW». */
     private const val LISTEN_MS = 7_000L
+    /** Tras una pregunta suya, tiempo mínimo para contestar sin «Hola BMW». */
+    private const val ASKED_MS = 8_000L
     /** Tras «espera» / «un momento», tiempo mínimo para seguir sin «Hola BMW». */
     private const val HOLD_MS = 8_000L
     /** Silencio tras la última palabra para dar la frase por terminada (Vosk corta en cada pausa). */
@@ -428,7 +430,10 @@ object VoiceAssistant {
                     val raw = if (final) json.optString("text") else json.optString("partial")
                     // Frase completa: solo vale si Vosk está seguro de las palabras de la orden (su
                     // propia voz da confianzas bajas). Parcial: tiene que mantenerse más tiempo.
+                    // Por defecto solo «Hola BMW» la interrumpe: las palabras sueltas («para», «cállate»…)
+                    // las sacaba Vosk de su propia voz y cortaba explicaciones y ofertas a medias.
                     val hit = VoiceCommands.bargePhraseAtEnd(raw)?.takeIf { !final || bargeConfident(json, it) }
+                        ?.takeIf { bargeWordsOn || VoiceCommands.afterWakeWord(it) != null }
                     if (hit != bargeHit) { bargeHit = hit; bargeSince = now }
                     if (hit != null && (final || now - bargeSince >= BARGE_STABLE_MS)) {
                         bargeHit = null
@@ -792,7 +797,9 @@ object VoiceAssistant {
             command is Command.Navigate || command is Command.Call || command == Command.Maps || command == Command.Music ||
             command is Command.AskGoogle || (command is Command.Station && command.action == StationAction.GO) ||
             command is Command.RadioPlay || command == Command.RadioStop || command is Command.RadioNext || command is Command.RadioVolume
-        say(reply, listenAfter = if (ends || !settings().assistantFollowUp) 0L else followMs())
+        // Si ha preguntado algo («¿te llevo?»), se espera la respuesta un poco más.
+        val asked = conversation.pending != null || reply.trimEnd().endsWith("?")
+        say(reply, listenAfter = if (ends || !settings().assistantFollowUp) 0L else if (asked) maxOf(followMs(), ASKED_MS) else followMs())
     }
 
     private fun saveRecent() { runCatching { settings().assistantRecentLines = Personality.recent.save() } }
@@ -1493,7 +1500,11 @@ object VoiceAssistant {
     /** Lo último que dijo (para no tomar su eco por una orden). */
     private var lastSaid = ""
 
+    /** Se lee de Ajustes al empezar cada frase (el bucle del micrófono lo mira 10 veces por segundo). */
+    @Volatile private var bargeWordsOn = false
+
     private fun say(text: String, listenAfter: Long = 0L) {
+        bargeWordsOn = settings().bargeWords
         noteCut("otra frase: «${text.take(40)}»")
         // Al hablar se acaba cualquier escucha. Antes, si la explicación llegaba durante la escucha
         // seguida (p. ej. «información turística» tras «un momento»), el reconocedor de Google seguía
