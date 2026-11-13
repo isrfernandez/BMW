@@ -366,6 +366,8 @@ object VoiceAssistant {
         val bargeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.BARGE_GRAMMAR).apply { setWords(true) }
         var usingCmd = false
         var bargeHit: String? = null
+        /** Niveles del micrófono de los últimos segundos hablando (para separar tu voz de su eco). */
+        val echoLevels = ArrayList<Float>()
         var bargeSince = 0L
         // Lo dicho hasta ahora en la orden: Vosk corta en cada pausa corta, y se espera a que el
         // conductor termine de verdad (END_SILENCE_MS sin hablar) antes de entenderla.
@@ -421,7 +423,7 @@ object VoiceAssistant {
                 if (muted) {
                     // Hablando: solo se atiende a la interrupción, y solo con frases completas (los
                     // resultados parciales de la gramática se confundían con su propia voz y cortaban).
-                    if (mutedSince != 0L && now - mutedSince < BARGE_GRACE_MS) { bargeRec.reset(); continue }
+                    if (mutedSince != 0L && now - mutedSince < BARGE_GRACE_MS) { bargeRec.reset(); echoLevels.clear(); continue }
                     // Con la voz sonando casi nunca hay silencio, así que Vosk no cierra la frase: se mira
                     // también el parcial, pero solo si termina en una orden de interrupción y se mantiene
                     // BARGE_STABLE_MS (un parcial suelto de su propia voz no basta).
@@ -430,12 +432,23 @@ object VoiceAssistant {
                     val raw = if (final) json.optString("text") else json.optString("partial")
                     // Frase completa: solo vale si Vosk está seguro de las palabras de la orden (su
                     // propia voz da confianzas bajas). Parcial: tiene que mantenerse más tiempo.
-                    // Por defecto solo «Hola BMW» la interrumpe: las palabras sueltas («para», «cállate»…)
-                    // las sacaba Vosk de su propia voz y cortaba explicaciones y ofertas a medias.
                     val hit = VoiceCommands.bargePhraseAtEnd(raw)?.takeIf { !final || bargeConfident(json, it) }
-                        ?.takeIf { VoiceCommands.afterWakeWord(it) != null }
+                    // Nivel del micrófono mientras habla: su propia voz (el eco) suena más o menos igual
+                    // todo el rato; cuando hablas tú por encima, sube. Vosk sacaba «cállate» de su propio
+                    // eco: ahora una orden solo vale si el micro oye claramente más que su eco.
+                    val level = rms(buf, n)
+                    echoLevels.add(level); if (echoLevels.size > ECHO_WINDOW) echoLevels.removeAt(0)
                     if (hit != bargeHit) { bargeHit = hit; bargeSince = now }
                     if (hit != null && (final || now - bargeSince >= BARGE_STABLE_MS)) {
+                        val (louder, ratio) = voiceOverEcho(echoLevels)
+                        if (!louder) {
+                            lastBargeRejected = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()) +
+                                " · «$hit» descartado: el micro oía ${"%.1f".format(ratio)}× su eco (hace falta ${"%.1f".format(BARGE_OVER_ECHO)}×)"
+                            Log.i(TAG, "Interrupción descartada: $lastBargeRejected")
+                            bargeHit = null
+                            bargeRec.reset()
+                            continue
+                        }
                         bargeHit = null
                         bargeRec.reset()
                         _state.update { it.copy(lastText = "(hablando) $hit") }
@@ -554,6 +567,13 @@ object VoiceAssistant {
     }
 
     private suspend fun coroutineScopeActive() = kotlin.coroutines.coroutineContext.isActive
+
+    private const val ECHO_WINDOW = EchoGate.WINDOW
+    private const val BARGE_OVER_ECHO = EchoGate.OVER_ECHO
+    private fun voiceOverEcho(levels: List<Float>) = EchoGate.voiceOverEcho(levels)
+
+    /** Última orden de interrupción descartada por parecer su eco (Diagnóstico, para ajustar). */
+    @Volatile var lastBargeRejected: String? = null; private set
 
     private fun rms(buf: ShortArray, n: Int): Float {
         var sum = 0.0

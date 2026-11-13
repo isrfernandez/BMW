@@ -159,13 +159,9 @@ object VoiceCommands {
         "tres", "cuatro", "cinco", "diez", "cien", "mil",
     )
 
-    /**
-     * Gramática mientras habla la radio: solo «Hola BMW» (y relleno para que su propia voz caiga ahí).
-     * Las palabras de corte («para», «cállate», «pausa»…) se han quitado: Vosk las sacaba de su
-     * propia voz y cortaba las respuestas a medias.
-     */
+    /** Gramática mientras habla la radio: «Hola BMW» o una palabra para cortarla. */
     val BARGE_GRAMMAR: String = (Regex("\"([^\"]+)\"").findAll(WAKE_GRAMMAR).map { it.groupValues[1] }.filter { it != "[unk]" }.toList() +
-        BARGE_DECOYS + "[unk]").distinct().joinToString(",", "[", "]") { "\"$it\"" }
+        STOP_WORDS + PAUSE_WORDS + HOLD_WORDS + RESUME_WORDS + BARGE_DECOYS + "[unk]").distinct().joinToString(",", "[", "]") { "\"$it\"" }
 
     private val BARGE_PHRASES: List<String> by lazy {
         Regex("\"([^\"]+)\"").findAll(BARGE_GRAMMAR).map { normalize(it.groupValues[1]) }
