@@ -893,9 +893,12 @@ object VoiceAssistant {
      * Aviso hablado que no viene de una orden (p. ej. un radar): solo con la app en pantalla y si
      * no se está escuchando al conductor en ese momento.
      */
-    fun announce(text: String, urgent: Boolean = false) {
+    fun announce(text: String, urgent: Boolean = false, onSaid: (() -> Unit)? = null) {
         scope.launch {
-            if (!resumed || _state.value.phase == AssistantPhase.LISTENING) return@launch
+            if (!resumed || _state.value.phase == AssistantPhase.LISTENING) {
+                logState("aviso descartado (${if (!resumed) "app fuera de pantalla" else "escuchando"}): «${text.take(30)}»")
+                return@launch
+            }
             if (_state.value.phase == AssistantPhase.ANSWERING) {
                 if (urgent) {
                     // Un radar no espera: corta lo que estaba diciendo, lo dice y luego sigue donde iba.
@@ -910,12 +913,19 @@ object VoiceAssistant {
                 // la explicación de un sitio turístico: ahora espera a que termine.
                 var waited = 0L
                 while (waited < ANNOUNCE_WAIT_MS && _state.value.phase == AssistantPhase.ANSWERING) { delay(300); waited += 300 }
-                if (!resumed || _state.value.phase != AssistantPhase.WAITING && _state.value.phase != AssistantPhase.NO_MODEL) return@launch
+                if (!resumed || _state.value.phase != AssistantPhase.WAITING && _state.value.phase != AssistantPhase.NO_MODEL) {
+                    logState("aviso descartado (ocupado): «${text.take(30)}»")
+                    return@launch
+                }
             }
             conversation.record(null, null, text, System.currentTimeMillis())
             say(text)
+            onSaid?.invoke()
         }
     }
+
+    /** Para que otros módulos (briefing) dejen constancia en Diagnóstico. */
+    fun note(what: String) = logState(what)
 
     /**
      * Una respuesta que llega después (p. ej. el resumen de Wikipedia que se estaba descargando):
