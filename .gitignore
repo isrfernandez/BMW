@@ -7,3 +7,7 @@ local.properties
 captures/
 .kotlin/
 *.bak
+
+# Clave de firma propia: nunca en Git
+keystore/release.keystore
+keystore/release.properties

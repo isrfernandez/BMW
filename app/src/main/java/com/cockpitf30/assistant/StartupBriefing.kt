@@ -23,16 +23,26 @@ object StartupBriefing {
     private const val NEAR_KM = 5.0
 
     /** ¿Toca briefing al arrancar? (activado y no dicho hace poco) */
-    fun due(ctx: Context): Boolean {
+    fun due(ctx: Context): Boolean = skipReason(ctx) == null
+
+    /**
+     * Por qué no toca (null = sí toca). Tras instalar una versión nueva siempre toca: antes, al
+     * probar dos APK seguidas, la segunda callaba el briefing porque se había dicho hacía < 45 min.
+     */
+    private fun skipReason(ctx: Context): String? {
         val s = AppSettings(ctx)
-        return s.briefing && System.currentTimeMillis() - s.lastBriefingAt >= Briefing.GAP_MS
+        if (!s.briefing) return "desactivado en Ajustes"
+        val last = s.lastBriefingAt
+        val updated = runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).lastUpdateTime }.getOrDefault(0L)
+        if (updated > last) return null
+        val ago = System.currentTimeMillis() - last
+        return if (ago < Briefing.GAP_MS) "dicho hace ${ago / 60_000} min" else null
     }
 
     /** Al arrancar: solo si está activado y no se dijo hace poco. */
     suspend fun maybeRun(ctx: Context) {
-        val s = AppSettings(ctx)
         val now = System.currentTimeMillis()
-        if (!s.briefing || now - s.lastBriefingAt < Briefing.GAP_MS) return
+        skipReason(ctx)?.let { VoiceAssistant.note("Briefing omitido: $it"); return }
         // Mientras se prepara, los avisos en ruta (turismo…) esperan: el briefing va primero.
         com.cockpitf30.nav.RouteAlerts.holdUntil = now + WAIT_MS + 5_000
         withTimeoutOrNull(WAIT_MS) {
@@ -46,8 +56,9 @@ object StartupBriefing {
     fun speak(ctx: Context) {
         val s = AppSettings(ctx)
         val text = Briefing.text(input(ctx))
-        VoiceAssistant.announce(text)
-        s.lastBriefingAt = System.currentTimeMillis()
+        VoiceAssistant.note("Briefing: se dice")
+        // Solo cuenta como dicho si de verdad se ha dicho (antes, si se descartaba, callaba 45 min).
+        VoiceAssistant.announce(text) { s.lastBriefingAt = System.currentTimeMillis() }
         // Y después, mientras lo dice (unos 75 ms por letra), tampoco.
         com.cockpitf30.nav.RouteAlerts.holdUntil = System.currentTimeMillis() + 2_000 + text.length * 80L
     }
