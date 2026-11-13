@@ -185,7 +185,7 @@ fun StartupSplash(maxMs: Long = 12_000) {
 
 // res/raw/intro.mp4: el vídeo del usuario (1920×720) a 24 fps, algo más nítido y con los laterales
 // fundidos en un fondo desenfocado del propio vídeo (H.264). Audio: el sonido de logo del usuario
-// (AAC, 1,7 s) centrado en la mitad del vídeo.
+// (AAC, 1,7 s) con su golpe (0,65 s) sobre el destello del vídeo (0,67 s).
 // Para cambiarlo basta con sustituir el fichero: duración y proporción se leen al reproducirlo.
 private const val FADE_MS = 700L
 
