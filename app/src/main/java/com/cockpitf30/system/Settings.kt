@@ -29,6 +29,11 @@ class AppSettings(context: Context) {
         }
         set(value) = prefs.edit().putString(KEY_SOURCE, value.name).apply()
 
+    /** Fuente de datos que había antes de una demo sin terminar (null si no hay demo a medias). */
+    var demoRestoreSource: String?
+        get() = prefs.getString("demo_restore_source", null)
+        set(value) = prefs.edit().putString("demo_restore_source", value).apply()
+
     var serialPath: String
         get() = prefs.getString(KEY_PATH, "/dev/ttyMT1")!!
         set(value) = prefs.edit().putString(KEY_PATH, value).apply()
@@ -78,6 +83,16 @@ class AppSettings(context: Context) {
     var assistantFollowUp: Boolean
         get() = prefs.getBoolean("assistant_follow_up", true)
         set(value) = prefs.edit().putBoolean("assistant_follow_up", value).apply()
+
+    /** Las órdenes (lo que va tras «Hola BMW») con el reconocedor de Google, si la radio lo tiene. */
+    var commandsWithGoogle: Boolean
+        get() = prefs.getBoolean("commands_with_google", true)
+        set(value) = prefs.edit().putBoolean("commands_with_google", value).apply()
+
+    /** Segundos que sigue escuchando sin «Hola BMW» tras responder (antes 12 s fijos: demasiado). */
+    var assistantFollowSeconds: Int
+        get() = prefs.getInt("assistant_follow_seconds", 5)
+        set(value) = prefs.edit().putInt("assistant_follow_seconds", value.coerceIn(2, 20)).apply()
 
     /** Modo copiloto: el asistente habla por su cuenta cada [copilotMinutes] (cada 2 min en demo). */
     var copilotEnabled: Boolean

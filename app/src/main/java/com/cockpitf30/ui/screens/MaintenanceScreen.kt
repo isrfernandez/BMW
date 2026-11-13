@@ -69,6 +69,9 @@ fun serviceColor(level: ServiceLevel): Color = when (level) {
     ServiceLevel.SOON -> Color(0xFFFFC94D)
     ServiceLevel.DUE -> Color(0xFFFF5A46)
     ServiceLevel.UNKNOWN -> Color(0xFF8A96A6)
+}.let {
+    // En diurno los tonos claros (verde, ámbar) no se leen sobre blanco ni junto al dibujo verde.
+    if (Cockpit.Light) androidx.compose.ui.graphics.lerp(it, Color.Black, 0.45f) else it
 }
 
 /** Estado de todas las tareas con los ajustes guardados. */
@@ -113,7 +116,7 @@ fun MaintenanceScreen() {
                 Row(Modifier.fillMaxWidth().height(120.dp).glassPanel(16.dp).padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
                     FocusTile(onClick = { editing = true }, modifier = Modifier.width(430.dp).focusRequester(first)) {
                         Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
-                            PanelTitle("Kilómetros del coche", trailing = { if (!editing) Text("  · tocar para cambiar", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim) })
+                            PanelTitle("Kilómetros del coche")
                             Row(verticalAlignment = Alignment.Bottom) {
                                 Text(odo?.let { "%,d".format(es, it).replace(',', '.') } ?: "Sin poner", style = numeric(46, FontWeight.Medium), maxLines = 1)
                                 if (odo != null) Text(" km", style = numeric(20), color = Cockpit.TextDim, modifier = Modifier.padding(bottom = 8.dp))
@@ -236,7 +239,7 @@ private fun ServiceBar(st: ServiceStatus, modifier: Modifier) {
     val color = serviceColor(st.level)
     Canvas(modifier) {
         val r = CornerRadius(size.height / 2)
-        drawRoundRect(Color.White.copy(alpha = 0.08f), cornerRadius = r)
+        drawRoundRect(Cockpit.Ink.copy(alpha = 0.08f), cornerRadius = r)
         val f = st.used.coerceIn(0f, 1f)
         if (f > 0f && st.level != ServiceLevel.UNKNOWN) {
             val w = size.width * f

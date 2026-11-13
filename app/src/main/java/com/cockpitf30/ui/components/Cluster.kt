@@ -633,7 +633,7 @@ private fun DrawScope.drawCar(
  */
 private fun DrawScope.marker(
     tm: TextMeasurer, st: Overlay, caption: String, value: String, unit: String,
-    wheel: Offset?, label: Offset, alignRight: Boolean, hidden: Boolean = false, status: Color = Cockpit.BlueLight,
+    wheel: Offset?, label: Offset, alignRight: Boolean, hidden: Boolean = false, status: Color = Cockpit.OnDarkAccent,
 ) {
     val c = tm.measure(caption, st.caption)
     val v = tm.measure(value, st.value)
@@ -962,7 +962,7 @@ private fun DrawScope.drawCaption(g: GeoPx, tm: TextMeasurer, text: String, mirr
     val label = tm.measure(text, style)
     val x = g.chevronX(g.y0, 0f) + g.w * 0.17f - label.size.width
     val left = if (mirrored) g.w - x - label.size.width else x
-    drawText(label, color = Color.White.copy(alpha = 0.85f), topLeft = Offset(left, g.y0 - label.size.height - g.dp(2f)))
+    drawText(label, color = Cockpit.Ink.copy(alpha = 0.85f), topLeft = Offset(left, g.y0 - label.size.height - g.dp(2f)))
 }
 
 /** Barra inclinada de segmentos blancos (combustible o aceite) junto al tramo inferior del chevron. */
@@ -1019,11 +1019,11 @@ private fun TabValue(
         // Cifra sobre la imagen: sombra oscura para que se lea y, encima, halo del color de su barra.
         Box(Modifier.padding(horizontal = 20.dp)) {
             val big = numeric(80, FontWeight.Bold)
-            Text(value, style = big.copy(shadow = Shadow(Color.Black.copy(alpha = 0.7f), Offset(0f, 3f), 18f)), color = Cockpit.Text, maxLines = 1)
+            Text(value, style = big.copy(shadow = Shadow(Color.Black.copy(alpha = 0.7f), Offset(0f, 3f), 18f)), color = Cockpit.OnDark, maxLines = 1)
             Text(
                 value,
                 style = big.copy(shadow = Shadow(glow.copy(alpha = 0.55f + 0.4f * intensity), Offset.Zero, 26f + 20f * intensity)),
-                color = Cockpit.Text, maxLines = 1,
+                color = Cockpit.OnDark, maxLines = 1,
             )
         }
         }
@@ -1158,7 +1158,7 @@ private val ChipShape = androidx.compose.foundation.shape.RoundedCornerShape(14.
 
 @Composable
 private fun InfoChip(caption: String, value: String, unit: String, warn: Boolean = false) {
-    val accent = if (warn) Color(0xFFFFB347) else Cockpit.BlueLight
+    val accent = if (warn) Color(0xFFFFB347) else Cockpit.OnDarkAccent
     Column(
         Modifier
             .width(150.dp)
@@ -1173,12 +1173,12 @@ private fun InfoChip(caption: String, value: String, unit: String, warn: Boolean
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(7.dp).background(accent, androidx.compose.foundation.shape.CircleShape))
             Spacer(Modifier.width(7.dp))
-            Text(caption, style = MaterialTheme.typography.labelMedium.copy(fontSize = 13.sp, letterSpacing = 1.sp), color = Color.White.copy(alpha = 0.7f), maxLines = 1)
+            Text(caption, style = MaterialTheme.typography.labelMedium.copy(fontSize = 14.sp, letterSpacing = 1.sp), color = Color.White.copy(alpha = 0.7f), maxLines = 1)
         }
         Row(verticalAlignment = Alignment.Bottom) {
-            Text(value, style = numeric(30, FontWeight.SemiBold), color = if (warn) accent else Cockpit.Text, maxLines = 1)
+            Text(value, style = numeric(30, FontWeight.SemiBold), color = if (warn) accent else Cockpit.OnDark, maxLines = 1)
             Spacer(Modifier.width(4.dp))
-            Text(unit, style = numeric(15, FontWeight.Medium), color = Cockpit.TextDim, maxLines = 1, modifier = Modifier.padding(bottom = 5.dp))
+            Text(unit, style = numeric(15, FontWeight.Medium), color = Cockpit.OnDarkDim, maxLines = 1, modifier = Modifier.padding(bottom = 5.dp))
         }
     }
 }

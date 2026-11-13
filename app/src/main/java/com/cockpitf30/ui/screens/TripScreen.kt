@@ -235,7 +235,7 @@ private fun SpeedChart(trip: Trip?, modifier: Modifier) {
                 val dash = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 6.dp.toPx()))
                 for (v in 0..top step 50) {
                     val y = h * (1f - v / top.toFloat())
-                    drawLine(Color.White.copy(alpha = 0.08f), Offset(0f, y), Offset(w, y), 1.dp.toPx(), pathEffect = dash)
+                    drawLine(Cockpit.Ink.copy(alpha = 0.08f), Offset(0f, y), Offset(w, y), 1.dp.toPx(), pathEffect = dash)
                 }
                 val pts = samples.mapIndexed { i, v -> Offset(w * i / (samples.size - 1), h * (1f - v / top.toFloat())) }
                 val line = Path().apply {

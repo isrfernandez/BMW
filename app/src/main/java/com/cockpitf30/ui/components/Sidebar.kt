@@ -81,7 +81,11 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
         modifier
             .width(132.dp)
             .fillMaxHeight()
-            .background(Brush.horizontalGradient(listOf(Color(0xFF080B12), Color(0xFF0B0F18).copy(alpha = 0.7f))))
+            .then(
+                // Diurno: sin fondo propio, se ve el mismo fondo claro que el resto de la pantalla.
+                if (Cockpit.Light) Modifier
+                else Modifier.background(Brush.horizontalGradient(listOf(Color(0xFF080B12), Color(0xFF0B0F18).copy(alpha = 0.7f)))),
+            )
             // Desplazable: si la pantalla es más baja de lo previsto, nada queda fuera de alcance.
             .verticalScroll(rememberScrollState())
             .padding(vertical = 16.dp, horizontal = 10.dp),
@@ -99,7 +103,8 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
                     Modifier.fillMaxSize().drawWithContent {
                         drawContent()
                         // Velo más ligero que antes: los iconos se veían apagados con luz de día.
-                        glassOverlay(item.art.accent, shade = 0.35f)
+                        // En diurno sin velo oscuro: el rótulo va en negro sobre la placa clara.
+                        glassOverlay(item.art.accent, shade = if (Cockpit.Light) 0f else 0.35f)
                     },
                 ) {
                     SideArtwork(item.art, lit, Modifier.matchParentSize())
@@ -107,7 +112,8 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
                         item.label,
                         style = MaterialTheme.typography.labelLarge.copy(
                             fontSize = 15.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp,
-                            shadow = Shadow(Color.Black.copy(alpha = 0.9f), Offset(0f, 1f), 6f),
+                            shadow = if (Cockpit.Light) Shadow(Color.White, Offset(0f, 0f), 8f)
+                            else Shadow(Color.Black.copy(alpha = 0.9f), Offset(0f, 1f), 6f),
                         ),
                         color = Cockpit.Text,
                         maxLines = 1,
@@ -153,6 +159,7 @@ private fun SideArtwork(art: SideArt, lit: Boolean, modifier: Modifier = Modifie
                 }
             }
         }
+        if (Cockpit.Light) Canvas(Modifier.matchParentSize()) { lightLabelBand() }
     }
 }
 
@@ -162,6 +169,10 @@ private fun SideArtwork(art: SideArt, lit: Boolean, modifier: Modifier = Modifie
  */
 private fun DrawScope.backdrop(art: SideArt, dim: Float) {
     val w = size.width; val h = size.height
+    if (Cockpit.Light) {
+        lightBackdrop(art, dim)
+        return
+    }
     val top = if (com.cockpitf30.ui.theme.DriveModes.current == com.cockpitf30.ui.theme.DriveMode.NORMAL) Color(0xFF1A2A3E) else Cockpit.SteelBlueDark
     drawRect(Brush.verticalGradient(listOf(top, Color(0xFF0A111B), Color(0xFF07090E))))
     // Viso cobre abajo a la izquierda y azul acero arriba a la derecha.
@@ -194,6 +205,37 @@ private fun DrawScope.backdrop(art: SideArt, dim: Float) {
     )
 }
 
+
+/**
+ * Placa del tema diurno: aluminio claro (blanco a gris perla) con el mismo viso cobre/acero y
+ * halo del color de la función, muy suaves, y una franja clara abajo para el rótulo.
+ */
+private fun DrawScope.lightBackdrop(art: SideArt, dim: Float) {
+    val w = size.width; val h = size.height
+    drawRect(Brush.verticalGradient(listOf(Color.White, Color(0xFFE9EDF2), Color(0xFFDDE3EA))))
+    drawRect(
+        Brush.linearGradient(
+            0f to Cockpit.Copper.copy(alpha = 0.16f * dim), 0.45f to Color.Transparent,
+            0.6f to Color.Transparent, 1f to Cockpit.SteelBlue.copy(alpha = 0.16f * dim),
+            start = Offset(0f, h), end = Offset(w, 0f),
+        ),
+    )
+    val step = 2.dp.toPx()
+    var y = 0f; var i = 0
+    while (y < h) {
+        drawLine(Cockpit.Ink.copy(alpha = 0.012f + 0.012f * sin(i * 2.3f).let { it * it }), Offset(0f, y), Offset(w, y), 1f)
+        y += step; i++
+    }
+    drawCircle(
+        Brush.radialGradient(listOf(art.accent.copy(alpha = 0.22f * dim), Color.Transparent), Offset(w * 0.78f, h * 0.22f), w * 0.9f),
+        w * 0.9f, Offset(w * 0.78f, h * 0.22f),
+    )
+}
+
+/** Franja clara al pie de la placa diurna para que el rótulo negro se lea encima del dibujo. */
+private fun DrawScope.lightLabelBand() {
+    drawRect(Brush.verticalGradient(0.55f to Color.Transparent, 0.78f to Color.White.copy(alpha = 0.85f), 1f to Color.White.copy(alpha = 0.95f)))
+}
 
 /** Calles en perspectiva, una ruta luminosa y el pin de destino. */
 private fun DrawScope.navArt(accent: Color, dim: Float) {
@@ -230,8 +272,8 @@ private fun DrawScope.musicArt(accent: Color, second: Color, dim: Float) {
     val c = Offset(w * 0.86f, h * 0.36f)
     val r = h * 0.48f
     drawCircle(Brush.radialGradient(listOf(Color(0xFF1A1424), Color(0xFF07050B)), c, r), r, c, alpha = dim)
-    for (k in 1..7) drawCircle(Color.White.copy(alpha = 0.05f * dim), r * (0.35f + k * 0.09f), c, style = Stroke(1.dp.toPx()))
-    drawArc(Color.White.copy(alpha = 0.25f * dim), 200f, 50f, false, Offset(c.x - r * 0.85f, c.y - r * 0.85f), Size(r * 1.7f, r * 1.7f), style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
+    for (k in 1..7) drawCircle(Cockpit.Ink.copy(alpha = 0.05f * dim), r * (0.35f + k * 0.09f), c, style = Stroke(1.dp.toPx()))
+    drawArc(Cockpit.Ink.copy(alpha = 0.25f * dim), 200f, 50f, false, Offset(c.x - r * 0.85f, c.y - r * 0.85f), Size(r * 1.7f, r * 1.7f), style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
     drawCircle(Brush.linearGradient(listOf(Cockpit.CopperLight, second, Cockpit.CopperDark), Offset(c.x - r * 0.3f, c.y - r * 0.3f), Offset(c.x + r * 0.3f, c.y + r * 0.3f)), r * 0.3f, c, alpha = dim)
     drawCircle(Color(0xFF07050B), r * 0.05f, c)
     val n = 9
@@ -286,7 +328,7 @@ private fun DrawScope.settingsArt(accent: Color, dim: Float) {
     drawCircle(accent.copy(alpha = 0.8f * dim), ro * 0.38f, c, style = Stroke(2.dp.toPx()))
     listOf(0.30f to 0.62f, 0.48f to 0.35f, 0.66f to 0.78f).forEach { (fy, fx) ->
         val y = h * fy * 0.8f
-        drawLine(Color.White.copy(alpha = 0.18f * dim), Offset(w * 0.10f, y), Offset(w * 0.62f, y), 3.dp.toPx(), StrokeCap.Round)
+        drawLine(Cockpit.Ink.copy(alpha = 0.18f * dim), Offset(w * 0.10f, y), Offset(w * 0.62f, y), 3.dp.toPx(), StrokeCap.Round)
         drawLine(accent.copy(alpha = 0.85f * dim), Offset(w * 0.10f, y), Offset(w * (0.10f + 0.52f * fx), y), 3.dp.toPx(), StrokeCap.Round)
         drawCircle(Color.White.copy(alpha = dim), 4.5.dp.toPx(), Offset(w * (0.10f + 0.52f * fx), y))
     }
@@ -297,9 +339,9 @@ private fun DrawScope.perfArt(accent: Color, second: Color, dim: Float) {
     val w = size.width; val h = size.height
     val c = Offset(w * 0.70f, h * 0.36f)
     val r = h * 0.34f
-    for (k in 1..3) drawCircle(Color.White.copy(alpha = (0.10f + 0.05f * k) * dim), r * k / 3f, c, style = Stroke(1.dp.toPx()))
-    drawLine(Color.White.copy(alpha = 0.18f * dim), Offset(c.x - r, c.y), Offset(c.x + r, c.y), 1.dp.toPx())
-    drawLine(Color.White.copy(alpha = 0.18f * dim), Offset(c.x, c.y - r), Offset(c.x, c.y + r), 1.dp.toPx())
+    for (k in 1..3) drawCircle(Cockpit.Ink.copy(alpha = (0.10f + 0.05f * k) * dim), r * k / 3f, c, style = Stroke(1.dp.toPx()))
+    drawLine(Cockpit.Ink.copy(alpha = 0.18f * dim), Offset(c.x - r, c.y), Offset(c.x + r, c.y), 1.dp.toPx())
+    drawLine(Cockpit.Ink.copy(alpha = 0.18f * dim), Offset(c.x, c.y - r), Offset(c.x, c.y + r), 1.dp.toPx())
     val trail = Path().apply {
         moveTo(c.x, c.y)
         cubicTo(c.x + r * 0.1f, c.y - r * 0.4f, c.x + r * 0.5f, c.y - r * 0.5f, c.x + r * 0.62f, c.y - r * 0.18f)
@@ -312,6 +354,6 @@ private fun DrawScope.perfArt(accent: Color, second: Color, dim: Float) {
     // Arco de potencia abajo a la izquierda.
     val pc = Offset(w * 0.24f, h * 0.62f)
     val pr = h * 0.26f
-    drawArc(Color.White.copy(alpha = 0.15f * dim), 150f, 240f, false, Offset(pc.x - pr, pc.y - pr), Size(pr * 2, pr * 2), style = Stroke(4.dp.toPx(), cap = StrokeCap.Round))
+    drawArc(Cockpit.Ink.copy(alpha = 0.15f * dim), 150f, 240f, false, Offset(pc.x - pr, pc.y - pr), Size(pr * 2, pr * 2), style = Stroke(4.dp.toPx(), cap = StrokeCap.Round))
     drawArc(Brush.sweepGradient(listOf(second, accent, second), pc), 150f, 170f, false, Offset(pc.x - pr, pc.y - pr), Size(pr * 2, pr * 2), alpha = dim, style = Stroke(4.dp.toPx(), cap = StrokeCap.Round))
 }

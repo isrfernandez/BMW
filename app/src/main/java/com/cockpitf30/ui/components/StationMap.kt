@@ -66,13 +66,18 @@ fun DrawScope.drawStationMap(
 ) = clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) {
     val u = density
     val provider = MapTiles.provider.value
-    drawRect(MapBase, bounds.topLeft, bounds.size)
+    // Tema diurno: mapa claro (las etiquetas siguen en placas oscuras, que se leen bien encima).
+    val light = com.cockpitf30.ui.theme.Cockpit.Light
+    drawRect(if (light) MapBaseLight else MapBase, bounds.topLeft, bounds.size)
     val z = minOf(floor(zoom).toInt(), provider.maxZoom)
     val k = u * 2f.pow(zoom - z)
     val tile = TileMath.TILE * k
     val wx = TileMath.worldX(center.lon, z)
     val wy = TileMath.worldY(center.lat, z)
-    val tint = if (provider.dark) MapTint else MapTintInverted
+    val tint = when {
+        light -> if (provider.dark) MapLightFromDark else MapLightFromLight
+        else -> if (provider.dark) MapTint else MapTintInverted
+    }
     fun screen(p: GeoPoint) = Offset(
         bounds.center.x + ((TileMath.worldX(p.lon, z) - wx) * k).toFloat(),
         bounds.center.y + ((TileMath.worldY(p.lat, z) - wy) * k).toFloat(),
@@ -109,7 +114,7 @@ fun DrawScope.drawStationMap(
 
     // Viñeta hacia los bordes.
     drawRect(
-        Brush.radialGradient(0f to Color.Transparent, 0.6f to Color.Transparent, 1f to MapBase.copy(alpha = 0.8f), center = bounds.center, radius = bounds.width * 0.62f),
+        Brush.radialGradient(0f to Color.Transparent, 0.6f to Color.Transparent, 1f to (if (light) MapBaseLight else MapBase).copy(alpha = 0.8f), center = bounds.center, radius = bounds.width * 0.62f),
         bounds.topLeft, bounds.size,
     )
 
@@ -184,5 +189,5 @@ fun DrawScope.drawStationMap(
     }
 
     val att = tm.measure(provider.attribution, labelStyle)
-    drawText(att, Color.White.copy(alpha = 0.3f), Offset(bounds.right - att.size.width - 12 * u, bounds.bottom - att.size.height - 8 * u))
+    drawText(att, com.cockpitf30.ui.theme.Cockpit.Ink.copy(alpha = 0.45f), Offset(bounds.right - att.size.width - 12 * u, bounds.bottom - att.size.height - 8 * u))
 }

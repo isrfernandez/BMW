@@ -66,6 +66,11 @@ import com.cockpitf30.ui.theme.appliedDesignDensity
 @Composable
 fun DiagnosticsScreen() {
     val context = LocalContext.current
+    // Los registros de depuración solo se preparan mientras esta pantalla está abierta.
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        com.cockpitf30.system.DiagnosticsGate.enter()
+        onDispose { com.cockpitf30.system.DiagnosticsGate.leave() }
+    }
     val settings = remember { AppSettings(context) }
     val status by VehicleRepository.status.collectAsStateWithLifecycle()
     val raw by VehicleRepository.rawLog.collectAsStateWithLifecycle()
@@ -235,6 +240,14 @@ fun DiagnosticsScreen() {
                     DiagStat("Fuente", status.sourceName, if (status.connected) Cockpit.Ok else Cockpit.Alert)
                     DiagStat("Tramas", "${status.framesReceived}", Color(0xFF7FD3FF))
                     DiagStat("Bytes leídos", "${status.bytesReceived}", Color(0xFFFFB74D))
+                }
+            }
+            item {
+                DiagCard("Modo demo") {
+                    Info("Recorre sola toda la app: cada pantalla, los modos Sport, Night y diurno y las secciones de Ajustes, " +
+                        "con datos de demostración (unos ${com.cockpitf30.ui.components.DemoTour.steps.sumOf { it.seconds } / 60 + 1} minutos). " +
+                        "Abajo se ve qué es cada pantalla; «Detener» o atrás la para. Al acabar todo vuelve a como estaba.", Cockpit.TextDim)
+                    ChipRow(listOf("Empezar demo"), -1) { com.cockpitf30.ui.components.DemoTour.start(context) }
                 }
             }
             item {
@@ -418,6 +431,9 @@ fun DiagnosticsScreen() {
                     voice.lastText?.let { Mono("Último reconocido: «$it»") }
                     voice.heard?.let { Mono("Oído: «$it»") }
                     voice.reply?.let { Mono("Respuesta: $it") }
+                    assistant.lastFailure?.let { Info("Último fallo: $it", Cockpit.Alert) }
+                    assistant.lastCut?.let { Info("Último corte de voz: $it", Cockpit.TextDim) }
+                    assistant.lastSpeechEnd?.let { Info("Última frase dicha: $it", Cockpit.TextDim) }
                     Info("Reconocedor de Google: " + if (android.speech.SpeechRecognizer.isRecognitionAvailable(context)) "disponible" else "no disponible", Cockpit.TextDim)
                 }
             }
@@ -578,6 +594,11 @@ private fun canBoxSummary(values: Map<String, String>): String {
 
 private fun radioReport(values: Map<String, String>, changes: List<String>, canbus: List<String>, vehicle: com.cockpitf30.vehicle.VehicleState): String = buildString {
     appendLine()
+    appendLine("== Sintonizador FM")
+    com.cockpitf30.radio.FactoryTuner.lastProbe?.let { appendLine("Comprobación: ${it.reason}") }
+    com.cockpitf30.radio.Radio.fmTest.value?.takeIf { !it.running }?.lines?.forEach(::appendLine)
+        ?: run { appendLine("(sin «Prueba FM»; últimas órdenes:)"); com.cockpitf30.radio.FactoryTuner.trace.value.forEach(::appendLine) }
+    appendLine()
     appendLine("== Datos del coche (radio)")
     appendLine(vehicleSummary(vehicle))
     appendLine()
@@ -597,10 +618,10 @@ private fun radioReport(values: Map<String, String>, changes: List<String>, canb
     canbus.forEach(::appendLine)
 }
 
-private fun shareReport(context: android.content.Context, text: String) {
+internal fun shareReport(context: android.content.Context, text: String, subject: String = "Cockpit F30 diagnóstico") {
     val send = android.content.Intent(android.content.Intent.ACTION_SEND)
         .setType("text/plain")
-        .putExtra(android.content.Intent.EXTRA_SUBJECT, "Cockpit F30 diagnóstico")
+        .putExtra(android.content.Intent.EXTRA_SUBJECT, subject)
         // El texto va en el propio Intent: lo recortamos para no pasar del límite de Binder.
         .putExtra(android.content.Intent.EXTRA_TEXT, text.take(150_000))
     runCatching {
@@ -608,8 +629,8 @@ private fun shareReport(context: android.content.Context, text: String) {
     }.onFailure { android.widget.Toast.makeText(context, "No hay apps para compartir", android.widget.Toast.LENGTH_SHORT).show() }
 }
 
-private fun saveReport(context: android.content.Context, text: String) {
-    val name = "cockpit-diagnostico-${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))}.txt"
+internal fun saveReport(context: android.content.Context, text: String, prefix: String = "cockpit-diagnostico") {
+    val name = "$prefix-${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))}.txt"
     val where = runCatching {
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             val values = android.content.ContentValues().apply {

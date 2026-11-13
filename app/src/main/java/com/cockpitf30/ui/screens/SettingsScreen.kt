@@ -64,13 +64,15 @@ import com.cockpitf30.ui.components.glassPanel
 import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.ui.theme.DriveMode
 import com.cockpitf30.ui.theme.DriveModes
+import com.cockpitf30.ui.theme.DayTheme
+import com.cockpitf30.ui.theme.TextSize
 import com.cockpitf30.ui.theme.NightDetector
 import com.cockpitf30.ui.theme.numeric
 import com.cockpitf30.vehicle.trip.TripComputer
 
 /** Secciones de Ajustes, en el orden de la columna de la izquierda. */
 enum class SettingsSection(val title: String, val hint: String) {
-    DISPLAY("Pantalla e iluminación", "Modo, Night automático y luz ambiente"),
+    DISPLAY("Pantalla e iluminación", "Modo diurno, tamaño de letra, Night y luz ambiente"),
     ASSISTANT("Asistente de voz", "«Hola BMW», voz y personalidad"),
     DRIVING("Conducción", "Copiloto, briefing, resumen y cambio"),
     ALERTS("Avisos en ruta", "Radares, peligros, descanso y turismo"),
@@ -87,7 +89,10 @@ enum class SettingsSection(val title: String, val hint: String) {
 @Composable
 fun SettingsScreen(onOpen: (Screen) -> Unit = {}, initialSection: SettingsSection = SettingsSection.DISPLAY) {
     val context = LocalContext.current
-    var section by rememberSaveable { mutableStateOf(initialSection) }
+    var section by rememberSaveable { mutableStateOf(com.cockpitf30.ui.components.DemoTour.settingsSection ?: initialSection) }
+    // El modo demo pasa por todas las secciones.
+    val demoSection = com.cockpitf30.ui.components.DemoTour.settingsSection
+    androidx.compose.runtime.LaunchedEffect(demoSection) { demoSection?.let { section = it } }
     val first = remember { FocusRequester() }
     InitialFocus(first)
 
@@ -157,10 +162,22 @@ private fun DisplaySettings() {
             if (it > 0) DriveModes.setNightWithHeadlights(ctx, it == 2)
         }
     }
+    SettingGroup("Legibilidad") {
+        ChoiceRow(
+            "Modo diurno",
+            "Fondos claros y letra oscura para leer a pleno sol. Automático: de día sí, al oscurecer pasa a Night. También por voz («modo diurno»).",
+            DayTheme.entries.map { it.label }, DriveModes.dayTheme.ordinal,
+        ) { DriveModes.setDayTheme(ctx, DayTheme.entries[it]) }
+        ChoiceRow(
+            "Tamaño de letra",
+            "Agranda todos los textos de la app para leerlos conduciendo.",
+            TextSize.entries.map { it.label }, DriveModes.textSize.ordinal,
+        ) { DriveModes.setTextSize(ctx, TextSize.entries[it]) }
+    }
     SettingGroup("Iluminación") {
-        var glow by remember { mutableStateOf(settings.ambientLight) }
-        ToggleRow("Luz ambiente", "Halo de color en los bordes de la pantalla, como la luz ambiente del coche. Se aplica al volver a abrir la pantalla.", glow) {
-            glow = it; settings.ambientLight = it
+        val glow = com.cockpitf30.ui.components.AmbientLight.enabled(ctx)
+        ToggleRow("Luz ambiente", "Halo de color en los bordes de la pantalla, como la luz ambiente del coche.", glow) {
+            com.cockpitf30.ui.components.AmbientLight.set(ctx, it)
         }
     }
 }
@@ -184,6 +201,23 @@ private fun AssistantSettings() {
         var follow by remember { mutableStateOf(settings.assistantFollowUp) }
         ToggleRow("Sigue escuchando tras responder", "Puedes decir «otra», «¿y mañana?» o «repite» sin volver a decir «Hola BMW».", follow, enabled = on) {
             follow = it; settings.assistantFollowUp = it
+        }
+        if (follow) {
+            var secs by remember { mutableStateOf(settings.assistantFollowSeconds) }
+            val opts = listOf(3, 5, 8, 12)
+            ChoiceRow("Tiempo de escucha tras responder", "Lo que espera tu respuesta antes de volver a «Hola BMW». Si empiezas a hablar, espera a que acabes.", opts.map { "$it s" }, opts.indexOf(secs).let { if (it < 0) 1 else it }) {
+                secs = opts[it]; settings.assistantFollowSeconds = secs
+            }
+        }
+        var withGoogle by remember { mutableStateOf(settings.commandsWithGoogle) }
+        val hasGoogle = remember { assistant.googleAvailable() }
+        ChoiceRow(
+            "Entender las órdenes con",
+            if (hasGoogle) "Google entiende el habla normal mucho mejor (necesita conexión o el idioma descargado). «Hola BMW» lo sigue oyendo el reconocedor sin conexión."
+            else "Esta radio no tiene el reconocedor de Google: se usa el de sin conexión.",
+            listOf("Google", "Sin conexión"), if (withGoogle && hasGoogle) 0 else 1,
+        ) {
+            withGoogle = it == 0; settings.commandsWithGoogle = withGoogle
         }
         var sens by remember { mutableStateOf(settings.wakeSensitivity) }
         ChoiceRow("Sensibilidad al oír «Hola BMW»", "Alta lo oye mejor con ruido, pero salta más veces sin querer.", listOf("Baja", "Normal", "Alta"), 2 - sens) {

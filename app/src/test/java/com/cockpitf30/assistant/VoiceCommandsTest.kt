@@ -89,6 +89,9 @@ class VoiceCommandsTest {
     fun driveModes() {
         assertEquals(Command.Mode(com.cockpitf30.ui.theme.DriveMode.SPORT), VoiceCommands.parse("modo sport"))
         assertEquals(Command.Mode(com.cockpitf30.ui.theme.DriveMode.NIGHT), VoiceCommands.parse("pon el modo noche"))
+        assertEquals(Command.Daylight(com.cockpitf30.ui.theme.DayTheme.ON), VoiceCommands.parse("pon el modo diurno"))
+        assertEquals(Command.Daylight(com.cockpitf30.ui.theme.DayTheme.OFF), VoiceCommands.parse("quita el modo diurno"))
+        assertEquals(Command.Daylight(com.cockpitf30.ui.theme.DayTheme.OFF), VoiceCommands.parse("modo oscuro"))
         assertEquals(Command.Open(Screen.PERFORMANCE), VoiceCommands.parse("abre rendimiento"))
     }
 
@@ -102,13 +105,19 @@ class VoiceCommandsTest {
         assertEquals(VoiceCommands.Barge.STOP, VoiceCommands.bargeAction("cancela"))
         assertEquals(VoiceCommands.Barge.PAUSE, VoiceCommands.bargeAction("pausa"))
         assertEquals(VoiceCommands.Barge.HOLD, VoiceCommands.bargeAction("un momento"))
-        assertEquals(VoiceCommands.Barge.HOLD, VoiceCommands.bargeAction("a ver"))
+        // «a ver», «oye» y «perdona» salen en sus propias frases: ya no cortan.
+        assertNull(VoiceCommands.bargeAction("a ver"))
+        assertNull(VoiceCommands.bargeAction("oye"))
         assertEquals(VoiceCommands.Barge.RESUME, VoiceCommands.bargeAction("continúa"))
         assertEquals(Command.Resume, VoiceCommands.parse("sigue"))
         assertEquals("para", VoiceCommands.bargePhraseAtEnd("[unk] [unk] para"))
         assertEquals("un momento", VoiceCommands.bargePhraseAtEnd("[unk] un momento"))
         assertEquals("hola be eme uve doble", VoiceCommands.bargePhraseAtEnd("hola be eme uve doble"))
         assertNull(VoiceCommands.bargePhraseAtEnd("[unk] [unk]"))
+        // Las palabras de relleno absorben su propia voz y no son órdenes.
+        assertTrue(VoiceCommands.BARGE_GRAMMAR.contains("\"kilómetros\""))
+        assertNull(VoiceCommands.bargePhraseAtEnd("gira a la derecha"))
+        assertEquals("para", VoiceCommands.bargePhraseAtEnd("vale para"))
         assertEquals(Command.Pause, VoiceCommands.parse("pausa"))
         assertEquals(Command.Cancel, VoiceCommands.parse("para"))
         assertTrue(VoiceCommands.BARGE_GRAMMAR.contains("\"un momento\""))

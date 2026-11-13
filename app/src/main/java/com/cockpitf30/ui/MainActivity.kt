@@ -91,6 +91,7 @@ class MainActivity : ComponentActivity() {
         hideSystemBars()
         IDriveInput.learned = AppSettings(this).knobKeys
         com.cockpitf30.ui.theme.DriveModes.load(this)
+        com.cockpitf30.ui.components.DemoTour.recover(this)
         VehicleService.start(this)
         askBatteryExemptionOnce()
         // Lo pesado, en segundo plano y antes de que haga falta: imágenes grandes y lista de apps.
@@ -123,7 +124,7 @@ class MainActivity : ComponentActivity() {
 
     // Interceptamos aquí, antes que las vistas, para que la ruleta siempre mueva el foco.
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
-        VehicleRepository.logInput(IDriveInput.describe(event))
+        if (com.cockpitf30.system.DiagnosticsGate.active) VehicleRepository.logInput(IDriveInput.describe(event))
         val action = IDriveInput.fromMotion(event) ?: return super.dispatchGenericMotionEvent(event)
         navActions.tryEmit(action)
         return true
@@ -132,7 +133,7 @@ class MainActivity : ComponentActivity() {
     // Falso positivo de lint: sobrescribir dispatchKeyEvent es API pública de Activity.
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(raw: KeyEvent): Boolean {
-        VehicleRepository.logInput(IDriveInput.describe(raw))
+        if (com.cockpitf30.system.DiagnosticsGate.active) VehicleRepository.logInput(IDriveInput.describe(raw))
         // Modo aprender (Ajustes › Sistema): la tecla se asigna a la función elegida y no hace nada más.
         IDriveInput.learn(raw)?.let { map ->
             AppSettings(this).knobKeys = map
@@ -346,7 +347,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
             if (AppSettings(ctx).alertOn(com.cockpitf30.nav.AlertCategory.RADAR)) {
                 val limit = v.camera.maxspeed?.let { ", límite $it" } ?: ""
                 val what = if (v.camera.kind == "Tramo") "Tramo de radar" else "Radar"
-                VoiceAssistant.announce("$what a ${com.cockpitf30.ui.components.radarDistance(v.meters).replace(" m", " metros").replace(" km", " kilómetros")}$limit")
+                VoiceAssistant.announce(urgent = true, text = "$what a ${com.cockpitf30.ui.components.radarDistance(v.meters).replace(" m", " metros").replace(" km", " kilómetros")}$limit")
             }
         }
         onDispose { com.cockpitf30.nav.SpeedCameras.onAlert = null }
@@ -366,6 +367,8 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     }
     // Briefing al arrancar: saludo con tiempo, autonomía, radares y mantenimiento.
     LaunchedEffect(Unit) {
+        // Los avisos en ruta esperan al briefing (antes salía antes la información turística).
+        if (com.cockpitf30.assistant.StartupBriefing.due(ctx)) com.cockpitf30.nav.RouteAlerts.holdUntil = System.currentTimeMillis() + 45_000
         com.cockpitf30.ui.components.Startup.splashDone.first { it }
         com.cockpitf30.assistant.StartupBriefing.maybeRun(ctx)
     }
@@ -381,6 +384,13 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     // Vehículo abre el iDrive original del coche (la caja CAN no da puertas ni presiones):
     // allí está «Estado del vehículo» con las ruedas y su presión.
     val go: (Screen) -> Unit = { if (it == Screen.VEHICLE) openOriginalBmw(ctx) else screen = it }
+    // Modo demo: recorre las pantallas solo; atrás lo detiene.
+    DisposableEffect(Unit) {
+        val nav: (Screen) -> Unit = { screen = it }
+        com.cockpitf30.ui.components.DemoTour.navigator = nav
+        onDispose { if (com.cockpitf30.ui.components.DemoTour.navigator === nav) com.cockpitf30.ui.components.DemoTour.navigator = null }
+    }
+    BackHandler(enabled = com.cockpitf30.ui.components.DemoTour.running) { com.cockpitf30.ui.components.DemoTour.stop() }
     LaunchedEffect(Unit) { MainActivity.requestedScreen.collect { s -> if (s != null) { MainActivity.requestedScreen.value = null; go(s) } } }
     DisposableEffect(Unit) {
         val nav: (Screen) -> Unit = go
@@ -401,12 +411,15 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     )
 
     // Al cambiar de modo se rehace la interfaz entera con la paleta nueva.
-    androidx.compose.runtime.key(com.cockpitf30.ui.theme.DriveModes.current) {
+    androidx.compose.runtime.key(com.cockpitf30.ui.theme.DriveModes.palette, com.cockpitf30.ui.theme.DriveModes.textSize) {
     Row(
         Modifier
             .fillMaxSize()
             // El degradado ya termina en el color de fondo opaco: no hace falta pintar el fondo dos veces.
-            .background(Brush.radialGradient(listOf(Cockpit.Blue.copy(alpha = 0.10f), Cockpit.Background), radius = 1600f)),
+            .background(
+                if (Cockpit.Light) com.cockpitf30.ui.components.dayBackdrop()
+                else Brush.radialGradient(listOf(Cockpit.Blue.copy(alpha = 0.10f), Cockpit.Background), radius = 1600f),
+            ),
     ) {
         Sidebar(sideItems)
         Box(Modifier.weight(1f).fillMaxHeight()) {
@@ -449,6 +462,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
             com.cockpitf30.ui.components.AmbientGlow()
             TripSummaryOverlay()
             AssistantOverlay()
+            com.cockpitf30.ui.components.DemoTourBanner(Modifier.align(androidx.compose.ui.Alignment.BottomCenter).padding(bottom = 18.dp))
         }
     }
     }

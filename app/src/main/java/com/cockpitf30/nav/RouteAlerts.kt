@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -90,6 +91,12 @@ object RouteAlerts {
     private var pending: RouteAlert? = null
     private var prefetch: Job? = null
 
+    /**
+     * Hasta cuándo no se avisa de nada en ruta: al arrancar, el briefing va primero (antes salía la
+     * información turística y el briefing se quedaba sin decir).
+     */
+    @Volatile var holdUntil = 0L
+
     fun hide() { _current.value = null }
     fun show(a: RouteAlert) { _current.value = a }
     fun visible(a: RouteAlert?, now: Long) = a != null && now - a.at < VISIBLE_MS
@@ -100,6 +107,7 @@ object RouteAlerts {
         val on = AlertCategory.entries.filter { st.alertOn(it) && it != AlertCategory.RADAR }.toSet()
         val now = System.currentTimeMillis()
         if (on.isEmpty()) { pending = null; return }
+        if (now < holdUntil) return
         val demo = VehicleRepository.status.value.sourceName == "Demo"
         val near = RoutePois.state.value.near
 
@@ -338,6 +346,39 @@ object RouteAlerts {
             }
         }
         return nearbyText(near)
+    }
+
+    /**
+     * «Información turística»: el sitio de interés más cercano (de los descargados, 12 km) con su
+     * resumen de Wikipedia y la foto en la ventanita. Si el resumen aún no está, contesta que lo mira
+     * y lo dice con [later] en cuanto llega (sin cortar lo que se esté diciendo).
+     */
+    fun tourInfo(scope: CoroutineScope, later: (String) -> Unit): String {
+        val s = RoutePois.state.value
+        val pos = s.position
+        val bearing = RouteTracker.state.value.bearing
+        val near = if (pos == null) s.near else s.pois.map {
+            PoiView(it, RouteTracker.distance(pos, it.point), RoutePois.relative(RouteTracker.bearingBetween(pos, it.point), bearing))
+        }.sortedBy { it.meters }
+        val sights = near.filter { it.poi.category == AlertCategory.TOURISM && it.poi.kind != "place" }
+        val v = sights.firstOrNull() ?: return nearby(scope).let { if (s.pois.isEmpty()) it else "No veo sitios turísticos cerca. $it" }
+        val others = sights.drop(1).take(2).mapNotNull { it.poi.name }
+        val also = if (others.isEmpty()) "" else " Cerca también: ${join(others)}."
+        fun tell(w: WikiSummary?): String {
+            val a = build(v, null, w)
+            _current.value = a.copy(at = System.currentTimeMillis())
+            lastTourism = _current.value
+            val about = w?.extract?.let { Wiki.firstSentences(it, 420) }
+            val name = v.poi.name ?: v.poi.what
+            val where = "${side(v.relBearing).first.replaceFirstChar { it.uppercase() }}, a ${spokenDistance(v.meters)}: $name."
+            return where + (about?.let { " $it" } ?: " No tengo más información de este sitio.") + also
+        }
+        if (Wiki.isCached(v.poi)) return tell(Wiki.cached(v.poi))
+        scope.launch(Dispatchers.IO) {
+            val w = Wiki.load(v.poi)
+            withContext(Dispatchers.Main) { later(tell(w)) }
+        }
+        return "Miro qué hay de ${v.poi.name ?: v.poi.what.lowercase()}, un momento."
     }
 
     /** «Háblame de eso»: más texto del último sitio turístico. */

@@ -24,6 +24,8 @@ sealed interface Command {
     /** «Llama a Manuel»: [who] es lo dicho tras «llama a» (nombre o número). */
     data class Call(val who: String) : Command
     data class Mode(val mode: com.cockpitf30.ui.theme.DriveMode) : Command
+    /** Tema diurno (fondos claros): «modo diurno», «quita el modo diurno», «modo oscuro». */
+    data class Daylight(val theme: com.cockpitf30.ui.theme.DayTheme) : Command
     data class Unknown(val text: String) : Command
 
     // ---- conversación
@@ -66,6 +68,8 @@ sealed interface Command {
     data object Nearby : Command
     /** «Háblame de eso»: más del último sitio del que se avisó. */
     data object AboutThat : Command
+    /** «Información turística»: el sitio de interés más cercano, contado con su resumen de Wikipedia. */
+    data object TourInfo : Command
     /** Una de las gasolineras de las que se acaba de hablar (lo crea [Conversation]). */
     data class Station(val index: Int, val action: StationAction) : Command
 
@@ -90,6 +94,14 @@ enum class StationAction { DESCRIBE, PRICE, GO }
 object VoiceCommands {
 
     /** Minúsculas, sin tildes ni signos, palabras separadas por un espacio. */
+    /** ¿[heard] son, casi todas, palabras de lo que acaba de decir ([said])? Entonces es su propio eco. */
+    fun isEcho(heard: String, said: String): Boolean {
+        val h = normalize(heard).split(' ').filter { it.length > 1 }
+        if (h.size < 2) return false
+        val s = normalize(said).split(' ').toSet()
+        return h.count { it in s } >= h.size * 0.7
+    }
+
     fun normalize(text: String): String =
         Normalizer.normalize(text.lowercase(), Normalizer.Form.NFD)
             .replace(Regex("\\p{M}+"), "")
@@ -123,22 +135,41 @@ object VoiceCommands {
 
     /** Palabras para cortar al asistente mientras habla. */
     /** Cortar y callarse. */
-    private val STOP_WORDS = listOf("para", "para ya", "detente", "cancela", "silencio", "calla", "callate", "cállate", "basta", "vale ya", "stop")
+    private val STOP_WORDS = listOf("para", "para ya", "detente", "cancela", "cancelar", "cancélalo", "cancela ya", "silencio", "calla", "callate", "cállate", "basta", "vale ya", "stop")
     /** Pausar para luego seguir («continúa»). */
     private val PAUSE_WORDS = listOf("pausa", "haz una pausa")
     /** Retomar lo que estaba diciendo. */
     private val RESUME_WORDS = listOf("continua", "continúa", "sigue", "sigue hablando", "continua hablando", "continúa hablando", "sigue por favor")
     /** Cortar sin perder el hilo y escuchar lo que viene («espera, ¿y mañana?»). */
-    private val HOLD_WORDS = listOf("espera", "un momento", "a ver", "aclarame", "aclárame", "aclarame esto", "aclárame esto", "perdona", "oye")
+    // Sin «a ver», «oye» ni «perdona»: salen a menudo en sus propias respuestas y se cortaba sola.
+    private val HOLD_WORDS = listOf("espera", "un momento", "aclarame", "aclárame", "aclarame esto", "aclárame esto")
+
+    /**
+     * Palabras de relleno que se añaden a la gramática de interrupción. Con una gramática cerrada
+     * Vosk mete cualquier sonido en una de sus frases, así que su propia voz acababa «sonando» a
+     * «para» o «espera». Con estas, lo que dice la radio cae aquí y no corta nada.
+     */
+    private val BARGE_DECOYS = listOf(
+        "el", "la", "los", "las", "un", "una", "de", "del", "en", "con", "por", "que", "y", "o", "a", "al", "es", "son",
+        "hay", "está", "esta", "este", "eso", "esto", "muy", "más", "menos", "no", "sí", "si", "ya", "hoy", "mañana", "ahora", "luego",
+        "bien", "vale", "claro", "kilómetros", "metros", "minutos", "grados", "litros", "por ciento", "hora", "horas",
+        "derecha", "izquierda", "recto", "gasolinera", "radar", "tiempo", "lluvia", "sol", "calle", "carretera",
+        "coche", "motor", "velocidad", "llegada", "destino", "tienes", "quieres", "puedo", "te", "lo", "le", "me", "se",
+        "mi", "tu", "su", "cómo", "como", "cuando", "dónde", "todo", "nada", "algo", "siguiente", "cerca", "lejos", "uno", "dos",
+        "tres", "cuatro", "cinco", "diez", "cien", "mil",
+    )
 
     /** Gramática mientras habla la radio: «Hola BMW» o una palabra para cortarla. */
     val BARGE_GRAMMAR: String = (Regex("\"([^\"]+)\"").findAll(WAKE_GRAMMAR).map { it.groupValues[1] }.filter { it != "[unk]" }.toList() +
-        STOP_WORDS + PAUSE_WORDS + HOLD_WORDS + RESUME_WORDS + "[unk]").distinct().joinToString(",", "[", "]") { "\"$it\"" }
+        STOP_WORDS + PAUSE_WORDS + HOLD_WORDS + RESUME_WORDS + BARGE_DECOYS + "[unk]").distinct().joinToString(",", "[", "]") { "\"$it\"" }
 
     private val BARGE_PHRASES: List<String> by lazy {
-        Regex("\"([^\"]+)\"").findAll(BARGE_GRAMMAR).map { normalize(it.groupValues[1]) }.filter { it.isNotBlank() && it != "unk" }
+        Regex("\"([^\"]+)\"").findAll(BARGE_GRAMMAR).map { normalize(it.groupValues[1]) }
+            .filter { it.isNotBlank() && it != "unk" && it !in BARGE_DECOY_SET }
             .distinct().sortedByDescending { it.length }.toList()
     }
+
+    private val BARGE_DECOY_SET: Set<String> by lazy { BARGE_DECOYS.map { normalize(it) }.toSet() }
 
     /** La orden de interrupción con la que termina [text] (resultado de la gramática), o null. */
     fun bargePhraseAtEnd(text: String): String? {
@@ -226,6 +257,10 @@ object VoiceCommands {
         }
         radio(t, ::has)?.let { return it }
 
+        // «Información turística», «dame información turística», «guía turística»: que cuente el sitio
+        // más cercano. Con «activa / desactiva / avisos» sigue siendo encender o apagar los avisos.
+        if (has("informacion turistica", "info turistica", "guia turistica", "informacion de turismo", "cuentame algo de la zona", "cuentame algo de aqui", "que ver cerca") &&
+            !has("activa", "desactiva", "quita", "apaga", "enciende", "aviso", "avisos", "deja de", "para de", "no quiero", "sin ", "vuelve a")) return Command.TourInfo
         // Avisos en ruta: «desactiva los avisos», «quita los avisos turísticos», «activa avisos de radares».
         val alertWords = has("aviso", "avisos", "puntos de interes", "informacion turistica", "turistic", "turismo")
         val toggle = has("activa", "desactiva", "quita", "apaga", "enciende", "pon ", "quiero", "sin ", "no quiero", "deja de", "para de", "vuelve a")
@@ -311,6 +346,11 @@ object VoiceCommands {
         // Modos de conducción: «modo sport», «pon el modo noche», «modo normal».
         if (has("modo")) {
             when {
+                has("diurno", "de dia", "dia", "claro") && has("quita", "desactiva", "apaga", "sin") ->
+                    return Command.Daylight(com.cockpitf30.ui.theme.DayTheme.OFF)
+                has("diurno", "de dia", "claro") -> return Command.Daylight(com.cockpitf30.ui.theme.DayTheme.ON)
+                has("oscuro") -> return Command.Daylight(com.cockpitf30.ui.theme.DayTheme.OFF)
+                has("automatico") && has("diurno", "dia") -> return Command.Daylight(com.cockpitf30.ui.theme.DayTheme.AUTO)
                 has("sport", "deportivo", "sporty", "espor") -> return Command.Mode(com.cockpitf30.ui.theme.DriveMode.SPORT)
                 has("noche", "night", "nocturno", "naight") -> return Command.Mode(com.cockpitf30.ui.theme.DriveMode.NIGHT)
                 has("normal", "confort", "comfort") -> return Command.Mode(com.cockpitf30.ui.theme.DriveMode.NORMAL)

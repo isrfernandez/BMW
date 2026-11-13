@@ -113,6 +113,13 @@ object Reorder {
     var step: ((Int) -> Unit)? = null
 }
 
+/** Posición de la fila de tarjetas y última pulsada, entre visitas al Inicio (mientras viva la app). */
+private object CardRowMemory {
+    var index = 0
+    var offset = 0
+    var lastId: String? = null
+}
+
 private val CARD_WIDTH = 300.dp
 /** Alto del cuadro de instrumentos: 3/4 de los 720 dp de la pantalla. */
 private val CLUSTER_HEIGHT = 540.dp
@@ -155,7 +162,14 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
     var focusedId by remember { mutableStateOf<String?>(null) }
     var suppressClick by remember { mutableStateOf(false) }
     var dragX by remember { mutableFloatStateOf(0f) }
-    val listState = rememberLazyListState()
+    // La fila recuerda dónde estaba: al volver de una tarjeta no salta al principio.
+    val listState = rememberLazyListState(CardRowMemory.index, CardRowMemory.offset)
+    DisposableEffect(listState) {
+        onDispose {
+            CardRowMemory.index = listState.firstVisibleItemIndex
+            CardRowMemory.offset = listState.firstVisibleItemScrollOffset
+        }
+    }
     val scope = rememberCoroutineScope()
 
     fun startMove(id: String) {
@@ -243,13 +257,21 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                             onDragCancel = { dragX = 0f; finish() },
                         )
                     }
-                if (i == 0) mod = mod.focusRequester(firstCard)
+                // El foco inicial vuelve a la última tarjeta pulsada (pedir foco en la primera
+                // desplazaba la fila hasta el principio).
+                val focusId = CardRowMemory.lastId?.takeIf { it in order } ?: order.first()
+                if (id == focusId) mod = mod.focusRequester(firstCard)
                 FocusTile(
                     onClick = {
                         when {
                             suppressClick -> suppressClick = false
                             isMoving -> finish()
-                            moving == null -> card.action(context)
+                            moving == null -> {
+                                CardRowMemory.lastId = id
+                                CardRowMemory.index = listState.firstVisibleItemIndex
+                                CardRowMemory.offset = listState.firstVisibleItemScrollOffset
+                                card.action(context)
+                            }
                         }
                     },
                     selected = isMoving,
@@ -402,7 +424,12 @@ private fun MoveHint(modifier: Modifier = Modifier) {
 private fun FuelCardBody(view: FuelView) {
     val n = view.near.firstOrNull()
     Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
-        Text("GASOLINERA MÁS CERCANA", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
+        // Siempre en una línea: con letra muy grande se acorta para no comerse la distancia.
+        val big = com.cockpitf30.ui.theme.DriveModes.textSize == com.cockpitf30.ui.theme.TextSize.XLARGE
+        Text(
+            if (big) "GASOLINERA CERCANA" else "GASOLINERA MÁS CERCANA",
+            style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
+        )
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.BottomStart) {
             if (n != null) {
                 Text(FuelStations.formatDistance(n.meters), style = numeric(34, FontWeight.Medium), maxLines = 1)
@@ -444,8 +471,8 @@ private fun ServiceBody() {
     val st = remember { com.cockpitf30.vehicle.Maintenance.mostUrgent(com.cockpitf30.ui.screens.serviceStatuses(AppSettings(context))) }
     Column {
         Text(st?.item?.label ?: "Sin datos", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim, maxLines = 1)
-        Text(st?.text ?: "Pon los km", style = MaterialTheme.typography.titleLarge, maxLines = 1,
-            color = st?.let { com.cockpitf30.ui.screens.serviceColor(it.level) } ?: Cockpit.TextDim)
+        val c = st?.let { com.cockpitf30.ui.screens.serviceColor(it.level) }
+        Text(st?.text ?: "Pon los km", style = MaterialTheme.typography.titleLarge, maxLines = 1, color = c ?: Cockpit.TextDim)
     }
 }
 
@@ -462,7 +489,7 @@ internal const val GOOGLE_MAPS = "com.google.android.apps.maps"
 
 /**
  * Abre la app Google Maps instalada (no la web) centrada en la posición actual. Sin posición
- * conocida, la abre normal (Maps se centra solo en la ubicación). Si no está instalada,
+ * conocida, o si ya está navegando, la abre normal (Maps se centra solo en la ubicación). Si no está instalada,
  * cualquier app de mapas con un aviso.
  */
 internal fun openMaps(context: Context) {
@@ -474,7 +501,10 @@ internal fun openMaps(context: Context) {
         return
     }
     val here = WeatherRepository.lastKnownLocation(context)
-    val intent = if (here != null) {
+    // Con una ruta en marcha, abrir Maps con un «geo:» es pedirle otra cosa, y pregunta
+    // «¿Continuar con la navegación?». Se abre tal cual estaba, sin intent nuevo.
+    val navigating = com.cockpitf30.nav.MapsGuidanceState.current.value != null
+    val intent = if (here != null && !navigating) {
         Intent(Intent.ACTION_VIEW, Uri.parse("geo:%.6f,%.6f?z=16".format(Locale.US, here.latitude, here.longitude)))
             .setPackage(GOOGLE_MAPS)
     } else {

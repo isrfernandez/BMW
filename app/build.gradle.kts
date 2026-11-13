@@ -13,8 +13,8 @@ android {
         // Las unidades TopWay/ZQ suelen venir con Android 10–13.
         minSdk = 26
         targetSdk = 34
-        versionCode = 76
-        versionName = "0.9.66"
+        versionCode = 90
+        versionName = "0.9.80"
         // Vosk trae su librería nativa para cada arquitectura (~9 MB cada una): la radio es ARM y el
         // emulador del PC x86_64; la de x86 de 32 bits no hace falta.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
@@ -32,13 +32,15 @@ android {
     }
 
     buildTypes {
-        // Versión para la radio: no depurable, así Android la compila entera y Compose va bastante
-        // más fluido que en la de depuración. Va firmada con la misma clave compartida para que se
-        // instale encima de cualquier APK anterior. Sin R8 (minify) a propósito: la app usa mucha
-        // reflexión con las clases de la radio y Vosk/JNA, y no se puede probar aquí.
+        // Versión para la radio: no depurable, compilada entera y pasada por R8 (encoge y optimiza el
+        // código, quita recursos que no se usan). Lo que se usa por reflexión (clases de la radio,
+        // Vosk/JNA) está protegido en proguard-rules.pro. Va firmada con la misma clave compartida
+        // para que se instale encima de cualquier APK anterior.
         release {
             signingConfig = signingConfigs.getByName("debug")
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            isDebuggable = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }

@@ -38,11 +38,11 @@ class SerialSource(
                 onFrame = { frame ->
                     VehicleRepository.updateState { RaiseBmwDecoder.apply(frame, it) }
                     VehicleRepository.updateStatus { it.copy(framesReceived = it.framesReceived + 1) }
-                    VehicleRepository.logRaw(frame.toHex())
+                    if (com.cockpitf30.system.DiagnosticsGate.active) VehicleRepository.logRaw(frame.toHex())
                 },
                 onBadChecksum = { bytes ->
                     VehicleRepository.updateStatus { it.copy(badChecksums = it.badChecksums + 1) }
-                    VehicleRepository.logRaw("✗ " + bytes.joinToString(" ") { "%02X".format(it.toInt() and 0xFF) })
+                    if (com.cockpitf30.system.DiagnosticsGate.active) VehicleRepository.logRaw("✗ " + bytes.joinToString(" ") { "%02X".format(it.toInt() and 0xFF) })
                 },
             )
             val buffer = ByteArray(256)
@@ -58,7 +58,7 @@ class SerialSource(
                             if (n > 0) {
                                 VehicleRepository.updateStatus { it.copy(bytesReceived = it.bytesReceived + n) }
                                 // Todo lo que llega, por si el formato no es el Raise que suponemos.
-                                VehicleRepository.logBytes(PortProbe.hex(buffer, minOf(n, 64)) + if (n > 64) " …(+${n - 64})" else "")
+                                if (com.cockpitf30.system.DiagnosticsGate.active) VehicleRepository.logBytes(PortProbe.hex(buffer, minOf(n, 64)) + if (n > 64) " …(+${n - 64})" else "")
                                 framer.feed(buffer, n)
                             }
                         }

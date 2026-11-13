@@ -1,5 +1,7 @@
 package com.cockpitf30.overlay
 
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
@@ -79,6 +81,7 @@ import com.cockpitf30.nav.SpeedCameras
 import com.cockpitf30.system.AppSettings
 import com.cockpitf30.ui.MainActivity
 import com.cockpitf30.ui.components.glassPanel
+import com.cockpitf30.ui.components.lingeringReply
 import com.cockpitf30.ui.components.radarDistance
 import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.ui.theme.CockpitOverlayTheme
@@ -282,13 +285,28 @@ internal fun MiniCockpitBar(
                 Text("km/h", style = numeric(16, FontWeight.Medium), color = Cockpit.TextDim, modifier = Modifier.padding(top = 14.dp))
             }
             if (!compact) {
-                GearBox(gear, shift)
-                RpmBar(car.rpm)
+                // Sin marcha ni rpm: autonomía, radar y gasolinera más cercana.
                 car.rangeKm?.let { Stat(it.toString(), "km", "AUTONOMÍA") }
-                cams.ahead?.let { a -> RadarChip(radarDistance(a.meters), a.camera.maxspeed) }
+                val ahead = cams.ahead
+                if (ahead != null) RadarChip(radarDistance(ahead.meters), ahead.camera.maxspeed)
+                else Stat("--", "", "SIN RADARES")
+                NearestFuel()
             }
             MicOrb(voice) { VoiceAssistant.tap(ctx) }
             if (!compact) AppButton { MainActivity.show(ctx) }
+        }
+        // Aviso turístico: la barra se despliega con la foto y el resumen del sitio.
+        val alert by com.cockpitf30.nav.RouteAlerts.current.collectAsState()
+        val tourism = alert?.takeIf { it.category == com.cockpitf30.nav.AlertCategory.TOURISM }
+        LaunchedEffect(tourism) {
+            val a = tourism ?: return@LaunchedEffect
+            delay((a.at + 20_000L - System.currentTimeMillis()).coerceAtLeast(0))
+            if (com.cockpitf30.nav.RouteAlerts.current.value === a) com.cockpitf30.nav.RouteAlerts.hide()
+        }
+        AnimatedVisibility(tourism != null, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+            val last = remember { arrayOfNulls<com.cockpitf30.nav.RouteAlert>(1) }
+            tourism?.let { last[0] = it }
+            last[0]?.let { TourismCard(it) { com.cockpitf30.nav.RouteAlerts.hide() } }
         }
         AnimatedVisibility(bubble != null, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
             Text(
@@ -306,9 +324,9 @@ internal fun MiniCockpitBar(
 
 /** Lo que se enseña bajo la barra: lo que oye mientras escucha y la respuesta unos segundos. */
 private fun bubbleText(s: AssistantState, now: Long): String? = when (s.phase) {
-    AssistantPhase.LISTENING -> s.heard?.takeIf { it.isNotBlank() }?.let { "«$it»" } ?: if (s.paused) "En pausa · di «sigue»" else "Te escucho…"
+    AssistantPhase.LISTENING -> s.heard?.takeIf { it.isNotBlank() }?.let { "«$it»" } ?: s.lingeringReply(now) ?: if (s.paused) "En pausa · di «sigue»" else "Te escucho…"
     AssistantPhase.ANSWERING -> s.reply
-    else -> s.reply?.takeIf { now - s.replyAt < REPLY_MS }
+    else -> s.reply?.takeIf { now - s.replyAt < REPLY_MS || now < s.replyUntil }
 }
 
 @Composable
@@ -370,6 +388,56 @@ private fun Stat(value: String, unit: String, caption: String) {
             Text(unit, style = numeric(14, FontWeight.Medium), color = Cockpit.TextDim)
         }
         Text(caption, style = MaterialTheme.typography.labelSmall, color = Cockpit.TextDim)
+    }
+}
+
+/** Sitio turístico en ruta: foto a la izquierda, nombre y resumen de Wikipedia a la derecha. Tocar lo cierra. */
+@Composable
+private fun TourismCard(a: com.cockpitf30.nav.RouteAlert, onClose: () -> Unit) {
+    val accent = com.cockpitf30.ui.components.alertColor(a.category)
+    val image = remember(a.id, a.image) {
+        a.image?.let { b -> runCatching { android.graphics.BitmapFactory.decodeByteArray(b, 0, b.size)?.asImageBitmap() }.getOrNull() }
+    }
+    Row(
+        Modifier.padding(top = 8.dp).width(780.dp)
+            .glassPanel(22.dp, accent, smoke = 0.92f)
+            .clickable(remember { MutableInteractionSource() }, null, onClick = onClose)
+            .padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        if (image != null) {
+            androidx.compose.foundation.Image(
+                image, a.title, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.size(width = 240.dp, height = 170.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp)),
+            )
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(a.category.label.uppercase(), style = MaterialTheme.typography.labelMedium, color = if (Cockpit.Light) Cockpit.BlueLight else accent)
+            Text(a.title, style = MaterialTheme.typography.titleLarge, color = Cockpit.Text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(a.subtitle, style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            a.text?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Cockpit.Text, maxLines = if (image != null) 4 else 6, overflow = TextOverflow.Ellipsis) }
+        }
+    }
+}
+
+/** Gasolinera más cercana: distancia y marca (se recalcula cada ~50 m). */
+@Composable
+private fun NearestFuel() {
+    val route by com.cockpitf30.nav.RouteTracker.state.collectAsState()
+    val fuel by com.cockpitf30.fuel.FuelRepository.state.collectAsState()
+    val pos = route.position
+    val key = pos?.let { Math.round(it.lat * 2000) to Math.round(it.lon * 2000) }
+    val near = remember(key, fuel.stations) {
+        pos?.let { com.cockpitf30.fuel.FuelStations.nearest(fuel.stations, it).firstOrNull() }
+    }
+    Column {
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(near?.let { com.cockpitf30.fuel.FuelStations.formatDistance(it.meters) } ?: "--", style = numeric(26, FontWeight.SemiBold), color = Cockpit.Text, maxLines = 1)
+        }
+        Text(
+            near?.station?.brand?.uppercase()?.take(16) ?: "GASOLINERA",
+            style = MaterialTheme.typography.labelSmall, color = Cockpit.TextDim, maxLines = 1,
+        )
     }
 }
 

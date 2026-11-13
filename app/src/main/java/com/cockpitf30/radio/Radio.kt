@@ -188,19 +188,66 @@ object Radio {
             return
         }
         player?.let { it.stop(); it.clearMediaItems() }
-        requestFocus()
+        // La FM no pasa por Android: no pedimos foco. Si lo tuviéramos (AUDIOFOCUS_GAIN), el servicio
+        // del coche lo perdería y se pasaría a "ninguna fuente", cortando la radio (ver FactoryTuner).
+        abandonFocus()
+        focusWatchdog?.cancel()
         focusDucked = false
+        val wasFm = _state.value.source == RadioSource.FM && _state.value.playing
         _state.update { it.copy(source = RadioSource.FM, playing = true, fmFreq = freq, fmRds = null, error = null) }
         settings().radioFmFreq = freq
         settings().radioSource = RadioSource.FM.name
         scope.launch(Dispatchers.IO) {
-            val r = FactoryTuner.enter(app)
+            // Ya en FM solo cambia la frecuencia; si no, se entra antes en la fuente Radio.
+            val entered = (wasFm && FactoryTuner.currentSource(app) == FactoryTuner.APP_ID_RADIO) || FactoryTuner.enter(app)
             val ok = FactoryTuner.tune(app, freq)
-            Log.i(TAG, "FM ${RadioLogic.formatFm(freq)}: $r, tune=$ok")
-            if (!ok) _state.update { it.copy(error = "El sintonizador no aceptó la frecuencia") }
+            Log.i(TAG, "FM ${RadioLogic.formatFm(freq)}: fuente=$entered, tune=$ok")
+            if (!entered) {
+                val src = FactoryTuner.sourceName(FactoryTuner.currentSource(app))
+                _state.update { it.copy(error = "La radio no pasa a la fuente FM (sigue en $src). Haz «Prueba FM» y mándame el informe") }
+            } else if (!ok) _state.update { it.copy(error = "El sintonizador no aceptó la frecuencia") }
+            checkMcuAnswer()
         }
         startPolling()
     }
+
+    /** A los pocos segundos de poner la FM, ¿ha contestado la MCU con una frecuencia? */
+    private suspend fun checkMcuAnswer() {
+        delay(4000)
+        if (!(_state.value.playing && _state.value.source == RadioSource.FM)) return
+        val st = withContext(Dispatchers.IO) { runCatching { FactoryTuner.status(app) }.getOrNull() } ?: return
+        val info = if (st.mcuAnswered) "Sintonizador respondiendo · fuente ${FactoryTuner.sourceName(st.source)}"
+        else "La MCU no da frecuencia (fuente ${FactoryTuner.sourceName(st.source)}): puede que esta radio no tenga sintonizador. Haz «Prueba FM»"
+        _state.update { it.copy(tunerInfo = info, error = if (st.mcuAnswered) it.error else it.error ?: info) }
+    }
+
+    // ------------------------------------------------------------------ prueba técnica
+
+    private val _fmTest = MutableStateFlow<FmTest?>(null)
+    /** Última «Prueba FM» (para la pantalla de radio y el informe de Diagnóstico). */
+    val fmTest: StateFlow<FmTest?> = _fmTest.asStateFlow()
+
+    data class FmTest(val running: Boolean, val lines: List<String>)
+
+    /** Prueba paso a paso del sintonizador (unos 10 s) y deja el resultado en [fmTest]. */
+    fun runFmTest() {
+        if (_fmTest.value?.running == true) return
+        _fmTest.value = FmTest(true, listOf("Probando el sintonizador (unos 10 s)…"))
+        player?.let { it.stop(); it.clearMediaItems() }
+        abandonFocus()
+        focusDucked = false
+        _state.update { it.copy(source = RadioSource.FM, playing = true, error = null) }
+        scope.launch {
+            val freq = _state.value.fmFreq
+            val lines = withContext(Dispatchers.IO) {
+                runCatching { FactoryTuner.runTest(app, freq) }.getOrElse { listOf("Error en la prueba: $it") }
+            }
+            _fmTest.value = FmTest(false, listOf("Cockpit F30 · prueba FM · ${java.time.LocalDateTime.now()}") + lines)
+            startPolling()
+        }
+    }
+
+    fun closeFmTest() { if (_fmTest.value?.running != true) _fmTest.value = null }
 
     fun fmStep(dir: Int) {
         val f = RadioLogic.stepFm(_state.value.fmFreq, dir)
@@ -410,8 +457,9 @@ object Radio {
                     focusWatchdog?.cancel()
                     applyVolume()
                 }
-                // Otra app de música (Spotify…) se queda el audio: la radio se para.
-                AudioManager.AUDIOFOCUS_LOSS -> if (_state.value.playing) stop()
+                // Otra app de música (Spotify…) se queda el audio: la radio por Internet se para.
+                // (La FM no tiene foco: de eso se encarga el servicio del coche.)
+                AudioManager.AUDIOFOCUS_LOSS -> if (_state.value.playing && _state.value.source == RadioSource.INTERNET) stop()
             }
         }
     }
@@ -424,7 +472,7 @@ object Radio {
         focusWatchdog?.cancel()
         focusWatchdog = scope.launch {
             delay(20_000)
-            while (isActive && focusDucked && _state.value.playing) {
+            while (isActive && focusDucked && _state.value.playing && _state.value.source == RadioSource.INTERNET) {
                 if (requestFocus()) {
                     focusDucked = false
                     applyVolume()

@@ -22,11 +22,19 @@ object StartupBriefing {
     private const val ROUTE_CAMERA_KM = 0.4
     private const val NEAR_KM = 5.0
 
+    /** ¿Toca briefing al arrancar? (activado y no dicho hace poco) */
+    fun due(ctx: Context): Boolean {
+        val s = AppSettings(ctx)
+        return s.briefing && System.currentTimeMillis() - s.lastBriefingAt >= Briefing.GAP_MS
+    }
+
     /** Al arrancar: solo si está activado y no se dijo hace poco. */
     suspend fun maybeRun(ctx: Context) {
         val s = AppSettings(ctx)
         val now = System.currentTimeMillis()
         if (!s.briefing || now - s.lastBriefingAt < Briefing.GAP_MS) return
+        // Mientras se prepara, los avisos en ruta (turismo…) esperan: el briefing va primero.
+        com.cockpitf30.nav.RouteAlerts.holdUntil = now + WAIT_MS + 5_000
         withTimeoutOrNull(WAIT_MS) {
             WeatherRepository.state.first { it.forecast != null }
             SpeedCameras.state.first { it.cameras.isNotEmpty() }
@@ -40,6 +48,8 @@ object StartupBriefing {
         val text = Briefing.text(input(ctx))
         VoiceAssistant.announce(text)
         s.lastBriefingAt = System.currentTimeMillis()
+        // Y después, mientras lo dice (unos 75 ms por letra), tampoco.
+        com.cockpitf30.nav.RouteAlerts.holdUntil = System.currentTimeMillis() + 2_000 + text.length * 80L
     }
 
     fun input(ctx: Context): BriefingInput {

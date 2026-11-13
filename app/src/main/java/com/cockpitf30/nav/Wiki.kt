@@ -73,10 +73,16 @@ object Wiki {
         return Triple(o.optString("title"), extract, img)
     }
 
-    /** Las primeras frases de [text] sin pasar de [max] letras (para decirlo en voz alta). */
-    fun firstSentences(text: String, max: Int = 220): String {
+    /**
+     * Las primeras frases de [text] sin pasar de [max] letras (para decirlo en voz alta). Siempre
+     * acaba en un final de frase: si la primera ya es muy larga se corta en la última coma o punto y
+     * coma y se cierra con punto. Antes se cortaba en una palabra cualquiera con «…», y en voz alta
+     * sonaba a que el asistente se callaba a media explicación.
+     */
+    fun firstSentences(text: String, max: Int = 300): String {
         // Quita lo que va entre paréntesis (pronunciación, fechas…), que suena mal leído.
-        val clean = text.replace(Regex("\\s*\\([^)]*\\)"), "").replace(Regex("\\s+"), " ").trim()
+        val clean = text.replace(Regex("\\s*\\([^)]*\\)"), "").replace(Regex("\\s*\\[[^\\]]*\\]"), "")
+            .replace(Regex("\\s+"), " ").replace(" ,", ",").trim()
         val sentences = Regex("(?<=[.!?])\\s+(?=[A-ZÁÉÍÓÚÑ¿¡])").split(clean)
         val sb = StringBuilder()
         for (s in sentences) {
@@ -84,8 +90,15 @@ object Wiki {
             if (sb.isNotEmpty()) sb.append(' ')
             sb.append(s)
         }
-        return if (sb.length > max + 80) sb.take(max).toString().substringBeforeLast(' ') + "…" else sb.toString()
+        if (sb.length <= max + 60) return close(sb.toString())
+        // Una sola frase larguísima: hasta la última pausa natural antes del límite.
+        val head = sb.substring(0, max + 60)
+        val cut = maxOf(head.lastIndexOf(", "), head.lastIndexOf("; "), head.lastIndexOf(": "))
+        val part = if (cut >= max / 3) head.substring(0, cut) else head.substringBeforeLast(' ')
+        return close(part.trimEnd(',', ';', ':', ' ', '-', '—'))
     }
+
+    private fun close(s: String) = if (s.isEmpty() || s.last() in ".!?…") s else "$s."
 
     private fun get(url: String): String? {
         val c = URL(url).openConnection() as HttpURLConnection
