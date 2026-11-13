@@ -110,19 +110,20 @@ class VoiceCommandsTest {
         assertNull(VoiceCommands.bargeAction("oye"))
         assertEquals(VoiceCommands.Barge.RESUME, VoiceCommands.bargeAction("continúa"))
         assertEquals(Command.Resume, VoiceCommands.parse("sigue"))
-        assertEquals("para", VoiceCommands.bargePhraseAtEnd("[unk] [unk] para"))
-        assertEquals("un momento", VoiceCommands.bargePhraseAtEnd("[unk] un momento"))
+        // Mientras habla solo corta «Hola BMW»: las palabras sueltas ya no (las sacaba de su propia voz).
+        assertNull(VoiceCommands.bargePhraseAtEnd("[unk] [unk] para"))
+        assertNull(VoiceCommands.bargePhraseAtEnd("[unk] callate"))
+        assertTrue(!VoiceCommands.BARGE_GRAMMAR.contains("\"callate\""))
         assertEquals("hola be eme uve doble", VoiceCommands.bargePhraseAtEnd("hola be eme uve doble"))
         assertNull(VoiceCommands.bargePhraseAtEnd("[unk] [unk]"))
         // Las palabras de relleno absorben su propia voz y no son órdenes.
         assertTrue(VoiceCommands.BARGE_GRAMMAR.contains("\"kilómetros\""))
         assertNull(VoiceCommands.bargePhraseAtEnd("gira a la derecha"))
-        assertEquals("para", VoiceCommands.bargePhraseAtEnd("vale para"))
+        assertNull(VoiceCommands.bargePhraseAtEnd("vale para"))
         assertEquals(Command.Pause, VoiceCommands.parse("pausa"))
         assertEquals(Command.Cancel, VoiceCommands.parse("para"))
-        assertTrue(VoiceCommands.BARGE_GRAMMAR.contains("\"un momento\""))
         assertTrue(VoiceCommands.BARGE_GRAMMAR.contains("\"hola be eme uve doble\""))
-        assertTrue(VoiceCommands.BARGE_GRAMMAR.contains("\"basta\""))
+        assertTrue(!VoiceCommands.BARGE_GRAMMAR.contains("\"basta\""))
     }
 
     @Test

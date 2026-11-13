@@ -361,7 +361,7 @@ object VoiceAssistant {
         // texto libre, porque el modelo no conoce «BMW») y otro libre para la orden.
         val wakeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.WAKE_GRAMMAR).apply { setWords(true) }
         val cmdRec = Recognizer(m, RATE.toFloat())
-        // Mientras habla la radio solo se escucha «Hola BMW» o «basta», para poder interrumpirla
+        // Mientras habla la radio solo se escucha «Hola BMW», para poder interrumpirla
         // (con gramática cerrada: su propia voz no se confunde con eso).
         val bargeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.BARGE_GRAMMAR).apply { setWords(true) }
         var usingCmd = false
@@ -433,7 +433,7 @@ object VoiceAssistant {
                     // Por defecto solo «Hola BMW» la interrumpe: las palabras sueltas («para», «cállate»…)
                     // las sacaba Vosk de su propia voz y cortaba explicaciones y ofertas a medias.
                     val hit = VoiceCommands.bargePhraseAtEnd(raw)?.takeIf { !final || bargeConfident(json, it) }
-                        ?.takeIf { bargeWordsOn || VoiceCommands.afterWakeWord(it) != null }
+                        ?.takeIf { VoiceCommands.afterWakeWord(it) != null }
                     if (hit != bargeHit) { bargeHit = hit; bargeSince = now }
                     if (hit != null && (final || now - bargeSince >= BARGE_STABLE_MS)) {
                         bargeHit = null
@@ -1500,11 +1500,7 @@ object VoiceAssistant {
     /** Lo último que dijo (para no tomar su eco por una orden). */
     private var lastSaid = ""
 
-    /** Se lee de Ajustes al empezar cada frase (el bucle del micrófono lo mira 10 veces por segundo). */
-    @Volatile private var bargeWordsOn = false
-
     private fun say(text: String, listenAfter: Long = 0L) {
-        bargeWordsOn = settings().bargeWords
         noteCut("otra frase: «${text.take(40)}»")
         // Al hablar se acaba cualquier escucha. Antes, si la explicación llegaba durante la escucha
         // seguida (p. ej. «información turística» tras «un momento»), el reconocedor de Google seguía
