@@ -186,6 +186,7 @@ fun DiagnosticsScreen() {
                 val assistant = com.cockpitf30.assistant.VoiceAssistant
                 val voice by assistant.state.collectAsStateWithLifecycle()
                 val ttsStatus by assistant.ttsStatus.collectAsStateWithLifecycle()
+                val stateLog by assistant.stateLog.collectAsStateWithLifecycle()
                 DiagCard("Asistente de voz (técnico)") {
                     Info("Motor de voz: ${ttsStatus.text}" + (assistant.ttsEngine?.let { " · $it" } ?: "") + (assistant.ttsLastError?.let { " · $it" } ?: ""),
                         if (ttsStatus == com.cockpitf30.assistant.VoiceAssistant.TtsStatus.READY) Cockpit.TextDim else Cockpit.Alert)
@@ -197,9 +198,12 @@ fun DiagnosticsScreen() {
                     voice.reply?.let { Mono("Respuesta: $it") }
                     assistant.lastFailure?.let { Info("Último fallo: $it", Cockpit.Alert) }
                     assistant.lastCut?.let { Info("Último corte de voz: $it", Cockpit.TextDim) }
-                    assistant.lastBargeRejected?.let { Info("Orden descartada (eco): $it", Cockpit.TextDim) }
                     assistant.lastSpeechEnd?.let { Info("Última frase dicha: $it", Cockpit.TextDim) }
                     Info("Reconocedor de Google: " + if (android.speech.SpeechRecognizer.isRecognitionAvailable(context)) "disponible" else "no disponible", Cockpit.TextDim)
+                    if (stateLog.isNotEmpty()) {
+                        Info("Registro (lo más nuevo arriba):", Cockpit.TextDim)
+                        stateLog.take(15).forEach { Mono(it) }
+                    }
                 }
             }
             item {
