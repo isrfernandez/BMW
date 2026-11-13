@@ -84,6 +84,14 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean("assistant_follow_up", true)
         set(value) = prefs.edit().putBoolean("assistant_follow_up", value).apply()
 
+    /**
+     * Interrumpir mientras habla con palabras sueltas («para», «cállate», «pausa»…). Apagado: solo con
+     * «Hola BMW» o tocando el asistente (el micrófono oye su propia voz y la cortaba).
+     */
+    var bargeWords: Boolean
+        get() = prefs.getBoolean("barge_words", false)
+        set(value) = prefs.edit().putBoolean("barge_words", value).apply()
+
     /** Las órdenes (lo que va tras «Hola BMW») con el reconocedor de Google, si la radio lo tiene. */
     var commandsWithGoogle: Boolean
         get() = prefs.getBoolean("commands_with_google", true)

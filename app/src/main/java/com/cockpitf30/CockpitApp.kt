@@ -14,6 +14,7 @@ class CockpitApp : Application() {
         com.cockpitf30.nav.MapTiles.init(this)
         com.cockpitf30.radio.Radio.init(this)
         com.cockpitf30.radio.AssistantDuck.start(this)
+        com.cockpitf30.assistant.VoiceButton.register(this)
     }
 
     companion object {

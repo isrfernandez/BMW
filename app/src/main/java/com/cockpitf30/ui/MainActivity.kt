@@ -140,6 +140,8 @@ class MainActivity : ComponentActivity() {
             swallowKey = raw.keyCode
             return true
         }
+        // Botón de voz del volante (si llega como tecla): como decir «Hola BMW».
+        if (com.cockpitf30.assistant.VoiceButton.onKey(this, raw)) return true
         if (swallowKey == raw.keyCode) {
             if (raw.action == KeyEvent.ACTION_UP) swallowKey = null
             return true
