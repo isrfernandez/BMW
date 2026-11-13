@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -29,15 +31,27 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
+        // Clave propia para las APK que se instalan en la radio y la tablet (desde la 0.9.84). Con la
+        // de depuración de Android («CN=Android Debug») Play Protect bloqueaba la instalación.
+        // No va en Git (la clave privada no debe publicarse): se copia a mano en keystore/ en el PC y
+        // en la nube. Si no está, la release se firma con la de depuración, como antes.
+        val releaseProps = rootProject.file("keystore/release.properties")
+        if (releaseProps.exists()) create("cockpit") {
+            val props = Properties().apply { releaseProps.inputStream().use { load(it) } }
+            storeFile = rootProject.file("keystore/release.keystore")
+            storePassword = props.getProperty("storePassword")
+            keyAlias = props.getProperty("keyAlias")
+            keyPassword = props.getProperty("keyPassword")
+        }
     }
 
     buildTypes {
         // Versión para la radio: no depurable, compilada entera y pasada por R8 (encoge y optimiza el
         // código, quita recursos que no se usan). Lo que se usa por reflexión (clases de la radio,
-        // Vosk/JNA) está protegido en proguard-rules.pro. Va firmada con la misma clave compartida
-        // para que se instale encima de cualquier APK anterior.
+        // Vosk/JNA) está protegido en proguard-rules.pro. Va firmada con la clave propia del repo
+        // (keystore/release.keystore): la misma en el PC y en la nube.
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("cockpit") ?: signingConfigs.getByName("debug")
             isMinifyEnabled = true
             isShrinkResources = true
             isDebuggable = false

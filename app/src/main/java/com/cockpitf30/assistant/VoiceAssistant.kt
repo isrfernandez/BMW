@@ -50,6 +50,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
@@ -322,15 +324,19 @@ object VoiceAssistant {
                     } catch (e: MicLost) {
                         failures++
                         Log.w(TAG, "Micrófono perdido (${e.message}); se reabre ($failures)")
+                        logState("micrófono: ${e.message}, se reabre ($failures)")
                         _state.update { it.copy(error = "Micrófono reabierto $failures ${if (failures == 1) "vez" else "veces"}: ${e.message}") }
-                        if (failures > 20) throw e
-                        delay(500L * failures.coerceAtMost(6))
+                        if (failures > 40) throw e
+                        delay(if (failures <= 3) 300L else 500L * failures.coerceAtMost(6))
                     }
                 }
             } catch (e: Throwable) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.w(TAG, "Vosk", e)
-                _state.update { it.copy(phase = AssistantPhase.NO_MODEL, error = "Micrófono o modelo: ${e.message ?: e.javaClass.simpleName}", level = 0f) }
+                logState("Vosk parado: ${e.message ?: e.javaClass.simpleName}")
+                // Si está hablando, no se le quita la palabra: solo se apunta el fallo.
+                _state.update { if (it.phase == AssistantPhase.ANSWERING) it.copy(error = "Micrófono o modelo: ${e.message ?: e.javaClass.simpleName}")
+                    else it.copy(phase = AssistantPhase.NO_MODEL, error = "Micrófono o modelo: ${e.message ?: e.javaClass.simpleName}", level = 0f) }
             }
         }
     }
@@ -350,7 +356,7 @@ object VoiceAssistant {
             .takeIf { it.state == AudioRecord.STATE_INITIALIZED }
         // VOICE_RECOGNITION quita el control automático de ganancia; si la radio no lo tiene, el micro normal.
         val audio = open(MediaRecorder.AudioSource.VOICE_RECOGNITION) ?: open(MediaRecorder.AudioSource.MIC)
-            ?: error("no se puede abrir el micrófono")
+            ?: throw MicLost("no se puede abrir el micrófono")
         // Cancelador de eco del sistema, si lo hay: resta la voz del asistente para oír al conductor encima.
         val echo = runCatching {
             if (android.media.audiofx.AcousticEchoCanceler.isAvailable())
@@ -361,11 +367,14 @@ object VoiceAssistant {
         // texto libre, porque el modelo no conoce «BMW») y otro libre para la orden.
         val wakeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.WAKE_GRAMMAR).apply { setWords(true) }
         val cmdRec = Recognizer(m, RATE.toFloat())
-        // Mientras habla la radio solo se escucha «Hola BMW» o «basta», para poder interrumpirla
+        // Mientras habla la radio solo se escucha «Hola BMW», para poder interrumpirla
         // (con gramática cerrada: su propia voz no se confunde con eso).
-        val bargeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.BARGE_GRAMMAR).apply { setWords(true) }
+        val bargeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.WAKE_GRAMMAR).apply { setWords(true) }
+        val freeRec = Recognizer(m, RATE.toFloat())
         var usingCmd = false
         var bargeHit: String? = null
+        /** Niveles del micrófono de los últimos segundos hablando (para separar tu voz de su eco). */
+        val echoLevels = ArrayList<Float>()
         var bargeSince = 0L
         // Lo dicho hasta ahora en la orden: Vosk corta en cada pausa corta, y se espera a que el
         // conductor termine de verdad (END_SILENCE_MS sin hablar) antes de entenderla.
@@ -374,7 +383,9 @@ object VoiceAssistant {
         var speaking = false
         try {
             audio.startRecording()
-            if (audio.recordingState != AudioRecord.RECORDSTATE_RECORDING) error("el micrófono está ocupado")
+            // Justo después de usar el reconocedor de Google el micrófono puede seguir ocupado unos
+            // instantes: antes esto paraba Vosk para siempre (no se podía cortar ni seguir hablando).
+            if (audio.recordingState != AudioRecord.RECORDSTATE_RECORDING) throw MicLost("el micrófono está ocupado")
             withContext(Dispatchers.Main) { if (_state.value.phase == AssistantPhase.LOADING) set(AssistantPhase.WAITING) }
             val buf = ShortArray(RATE / 10) // 100 ms
             var lastPartial = ""
@@ -411,7 +422,7 @@ object VoiceAssistant {
                     if (kotlin.math.abs(lvl - shown) >= 0.04f || (lvl == 0f && shown != 0f)) _state.update { it.copy(level = lvl) }
                 }
                 if (resetRecognizer) {
-                    resetRecognizer = false; wakeRec.reset(); cmdRec.reset(); bargeRec.reset(); lastPartial = ""
+                    resetRecognizer = false; wakeRec.reset(); cmdRec.reset(); bargeRec.reset(); freeRec.reset(); lastPartial = ""
                     utterance.clear(); speaking = false
                 }
                 // Por si no llega el aviso de fin de la voz: nunca más de 30 s sordo.
@@ -419,28 +430,34 @@ object VoiceAssistant {
                 if (muted) { if (mutedSince == 0L) mutedSince = now else if (now - mutedSince > 30_000 && (now - mutedSince > 180_000 || !stillTalking())) { muted = false; resetRecognizer = true } }
                 else mutedSince = 0L
                 if (muted) {
-                    // Hablando: solo se atiende a la interrupción, y solo con frases completas (los
-                    // resultados parciales de la gramática se confundían con su propia voz y cortaban).
-                    if (mutedSince != 0L && now - mutedSince < BARGE_GRACE_MS) { bargeRec.reset(); continue }
-                    // Con la voz sonando casi nunca hay silencio, así que Vosk no cierra la frase: se mira
-                    // también el parcial, pero solo si termina en una orden de interrupción y se mantiene
-                    // BARGE_STABLE_MS (un parcial suelto de su propia voz no basta).
-                    val final = bargeRec.acceptWaveForm(buf, n)
-                    val json = JSONObject(if (final) bargeRec.result else bargeRec.partialResult)
-                    val raw = if (final) json.optString("text") else json.optString("partial")
-                    // Frase completa: solo vale si Vosk está seguro de las palabras de la orden (su
-                    // propia voz da confianzas bajas). Parcial: tiene que mantenerse más tiempo.
-                    // Por defecto solo «Hola BMW» la interrumpe: las palabras sueltas («para», «cállate»…)
-                    // las sacaba Vosk de su propia voz y cortaba explicaciones y ofertas a medias.
-                    val hit = VoiceCommands.bargePhraseAtEnd(raw)?.takeIf { !final || bargeConfident(json, it) }
-                        ?.takeIf { bargeWordsOn || VoiceCommands.afterWakeWord(it) != null }
+                    if (mutedSince != 0L && now - mutedSince < BARGE_GRACE_MS) { bargeRec.reset(); freeRec.reset(); echoLevels.clear(); continue }
+                    echoLevels.add(rms(buf, n)); if (echoLevels.size > ECHO_WINDOW) echoLevels.removeAt(0)
+                    // Dos oídos mientras habla:
+                    // - «Hola BMW» con la gramática cerrada (el modelo no conoce «BMW»);
+                    // - las palabras de corte («para», «cancela», «pausa»…) con el reconocedor LIBRE. Antes iban
+                    //   en la gramática cerrada, que mete cualquier sonido en una de sus palabras: de su propia
+                    //   voz («Castillo de Alcalá») sacaba «cállate». El libre transcribe su eco como lo que es,
+                    //   y si aun así sale una palabra de corte que ella misma acaba de decir, se ignora.
+                    val gFinal = bargeRec.acceptWaveForm(buf, n)
+                    val gJson = JSONObject(if (gFinal) bargeRec.result else bargeRec.partialResult)
+                    val gRaw = if (gFinal) gJson.optString("text") else gJson.optString("partial")
+                    val wakeHit = VoiceCommands.bargePhraseAtEnd(gRaw)?.takeIf { VoiceCommands.afterWakeWord(it) != null && (!gFinal || bargeConfident(gJson, it)) }
+                    val fFinal = freeRec.acceptWaveForm(buf, n)
+                    val fRaw = JSONObject(if (fFinal) freeRec.result else freeRec.partialResult).optString(if (fFinal) "text" else "partial")
+                    val tail = fRaw.trim().split(' ').filter { it.isNotBlank() }.takeLast(3).joinToString(" ")
+                    val wordHit = VoiceCommands.bargePhraseAtEnd(tail)?.takeIf { VoiceCommands.afterWakeWord(it) == null }
+                    // El parcial libre crece sin parar mientras suena la voz: se reinicia de vez en cuando.
+                    if (fRaw.length > 120) freeRec.reset()
+                    if (gFinal && wakeHit == null) bargeRec.reset()
+                    val hit = wakeHit ?: wordHit
                     if (hit != bargeHit) { bargeHit = hit; bargeSince = now }
-                    if (hit != null && (final || now - bargeSince >= BARGE_STABLE_MS)) {
+                    if (hit != null && (gFinal && wakeHit != null || fFinal && wordHit != null || now - bargeSince >= BARGE_STABLE_MS)) {
                         bargeHit = null
-                        bargeRec.reset()
+                        bargeRec.reset(); freeRec.reset()
+                        val ratio = voiceOverEcho(echoLevels).second
                         _state.update { it.copy(lastText = "(hablando) $hit") }
-                        withContext(Dispatchers.Main) { safely("interrupción") { onBargeIn(hit) } }
-                    } else if (final) bargeHit = null
+                        withContext(Dispatchers.Main) { safely("interrupción") { logState("oído mientras habla: «$hit» (micro ${"%.1f".format(ratio)}× su eco; libre: «${fRaw.takeLast(40)}»)"); onBargeIn(hit) } }
+                    }
                     continue
                 }
                 val wantCmd = _state.value.phase == AssistantPhase.LISTENING
@@ -501,6 +518,7 @@ object VoiceAssistant {
             wakeRec.close()
             cmdRec.close()
             bargeRec.close()
+            freeRec.close()
         }
     }
 
@@ -554,6 +572,10 @@ object VoiceAssistant {
     }
 
     private suspend fun coroutineScopeActive() = kotlin.coroutines.coroutineContext.isActive
+
+    private const val ECHO_WINDOW = EchoGate.WINDOW
+    private fun voiceOverEcho(levels: List<Float>) = EchoGate.voiceOverEcho(levels)
+
 
     private fun rms(buf: ShortArray, n: Int): Float {
         var sum = 0.0
@@ -685,7 +707,26 @@ object VoiceAssistant {
     /** Vuelve a abrir el micrófono de Vosk sin tocar la fase (puede estar respondiendo). */
     private fun backToVosk() {
         if (!resumed || audioJob?.isActive == true || !VoiceModel.isReady(app) || !settings().assistantEnabled) return
+        logState("vuelve Vosk")
         startAudio(quiet = true)
+    }
+
+    /** Registro de lo que hace el asistente (Diagnóstico): fase, motor y micrófono, con hora. */
+    private val _stateLog = MutableStateFlow<List<String>>(emptyList())
+    val stateLog: StateFlow<List<String>> = _stateLog.asStateFlow()
+
+    private fun logState(what: String) {
+        val line = java.text.SimpleDateFormat("HH:mm:ss.S", java.util.Locale.getDefault()).format(java.util.Date()) + " · " + what
+        _stateLog.update { (listOf(line) + it).take(25) }
+    }
+
+    init {
+        // Cada cambio de fase queda apuntado, con el motor y si Vosk tiene el micrófono.
+        scope.launch {
+            _state.map { Triple(it.phase, it.engine, it.followUp) }.distinctUntilChanged().collect { (p, e, f) ->
+                logState("$p" + (e?.let { " · $it" } ?: "") + (if (f) " · seguida" else "") + if (audioJob?.isActive == true) " · micro Vosk" else " · sin micro Vosk")
+            }
+        }
     }
 
     private fun startGoogle(followUp: Boolean, timeoutMs: Long) {
@@ -1500,11 +1541,7 @@ object VoiceAssistant {
     /** Lo último que dijo (para no tomar su eco por una orden). */
     private var lastSaid = ""
 
-    /** Se lee de Ajustes al empezar cada frase (el bucle del micrófono lo mira 10 veces por segundo). */
-    @Volatile private var bargeWordsOn = false
-
     private fun say(text: String, listenAfter: Long = 0L) {
-        bargeWordsOn = settings().bargeWords
         noteCut("otra frase: «${text.take(40)}»")
         // Al hablar se acaba cualquier escucha. Antes, si la explicación llegaba durante la escucha
         // seguida (p. ej. «información turística» tras «un momento»), el reconocedor de Google seguía
@@ -1708,7 +1745,7 @@ object VoiceAssistant {
         val action = if (wake) null else VoiceCommands.bargeAction(text)
         if (!wake && (action == null || action == VoiceCommands.Barge.RESUME)) return
         // Si esa palabra la está diciendo ella misma ahora («para llegar…»), es su eco: no se corta.
-        if (!wake && saysItNow(text)) return
+        if (!wake && saysItNow(text)) { logState("«$text» ignorado: lo está diciendo ella"); return }
         Log.i(TAG, "Interrumpida ($action): «$text»")
         noteCut("me has interrumpido: oí «$text»")
         // «Hola BMW» = orden nueva: lo pendiente se descarta. «Para», «espera»…: se hace ya.
@@ -1741,6 +1778,8 @@ object VoiceAssistant {
     private fun followMs() = settings().assistantFollowSeconds * 1_000L
 
     private fun listenFollowUp(ms: Long, paused: Boolean) {
+        logState("escucha ${ms / 1000} s" + if (paused) " (en pausa, «sigue»)" else "")
+        if (audioJob?.isActive != true) backToVosk()
         followUp = true
         listenUntil = System.currentTimeMillis() + ms
         _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, engine = "Vosk", followUp = true, paused = paused, level = 0f) }
