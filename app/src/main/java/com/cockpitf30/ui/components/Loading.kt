@@ -140,7 +140,7 @@ fun StartupSplash(maxMs: Long = 12_000) {
         gone = 1
     }
     // Proporción real del vídeo: se lee del propio fichero, así basta con cambiar res/raw/intro.mp4.
-    var aspect by remember { androidx.compose.runtime.mutableFloatStateOf(16f / 9f) }
+    var aspect by remember { androidx.compose.runtime.mutableFloatStateOf(1920f / 720f) }
     androidx.compose.runtime.DisposableEffect(player) {
         val l = object : androidx.media3.common.Player.Listener {
             override fun onVideoSizeChanged(v: androidx.media3.common.VideoSize) {
@@ -176,8 +176,9 @@ fun StartupSplash(maxMs: Long = 12_000) {
     }
 }
 
-// res/raw/intro.mp4: el vídeo del usuario recomprimido (H.264, sin audio). Para cambiarlo basta
-// con sustituir el fichero: duración y proporción se leen al reproducirlo.
+// res/raw/intro.mp4: el vídeo del usuario (1920×720) a 24 fps, algo más nítido y con los laterales
+// fundidos en un fondo desenfocado del propio vídeo (H.264, sin audio).
+// Para cambiarlo basta con sustituir el fichero: duración y proporción se leen al reproducirlo.
 private const val FADE_MS = 700L
 
 /**
