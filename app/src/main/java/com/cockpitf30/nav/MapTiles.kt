@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -128,6 +129,7 @@ object MapTiles {
             val bmp = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
             if (bmp == null) {
                 failedAt[key] = System.currentTimeMillis()
+                scheduleRetry()
             } else {
                 memory.put(key, bmp.asImageBitmap())
                 failedAt.remove(key)
@@ -135,8 +137,26 @@ object MapTiles {
             }
         } catch (_: Throwable) {
             failedAt[key] = System.currentTimeMillis()
+            scheduleRetry()
         } finally {
             pending.remove(key)
+        }
+    }
+
+    @Volatile private var retryScheduled = false
+
+    /**
+     * Una tesela falló (p. ej. sin datos al arrancar): pasado el plazo de espera se fuerza un
+     * redibujado para que el mapa la vuelva a pedir. Sin esto, con el coche parado nada repintaba
+     * el mapa y se quedaba vacío hasta reiniciar la app.
+     */
+    private fun scheduleRetry() {
+        if (retryScheduled) return
+        retryScheduled = true
+        scope.launch {
+            delay(31_000)
+            retryScheduled = false
+            version.update { it + 1 }
         }
     }
 

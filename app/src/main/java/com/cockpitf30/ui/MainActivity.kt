@@ -319,11 +319,18 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
         }
     }
     // Gasolineras: el listado del Ministerio se descarga como mucho cada 12 h; si falla (p. ej. sin
-    // conexión al arrancar), se reintenta a los 10 minutos.
+    // conexión al arrancar), se reintenta pronto (30 s, 1 min, 2 min… hasta 10 min).
     LaunchedEffect(Unit) {
+        var retry = 30_000L
         while (true) {
             FuelRepository.refresh(ctx)
-            delay(if (FuelRepository.state.value.error != null) 10 * 60 * 1000L else 60 * 60 * 1000L)
+            if (FuelRepository.state.value.error != null) {
+                delay(retry)
+                retry = (retry * 2).coerceAtMost(10 * 60 * 1000L)
+            } else {
+                retry = 30_000L
+                delay(60 * 60 * 1000L)
+            }
         }
     }
     BackHandler(enabled = screen != Screen.HOME) { screen = Screen.HOME }

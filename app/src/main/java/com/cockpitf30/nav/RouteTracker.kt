@@ -8,7 +8,14 @@ import android.location.LocationManager
 import android.os.Looper
 import android.os.SystemClock
 import com.cockpitf30.weather.WeatherRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -54,17 +61,59 @@ object RouteTracker {
 
     private var started = false
     private val listener = LocationListener { onLocation(it) }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var watchdog: Job? = null
+    private var lastKnownNanos = 0L
 
-    /** Empieza a escuchar el GPS. Se puede llamar varias veces (p. ej. tras conceder el permiso). */
-    @SuppressLint("MissingPermission")
+    /** Veces que se ha vuelto a pedir el GPS porque no llegaban posiciones (para Diagnóstico). */
+    val retries = MutableStateFlow(0)
+
+    /**
+     * Empieza a escuchar el GPS. Se puede llamar varias veces (p. ej. tras conceder el permiso).
+     *
+     * Al arrancar la radio el GPS a veces aún no está listo (proveedor apagado o sin servicio) y
+     * antes la petición se perdía: el mapa y las gasolineras se quedaban sin posición hasta cerrar
+     * la app. Ahora se pide siempre y un vigilante la repite mientras no lleguen posiciones.
+     */
     fun start(context: Context) {
         if (started || !WeatherRepository.hasLocationPermission(context)) return
-        val lm = context.getSystemService(LocationManager::class.java) ?: return
+        val app = context.applicationContext
+        app.getSystemService(LocationManager::class.java) ?: return
         started = true
-        WeatherRepository.lastKnownLocation(context)?.let { onLocation(it) }
+        WeatherRepository.lastKnownLocation(app)?.let { lastKnownNanos = it.elapsedRealtimeNanos; onLocation(it) }
+        register(app)
+        watchdog = scope.launch {
+            var wait = 15_000L
+            while (true) {
+                delay(wait)
+                val fix = _state.value.fix
+                val stale = fix == null || SystemClock.elapsedRealtime() - fix.elapsedMs > 30_000
+                if (!stale) { wait = 15_000L; continue }
+                // Sin posiciones: lo último que sepa el sistema (si es nuevo) y volver a pedir.
+                WeatherRepository.lastKnownLocation(app)?.takeIf { it.elapsedRealtimeNanos > lastKnownNanos }?.let {
+                    lastKnownNanos = it.elapsedRealtimeNanos
+                    onLocation(it)
+                }
+                register(app)
+                com.cockpitf30.vehicle.telemetry.Telemetry.restartGps(app)
+                retries.update { it + 1 }
+                // Cada vez un poco más espaciado, hasta un intento por minuto.
+                wait = (wait + 15_000L).coerceAtMost(60_000L)
+            }
+        }
+    }
+
+    /**
+     * (Re)pide posiciones al GPS y a la red. Sin mirar si el proveedor está encendido: si aún no
+     * lo está, Android las manda en cuanto se encienda.
+     */
+    @SuppressLint("MissingPermission")
+    private fun register(context: Context) {
+        val lm = context.getSystemService(LocationManager::class.java) ?: return
+        runCatching { lm.removeUpdates(listener) }
         for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
             runCatching {
-                if (lm.isProviderEnabled(provider)) lm.requestLocationUpdates(provider, 1000L, 0f, listener, Looper.getMainLooper())
+                if (lm.allProviders.contains(provider)) lm.requestLocationUpdates(provider, 1000L, 0f, listener, Looper.getMainLooper())
             }
         }
     }
