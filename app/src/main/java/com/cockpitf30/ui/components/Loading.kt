@@ -10,6 +10,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -94,73 +97,88 @@ object Startup {
 }
 
 /**
- * Pantalla de arranque: la imagen del usuario (triángulo y rótulo «CockPit F30») con un haz de
- * luz que recorre las letras. Dura al menos [minMs] y sigue mientras la precarga no termine
- * (imágenes y lista de apps), con un tope de [maxMs] para no quedarse nunca colgada.
+ * Pantalla de arranque: el vídeo del usuario (triángulo de cristal y rótulo «CockPit F30»).
+ * Mientras se ve, la app se carga detrás (precarga de MainActivity). Se ve entero, centrado a
+ * toda la altura, con los laterales fundidos a negro porque es casi 16:9 y la pantalla 21:8.
+ * Al acabar funde a negro; si la precarga aún no ha terminado espera en negro (como mucho hasta
+ * [maxMs] desde el arranque). Entonces avisa con [Startup.splashDone] (barrido de agujas y
+ * después el saludo) y el negro se retira dejando ver la app.
  */
 @Composable
-fun StartupSplash(minMs: Long = 3000, maxMs: Long = 7000) {
-    val ready by Startup.ready.collectAsState()
-    var elapsed by remember { mutableIntStateOf(0) } // 0 = antes de minMs, 1 = pasado, 2 = tope
-    LaunchedEffect(Unit) { delay(minMs); elapsed = 1; delay(maxMs - minMs); elapsed = 2 }
-    val visible = !(elapsed == 2 || (elapsed == 1 && ready))
-    // Terminado el fundido de salida, la imagen de arranque no vuelve a hacer falta: se libera.
-    LaunchedEffect(visible) {
-        if (!visible) {
-            delay(350)
-            Startup.splashDone.value = true
-            delay(1150); Images.evict(R.drawable.splash_scene, R.drawable.splash_text_mask)
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+fun StartupSplash(maxMs: Long = 12_000) {
+    // Si la actividad se recrea, el arranque ya pasó: no se repite.
+    if (remember { Startup.splashDone.value }) return
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val black = remember { androidx.compose.animation.core.Animatable(0f) }
+    var gone by remember { mutableIntStateOf(0) } // 1 = el negro se retira
+    val player = remember {
+        androidx.media3.exoplayer.ExoPlayer.Builder(ctx).build().apply {
+            volume = 0f
+            setMediaItem(androidx.media3.common.MediaItem.fromUri(androidx.media3.datasource.RawResourceDataSource.buildRawResourceUri(R.raw.intro)))
+            prepare()
+            playWhenReady = true
         }
     }
-    AnimatedVisibility(visible, enter = fadeIn(), exit = fadeOut(androidx.compose.animation.core.tween(700))) {
-        val scene = cachedBitmap(R.drawable.splash_scene)
-        val mask = cachedBitmap(R.drawable.splash_text_mask)
-        val beam by androidx.compose.animation.core.rememberInfiniteTransition(label = "haz").animateFloat(
-            -0.35f, 1.35f,
-            androidx.compose.animation.core.infiniteRepeatable(
-                androidx.compose.animation.core.tween(1700, delayMillis = 350, easing = androidx.compose.animation.core.FastOutSlowInEasing),
-            ),
-            label = "haz",
-        )
-        Box(Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { } }) {
-            Canvas(Modifier.fillMaxSize()) {
-                drawImage(scene, dstSize = IntSize(size.width.toInt(), size.height.toInt()))
-                // El haz solo ilumina las letras: se pinta dentro de su silueta en una capa
-                // aparte que se suma (Plus) a la imagen.
-                // La silueta está recortada de splash_scene en su tamaño real (1920×720).
-                val kx = size.width / SPLASH_W
-                val ky = size.height / SPLASH_H
-                val left = TEXT_X * kx
-                val top = TEXT_Y * ky
-                val w = mask.width * kx
-                val h = mask.height * ky
-                val layer = androidx.compose.ui.geometry.Rect(left, top, left + w, top + h)
-                val canvas = drawContext.canvas
-                canvas.saveLayer(layer, androidx.compose.ui.graphics.Paint().apply { blendMode = androidx.compose.ui.graphics.BlendMode.Plus })
-                drawImage(mask, dstOffset = IntOffset(left.toInt(), top.toInt()), dstSize = IntSize(w.toInt(), h.toInt()))
-                val cx = left + w * beam
-                val band = w * 0.16f
-                drawRect(
-                    androidx.compose.ui.graphics.Brush.linearGradient(
-                        0f to Color.Transparent, 0.35f to Color(0xFF9FD4FF).copy(alpha = 0.55f), 0.5f to Color.White,
-                        0.65f to Color(0xFFFFD2B0).copy(alpha = 0.55f), 1f to Color.Transparent,
-                        start = androidx.compose.ui.geometry.Offset(cx - band, top), end = androidx.compose.ui.geometry.Offset(cx + band, top + h * 0.6f),
-                    ),
-                    topLeft = androidx.compose.ui.geometry.Offset(left, top), size = androidx.compose.ui.geometry.Size(w, h),
-                    blendMode = androidx.compose.ui.graphics.BlendMode.SrcIn,
-                )
-                canvas.restore()
+    androidx.compose.runtime.DisposableEffect(player) { onDispose { player.release() } }
+    LaunchedEffect(player) {
+        val started = System.currentTimeMillis()
+        // Fin del vídeo: el fundido a negro termina justo cuando acaba (o al fallar el vídeo).
+        while (true) {
+            val st = player.playbackState
+            if (player.playerError != null || st == androidx.media3.common.Player.STATE_ENDED) break
+            val dur = player.duration
+            if (st == androidx.media3.common.Player.STATE_READY && dur > 0 && dur - player.currentPosition <= FADE_MS) break
+            if (System.currentTimeMillis() - started > maxMs) break
+            delay(40)
+        }
+        black.animateTo(1f, androidx.compose.animation.core.tween(FADE_MS.toInt(), easing = androidx.compose.animation.core.LinearEasing))
+        // En negro hasta que la app esté lista (imágenes y lista de apps).
+        while (!Startup.ready.value && System.currentTimeMillis() - started < maxMs) delay(50)
+        player.stop()
+        Startup.splashDone.value = true
+        gone = 1
+    }
+    // Proporción real del vídeo: se lee del propio fichero, así basta con cambiar res/raw/intro.mp4.
+    var aspect by remember { androidx.compose.runtime.mutableFloatStateOf(16f / 9f) }
+    androidx.compose.runtime.DisposableEffect(player) {
+        val l = object : androidx.media3.common.Player.Listener {
+            override fun onVideoSizeChanged(v: androidx.media3.common.VideoSize) {
+                if (v.width > 0 && v.height > 0) aspect = v.width * v.pixelWidthHeightRatio / v.height
             }
+        }
+        player.addListener(l)
+        onDispose { player.removeListener(l) }
+    }
+    AnimatedVisibility(gone == 0, enter = androidx.compose.animation.EnterTransition.None, exit = fadeOut(androidx.compose.animation.core.tween(500))) {
+        androidx.compose.foundation.layout.BoxWithConstraints(
+            Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { } },
+            contentAlignment = Alignment.Center,
+        ) {
+            // Entero y centrado: a toda la altura si es más estrecho que la pantalla (laterales
+            // fundidos a negro), a todo el ancho si es más panorámico.
+            val narrower = aspect < maxWidth / maxHeight
+            Box(if (narrower) Modifier.fillMaxHeight().aspectRatio(aspect) else Modifier.fillMaxWidth().aspectRatio(aspect)) {
+                androidx.compose.ui.viewinterop.AndroidView(
+                    factory = { c -> android.view.TextureView(c).also { player.setVideoTextureView(it) } },
+                    modifier = Modifier.fillMaxSize(),
+                )
+                if (narrower) {
+                    val edge = androidx.compose.ui.graphics.Brush.horizontalGradient(
+                        0f to Color.Black, 0.07f to Color.Black.copy(alpha = 0.55f), 0.14f to Color.Transparent,
+                        0.86f to Color.Transparent, 0.93f to Color.Black.copy(alpha = 0.55f), 1f to Color.Black,
+                    )
+                    Box(Modifier.fillMaxSize().background(edge))
+                }
+            }
+            Box(Modifier.fillMaxSize().graphicsLayer { alpha = black.value }.background(Color.Black))
         }
     }
 }
 
-// splash_scene es la imagen 21:9 del usuario ajustada a 1920×720; splash_text_mask, el recorte
-// de sus letras, empieza en (654, 554) de esa imagen.
-private const val SPLASH_W = 1920f
-private const val SPLASH_H = 720f
-private const val TEXT_X = 654f
-private const val TEXT_Y = 554f
+// res/raw/intro.mp4: el vídeo del usuario recomprimido (H.264, sin audio). Para cambiarlo basta
+// con sustituir el fichero: duración y proporción se leen al reproducirlo.
+private const val FADE_MS = 700L
 
 /**
  * «COCKPIT F30»: COCKPIT fino y muy espaciado en plata, F30 en cobre pulido, con un filo de luz
