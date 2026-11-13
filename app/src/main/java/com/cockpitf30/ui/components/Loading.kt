@@ -114,7 +114,14 @@ fun StartupSplash(maxMs: Long = 12_000) {
     var gone by remember { mutableIntStateOf(0) } // 1 = el negro se retira
     val player = remember {
         androidx.media3.exoplayer.ExoPlayer.Builder(ctx).build().apply {
-            volume = 0f
+            // El sonido del logo suena encima de lo que haya (radio, música) sin quitarle el foco.
+            setAudioAttributes(
+                androidx.media3.common.AudioAttributes.Builder()
+                    .setUsage(androidx.media3.common.C.USAGE_MEDIA)
+                    .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_SONIFICATION)
+                    .build(),
+                false,
+            )
             setMediaItem(androidx.media3.common.MediaItem.fromUri(androidx.media3.datasource.RawResourceDataSource.buildRawResourceUri(R.raw.intro)))
             prepare()
             playWhenReady = true
@@ -177,7 +184,8 @@ fun StartupSplash(maxMs: Long = 12_000) {
 }
 
 // res/raw/intro.mp4: el vídeo del usuario (1920×720) a 24 fps, algo más nítido y con los laterales
-// fundidos en un fondo desenfocado del propio vídeo (H.264, sin audio).
+// fundidos en un fondo desenfocado del propio vídeo (H.264). Audio: el sonido de logo del usuario
+// (AAC, 1,7 s) centrado en la mitad del vídeo.
 // Para cambiarlo basta con sustituir el fichero: duración y proporción se leen al reproducirlo.
 private const val FADE_MS = 700L
 
