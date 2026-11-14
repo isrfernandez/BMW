@@ -252,7 +252,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     }
     val athosFeed = rememberAthosFeed { page.value < 0f }
     val athosText = remember { AthosText() }
-    val athosImage = cachedBitmap(R.drawable.splash_cockpit)
+    val athosImage = cachedBitmap(R.drawable.athos_view) // sin el rótulo: solo el triángulo
     var focused by remember { mutableStateOf(false) }
 
     val route by RouteTracker.state.collectAsStateWithLifecycle()

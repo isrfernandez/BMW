@@ -132,6 +132,10 @@ internal class AthosText(
     val hud: TextStyle = numeric(15, FontWeight.SemiBold).copy(letterSpacing = 3.sp),
 )
 
+/** Altura del centro del triángulo en la imagen de la vista y del anillo en el panel (fracciones). */
+private const val TRIANGLE_Y = 0.565f
+private const val RING_Y = 0.48f
+
 private val AthosBlue = Color(0xFF59B8FF)
 private val AthosCopper = Color(0xFFFFA25C)
 private val AthosOk = Color(0xFF3DDC97)
@@ -150,7 +154,8 @@ internal fun DrawScope.drawAthos(b: Rect, image: ImageBitmap, feed: AthosFeed, t
     if (srcAspect > dstAspect) sw = sh * dstAspect else sh = sw / dstAspect
     sw /= zoom; sh /= zoom
     val sx = ((image.width - sw) / 2 + sin(t / 11000f) * (image.width - sw) / 2).coerceIn(0f, image.width - sw)
-    val sy = ((image.height - sh) * 0.35f).coerceIn(0f, image.height - sh)
+    // El triángulo (a ~56 % del alto de athos_view.webp) queda a la altura del anillo.
+    val sy = (image.height * TRIANGLE_Y - sh * RING_Y).coerceIn(0f, image.height - sh)
     drawImage(
         image, IntOffset(sx.toInt(), sy.toInt()), IntSize(sw.toInt(), sh.toInt()),
         IntOffset(b.left.toInt(), b.top.toInt()), IntSize(w.toInt(), h.toInt()),
@@ -175,7 +180,7 @@ internal fun DrawScope.drawAthos(b: Rect, image: ImageBitmap, feed: AthosFeed, t
 
     // 3) Anillo alrededor del triángulo: escala que gira, arcos de cobre en sentido contrario,
     //    barrido de radar con los radares cercanos y el rumbo arriba.
-    val c = Offset(b.center.x, b.top + h * 0.40f)
+    val c = Offset(b.center.x, b.top + h * RING_Y)
     val r = h * 0.33f
     val route = RouteTracker.state.value
     val spin = (t / 60f) % 360f
