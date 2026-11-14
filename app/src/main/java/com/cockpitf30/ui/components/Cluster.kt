@@ -18,6 +18,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -223,26 +224,35 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         0f, 1f, infiniteRepeatable(tween(3200, easing = LinearEasing)), label = "phase",
     )
 
-    // Zona central deslizante: 0 = coche, 1 = mapa. Al arrancar la app se ve el coche y a los
-    // 10 s pasa al mapa; después el Inicio abre ya en el mapa (p. ej. al volver de la pantalla de
-    // puertas). Deslizando u OK se vuelve a ver el coche, que se queda hasta volver a deslizar.
-    var wantMap by remember { mutableStateOf(ClusterIntro.done) }
-    val page = remember { Animatable(if (wantMap) 1f else 0f) }
+    // Zona central deslizante: −1 = Athos, 0 = coche, 1 = mapa. Al arrancar la app se ve la vista
+    // Athos, después el coche y luego el mapa; más tarde el Inicio abre ya en el mapa (p. ej. al
+    // volver de otra pantalla). Deslizando u OK se pasa de una a otra y se queda donde se deje.
+    var target by remember { mutableIntStateOf(if (ClusterIntro.done) 1 else -1) }
+    val page = remember { Animatable(target.toFloat()) }
     val scope = rememberCoroutineScope()
-    fun choose(map: Boolean) {
-        wantMap = map
+    fun choose(to: Int) {
+        val t = to.coerceIn(-1, 1)
+        if (t == -1 && target != -1) AthosSound.play(ctx)
+        target = t
         ClusterIntro.done = true
-        scope.launch { page.animateTo(if (map) 1f else 0f, tween(450, easing = FastOutSlowInEasing)) }
+        scope.launch { page.animateTo(t.toFloat(), tween(450, easing = FastOutSlowInEasing)) }
     }
     LaunchedEffect(Unit) {
         if (ClusterIntro.done) return@LaunchedEffect
+        delay(ClusterIntro.ATHOS_MS)
+        if (ClusterIntro.done) return@LaunchedEffect
+        target = 0
+        page.animateTo(0f, tween(900, easing = FastOutSlowInEasing))
         delay(ClusterIntro.CAR_MS)
         if (!ClusterIntro.done) {
             ClusterIntro.done = true
-            wantMap = true
+            target = 1
             page.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
         }
     }
+    val athosFeed = rememberAthosFeed { page.value < 0f }
+    val athosText = remember { AthosText() }
+    val athosImage = cachedBitmap(R.drawable.splash_cockpit)
     var focused by remember { mutableStateOf(false) }
 
     val route by RouteTracker.state.collectAsStateWithLifecycle()
@@ -266,19 +276,21 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
                     onDragStart = { start = page.value },
                     onDragEnd = {
                         val moved = page.value - start
-                        choose(if (abs(moved) > 0.18f) moved > 0 else start > 0.5f)
+                        val from = start.roundToInt()
+                        choose(if (abs(moved) > 0.18f) from + if (moved > 0) 1 else -1 else from)
                     },
-                    onDragCancel = { choose(start > 0.5f) },
+                    onDragCancel = { choose(start.roundToInt()) },
                 ) { change, dx ->
                     change.consume()
                     val w = size.width * 0.55f
-                    scope.launch { page.snapTo((page.value - dx / w).coerceIn(0f, 1f)) }
+                    scope.launch { page.snapTo((page.value - dx / w).coerceIn(-1f, 1f)) }
                 }
             }
             // Ruleta: el panel es un elemento más; OK alterna entre coche y mapa.
             .onFocusChanged { focused = it.isFocused }
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                choose(!wantMap)
+                // OK pasa a la siguiente: Athos → coche → mapa → Athos.
+                choose(if (target == 1) -1 else target + 1)
             },
     ) {
         val g = remember(maxWidth, maxHeight) { Geometry(maxWidth, maxHeight) }
@@ -306,6 +318,13 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             val map = if (pg > 0f) smooth.value.let { now -> MapFrame(route, now.position, now.bearing, zoom, phase) }
             else MapFrame(route, route.position, route.bearing, 17f, 0f)
             drawPanel(geo, scene, rangeKm, outsideTemp, measurer, overlay, pg, map, mapText, focused)
+        }
+        // 1b) Vista Athos: solo pinta (y anima) mientras se ve, entrando por la izquierda.
+        Canvas(Modifier.fillMaxSize().graphicsLayer()) {
+            val pg = page.value
+            if (pg >= 0f) return@Canvas
+            val geo = geoCache.get(g, this)
+            drawAthosPanel(geo, pg, athosImage, athosFeed, measurer, athosText, focused)
         }
         // 2) Franjas vacías de acero: fijas.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
@@ -386,7 +405,9 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
 
 /** Presentación del Inicio: el coche se ve solo durante los primeros segundos tras arrancar la app. */
 object ClusterIntro {
-    const val CAR_MS = 10_000L
+    /** Vista Athos al arrancar y después el coche, antes de pasar al mapa. */
+    const val ATHOS_MS = 8_000L
+    const val CAR_MS = 8_000L
     /** Motor parado al menos esto para repetir el barrido al arrancarlo. */
     const val ENGINE_OFF_MS = 5_000L
     @Volatile var done = false
@@ -532,7 +553,8 @@ private fun DrawScope.drawPanel(
         if (page > 0f) drawFacets(g, pts, scene.triangles, bounds)
         // Página del mapa, entrando por la derecha.
         if (page > 0f) translate(left = (1f - page) * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawMap(bounds, map, tm, mapText) } }
-        if (page < 1f) translate(left = -page * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawCar(g, scene, rangeKm, outsideTemp, tm, st, bounds) } }
+        // El coche sale hacia la derecha cuando entra la vista Athos (que pinta su propia capa).
+        if (page < 1f && page > -1f) translate(left = -page * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawCar(g, scene, rangeKm, outsideTemp, tm, st, bounds) } }
     }
     // Sport y Night tiñen la escena (coche y mapa) del color del modo, manteniendo luces y sombras.
     DriveModes.palette.tint?.let { tint ->
@@ -573,12 +595,39 @@ private fun DrawScope.drawFacets(g: GeoPx, pts: List<Offset>, triangles: ImageBi
 }
 
 /** Dos marcas abajo en el centro: cuál de las dos vistas del panel se está viendo. */
+/** Forma y rectángulo del panel central (compartido por el coche/mapa y la vista Athos). */
+private fun panelShape(g: GeoPx): Triple<Path, Rect, Float> {
+    val inset = g.band + g.dp(14f)
+    val top = g.y0 + g.dp(PANEL_TOP.value)
+    val bottom = g.y1 - g.dp(PANEL_BOTTOM.value)
+    val pts = listOf(
+        Offset(g.chevronX(top, inset), top), Offset(g.w - g.chevronX(top, inset), top),
+        Offset(g.w - g.xv - inset, g.ym), Offset(g.w - g.chevronX(bottom, inset), bottom),
+        Offset(g.chevronX(bottom, inset), bottom), Offset(g.xv + inset, g.ym),
+    )
+    return Triple(roundedPolygon(pts, g.dp(22f)), Rect(g.xv + inset, top, g.w - g.xv - inset, bottom), g.w - 2 * (g.xv + inset))
+}
+
+/** Vista Athos dentro del panel: entra por la izquierda (página −1). */
+private fun DrawScope.drawAthosPanel(g: GeoPx, page: Float, image: ImageBitmap, feed: AthosFeed, tm: TextMeasurer, st: AthosText, focused: Boolean) {
+    val (panel, bounds, pw) = panelShape(g)
+    clipPath(panel) {
+        translate(left = (-1f - page) * pw) {
+            clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawAthos(bounds, image, feed, tm, st) }
+        }
+    }
+    val edge = if (focused) Cyan.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.10f)
+    drawPath(panel, edge, style = Stroke(g.dp(if (focused) 2f else 1.2f)))
+    drawPageDots(g, bounds.bottom, page)
+}
+
 private fun DrawScope.drawPageDots(g: GeoPx, bottom: Float, page: Float) {
     val y = bottom - g.dp(12f)
     val w = g.dp(26f)
     val gap = g.dp(8f)
-    listOf(1f - page, page).forEachIndexed { i, on ->
-        val x = g.w / 2 + (i - 1) * (w + gap) + gap / 2
+    // Tres páginas: Athos, coche y mapa.
+    listOf((-page).coerceIn(0f, 1f), 1f - abs(page).coerceIn(0f, 1f), page.coerceIn(0f, 1f)).forEachIndexed { i, on ->
+        val x = g.w / 2 + (i - 1.5f) * (w + gap) + gap / 2
         drawLine(Color.White.copy(alpha = 0.22f), Offset(x, y), Offset(x + w, y), g.dp(3f), StrokeCap.Round)
         if (on > 0.01f) {
             drawLine(Cyan.copy(alpha = on * 0.35f), Offset(x, y), Offset(x + w, y), g.dp(9f), StrokeCap.Round, blendMode = BlendMode.Plus)

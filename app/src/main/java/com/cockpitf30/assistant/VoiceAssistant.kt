@@ -560,9 +560,12 @@ object VoiceAssistant {
     private fun wakeAccepted(json: JSONObject, text: String, sensitivity: Int): Boolean {
         if (VoiceCommands.afterWakeWord(text) == null) return false
         val words = json.optJSONArray("result")
-        val minConf = if (words == null || words.length() == 0) 1.0
-        else (0 until words.length()).minOf { words.getJSONObject(it).optDouble("conf", 1.0) }
-        val needed = when (sensitivity) { 0 -> 0.85; 1 -> 0.6; else -> 0.0 }
+        val confs = if (words == null || words.length() == 0) listOf(1.0)
+        else (0 until words.length()).map { words.getJSONObject(it).optDouble("conf", 1.0) }
+        // «Hola Athos» es corto: la «a» de «a tos» sale casi siempre con poca confianza y antes, con
+        // el mínimo de todas las palabras, se descartaba. Ahora en sensibilidad normal vale la media.
+        val minConf = if (sensitivity == 0) confs.min() else confs.average()
+        val needed = when (sensitivity) { 0 -> 0.8; 1 -> 0.55; else -> 0.0 }
         val full = VoiceCommands.hasFullName(text)
         val ok = minConf >= needed && (sensitivity > 0 || full)
         _state.update { it.copy(lastText = "$text (confianza ${"%.2f".format(minConf)}${if (ok) "" else ", descartada"})") }

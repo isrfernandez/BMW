@@ -113,7 +113,11 @@ object VoiceCommands {
      * pequeño de Vosk puede no conocer el nombre y oír «atos» o «a tos»; Google suele escribir
      * «Athos» o «Atos». «actos», «altos» y «hatos» son cómo se confunde a veces.
      */
-    private val NAME_FORMS: Set<String> = setOf("athos", "atos", "hatos", "actos", "altos", "athus", "atus", "athos ui")
+    private val NAME_FORMS: Set<String> = setOf(
+        "athos", "atos", "hatos", "actos", "altos", "athus", "atus",
+        // Lo que el modelo pequeño cree oír a menudo: «a dos», «datos», «gatos», «patos».
+        "ados", "datos", "gatos", "patos",
+    )
     /**
      * Frases que acepta el reconocedor de la palabra de activación (gramática de Vosk). Se ponen
      * varias formas porque Vosk ignora las palabras que no están en su vocabulario. "[unk]" recoge
@@ -121,7 +125,7 @@ object VoiceCommands {
      */
     val WAKE_GRAMMAR: String = listOf(
         "hola athos", "hola atos", "hola a tos", "ola atos", "ola a tos", "oye atos", "oye a tos",
-        "hola actos", "hola altos", "[unk]",
+        "hola actos", "hola altos", "hola a dos", "ola a dos", "hola datos", "hola gatos", "hola patos", "[unk]",
     ).joinToString(",", "[", "]") { "\"$it\"" }
 
     /** Palabras para cortar al asistente mientras habla. */
@@ -210,7 +214,7 @@ object VoiceCommands {
         listOf("athos", "atos", "a tos").any { t.contains(it) }
     }
 
-    private val WAKE_PREFIX = Regex("^((hola|ola|oye|hello) )*((a tos|athos|atos|hatos|actos|altos|atus|athus) )?")
+    private val WAKE_PREFIX = Regex("^((hola|ola|oye|hello) )+((a tos|a dos|athos|atos|hatos|actos|altos|atus|athus|datos|gatos|patos) )?|^(a tos|athos|atos|hatos|atus|athus) ")
 
     /**
      * Quita del principio los restos de «hola Athos»: la activación salta en cuanto se oye, así que

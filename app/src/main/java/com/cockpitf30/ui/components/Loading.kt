@@ -119,7 +119,7 @@ fun StartupSplash(maxMs: Long = 9_000) {
             image = runCatching {
                 android.graphics.BitmapFactory.decodeResource(ctx.resources, R.drawable.splash_cockpit)?.asImageBitmapCompat()
             }.getOrNull()
-            runCatching { logoPlayer(ctx) }.getOrNull()
+            if (com.cockpitf30.system.AppSettings(ctx).startSound) runCatching { logoPlayer(ctx) }.getOrNull() else null
         }
         // Mismo fotograma: empieza el fundido desde negro y suena el logo.
         withFrameNanos { }
@@ -152,8 +152,24 @@ fun StartupSplash(maxMs: Long = 9_000) {
 
 private fun android.graphics.Bitmap.asImageBitmapCompat(): androidx.compose.ui.graphics.ImageBitmap = asImageBitmap()
 
+/** Sonido de Athos para la vista del Inicio: suena una vez y se libera solo (si está activado). */
+object AthosSound {
+    private var player: android.media.MediaPlayer? = null
+
+    fun play(ctx: android.content.Context) {
+        if (!com.cockpitf30.system.AppSettings(ctx).startSound) return
+        stop()
+        player = runCatching { logoPlayer(ctx) }.getOrNull()?.apply {
+            setOnCompletionListener { it.release(); if (player === it) player = null }
+            start()
+        }
+    }
+
+    fun stop() { player?.let { runCatching { it.release() } }; player = null }
+}
+
 /** Sonido del logo como multimedia sin pedir el foco de audio: suena encima de la radio sin pararla. */
-private fun logoPlayer(ctx: android.content.Context): android.media.MediaPlayer {
+internal fun logoPlayer(ctx: android.content.Context): android.media.MediaPlayer {
     val afd = ctx.resources.openRawResourceFd(R.raw.logo_sound)
     return android.media.MediaPlayer().apply {
         setAudioAttributes(

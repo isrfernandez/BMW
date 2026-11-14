@@ -320,6 +320,10 @@ private fun DrivingSettings(onOpen: (Screen) -> Unit) {
         ActionRow("Probar el copiloto", null, "Probar") { VoiceAssistant.copilotNow(ctx) }
     }
     SettingGroup("Al arrancar y al parar") {
+        var sound by remember { mutableStateOf(settings.startSound) }
+        ToggleRow("Iniciar con sonido", "El sonido de Athos al arrancar y al abrir la vista Athos del Inicio.", sound) {
+            sound = it; settings.startSound = it
+        }
         var briefing by remember { mutableStateOf(settings.briefing) }
         ToggleRow("Briefing al arrancar", "Saludo con el tiempo, los radares cercanos y la autonomía, si han pasado más de 45 minutos desde el anterior.", briefing) {
             briefing = it; settings.briefing = it
