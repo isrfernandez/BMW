@@ -109,28 +109,19 @@ object VoiceCommands {
             .trim().replace(Regex("\\s+"), " ")
 
     /**
-     * Formas en que el reconocedor escribe «BMW» tras «hola», con las palabras pegadas. El modelo
-     * pequeño de Vosk no conoce la sigla y la deletrea («be eme uve doble»), a menudo mal partida
-     * («beme uve», «me uve doble»); Google suele escribir «BMW».
+     * Formas en que el reconocedor escribe «Athos» tras «hola», con las palabras pegadas. El modelo
+     * pequeño de Vosk puede no conocer el nombre y oír «atos» o «a tos»; Google suele escribir
+     * «Athos» o «Atos». «actos», «altos» y «hatos» son cómo se confunde a veces.
      */
-    private val BMW_FORMS: Set<String> = buildSet {
-        addAll(listOf("bmw", "bm", "bmv", "beemeuvedoble", "beemeuve", "beeme"))
-        // Variantes de cómo se parte o se oye cada letra: «be/ve/pe/de» + «eme/me» + «uve doble/doble uve/doble ve».
-        for (b in listOf("be", "ve", "pe", "de", "")) for (m in listOf("eme", "me", "em")) {
-            for (w in listOf("uvedoble", "uve", "dobleuve", "dobleve", "doble", "")) {
-                val f = b + m + w
-                if (f.length >= 4) add(f)
-            }
-        }
-        addAll(listOf("uvedoble", "vedoble"))
-    }
+    private val NAME_FORMS: Set<String> = setOf("athos", "atos", "hatos", "actos", "altos", "athus", "atus", "athos ui")
     /**
-     * Frases que acepta el reconocedor de la palabra de activación (gramática de Vosk). "[unk]" recoge
-     * todo lo demás para que cualquier frase no acabe forzada a «hola BMW».
+     * Frases que acepta el reconocedor de la palabra de activación (gramática de Vosk). Se ponen
+     * varias formas porque Vosk ignora las palabras que no están en su vocabulario. "[unk]" recoge
+     * todo lo demás para que cualquier frase no acabe forzada a «hola Athos».
      */
     val WAKE_GRAMMAR: String = listOf(
-        "hola be eme uve doble", "hola be eme uve", "hola be eme doble uve", "hola be eme doble ve",
-        "hola be eme", "hola uve doble", "ola be eme uve doble", "oye be eme uve doble", "[unk]",
+        "hola athos", "hola atos", "hola a tos", "ola atos", "ola a tos", "oye atos", "oye a tos",
+        "hola actos", "hola altos", "[unk]",
     ).joinToString(",", "[", "]") { "\"$it\"" }
 
     /** Palabras para cortar al asistente mientras habla. */
@@ -159,7 +150,7 @@ object VoiceCommands {
         "tres", "cuatro", "cinco", "diez", "cien", "mil",
     )
 
-    /** Gramática mientras habla la radio: «Hola BMW» o una palabra para cortarla. */
+    /** Gramática mientras habla la radio: «Hola Athos» o una palabra para cortarla. */
     val BARGE_GRAMMAR: String = (Regex("\"([^\"]+)\"").findAll(WAKE_GRAMMAR).map { it.groupValues[1] }.filter { it != "[unk]" }.toList() +
         STOP_WORDS + PAUSE_WORDS + HOLD_WORDS + RESUME_WORDS + BARGE_DECOYS + "[unk]").distinct().joinToString(",", "[", "]") { "\"$it\"" }
 
@@ -198,30 +189,35 @@ object VoiceCommands {
     private val HELLO = setOf("hola", "ola", "hello", "oye")
 
     /**
-     * Si [text] contiene «hola BMW», devuelve lo que viene después (quizá vacío); si no, null.
-     * Se acepta un «hola» seguido, en las tres palabras siguientes, de alguna forma de la sigla.
+     * Si [text] contiene «hola Athos», devuelve lo que viene después (quizá vacío); si no, null.
+     * Se acepta un «hola» seguido, en las dos palabras siguientes, de alguna forma del nombre.
      */
     fun afterWakeWord(text: String): String? {
         val words = normalize(text).split(' ').filter { it.isNotEmpty() }
         for (i in words.indices) {
             if (words[i] !in HELLO) continue
-            // La forma más larga que encaje: «be eme uve doble» antes que «be eme».
-            val n = (4 downTo 1).firstOrNull { n ->
-                i + n <= words.lastIndex && words.subList(i + 1, i + 1 + n).joinToString("") in BMW_FORMS
+            // «a tos» va en dos palabras: la forma más larga que encaje primero.
+            val n = (2 downTo 1).firstOrNull { n ->
+                i + n <= words.lastIndex && words.subList(i + 1, i + 1 + n).joinToString("") in NAME_FORMS
             } ?: continue
             return words.drop(i + 1 + n).joinToString(" ")
         }
         return null
     }
 
-    private val BRAND_WORDS = setOf("be", "eme", "me", "uve", "doble", "ve", "bmw", "hola", "ola", "oye")
+    /** ¿Está el nombre entero en la frase? (sensibilidad baja: solo «Athos/Atos», no las confusiones). */
+    fun hasFullName(text: String): Boolean = normalize(text).let { t ->
+        listOf("athos", "atos", "a tos").any { t.contains(it) }
+    }
+
+    private val WAKE_PREFIX = Regex("^((hola|ola|oye|hello) )*((a tos|athos|atos|hatos|actos|altos|atus|athus) )?")
 
     /**
-     * Quita del principio los restos de «hola BMW»: la activación salta en cuanto se oye «hola be eme»,
-     * así que el reconocedor de la orden puede empezar oyendo «uve doble …».
+     * Quita del principio los restos de «hola Athos»: la activación salta en cuanto se oye, así que
+     * el reconocedor de la orden puede empezar oyendo el nombre o el saludo.
      */
     fun stripWakeWords(text: String): String =
-        normalize(text).split(' ').dropWhile { it in BRAND_WORDS }.joinToString(" ")
+        (normalize(text) + " ").replaceFirst(WAKE_PREFIX, "").trim()
 
     private val QUESTION = setOf("cuanto", "cuanta", "cuantos", "cuantas", "que", "como", "cual", "hay", "dime", "donde", "va", "voy", "tengo", "esta", "estan", "hace")
 

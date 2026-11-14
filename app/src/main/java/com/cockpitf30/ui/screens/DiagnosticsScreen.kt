@@ -139,7 +139,7 @@ fun DiagnosticsScreen() {
                         when {
                             it == 0 -> com.cockpitf30.radio.Radio.runFmTest()
                             lines == null -> com.cockpitf30.radio.Radio.runFmTest()
-                            it == 1 -> shareReport(context, lines.joinToString("\n"), "Cockpit F30 prueba FM")
+                            it == 1 -> shareReport(context, lines.joinToString("\n"), "Athos prueba FM")
                             else -> saveReport(context, lines.joinToString("\n"), "cockpit-prueba-fm")
                         }
                     }
@@ -331,7 +331,7 @@ private fun buildReport(
     input: List<String>,
 ): String = buildString {
     val dm = context.resources.displayMetrics
-    appendLine("Cockpit F30 ${installedVersion(context)} · informe de diagnóstico · ${java.time.LocalDateTime.now()}")
+    appendLine("Athos ${installedVersion(context)} · informe de diagnóstico · ${java.time.LocalDateTime.now()}")
     appendLine("Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT}) · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · ${android.os.Build.DISPLAY}")
     appendLine("Pantalla ${dm.widthPixels}x${dm.heightPixels} ${dm.densityDpi} dpi")
     appendLine()
@@ -394,7 +394,7 @@ private fun radioReport(values: Map<String, String>, changes: List<String>, vehi
     changes.forEach(::appendLine)
 }
 
-internal fun shareReport(context: android.content.Context, text: String, subject: String = "Cockpit F30 diagnóstico") {
+internal fun shareReport(context: android.content.Context, text: String, subject: String = "Athos diagnóstico") {
     val send = android.content.Intent(android.content.Intent.ACTION_SEND)
         .setType("text/plain")
         .putExtra(android.content.Intent.EXTRA_SUBJECT, subject)

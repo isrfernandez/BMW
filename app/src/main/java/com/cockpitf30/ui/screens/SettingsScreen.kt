@@ -73,7 +73,7 @@ import com.cockpitf30.vehicle.trip.TripComputer
 /** Secciones de Ajustes, en el orden de la columna de la izquierda. */
 enum class SettingsSection(val title: String, val hint: String) {
     DISPLAY("Pantalla e iluminación", "Modo diurno, tamaño de letra, Night y luz ambiente"),
-    ASSISTANT("Asistente de voz", "«Hola BMW», voz y personalidad"),
+    ASSISTANT("Asistente de voz", "«Hola Athos», voz y personalidad"),
     DRIVING("Conducción", "Copiloto, briefing, resumen y cambio"),
     ALERTS("Avisos en ruta", "Radares, peligros, descanso y turismo"),
     RADIO("Radio", "Fuente, volumen y atenuación"),
@@ -189,9 +189,9 @@ private fun AssistantSettings() {
     val assistant = VoiceAssistant
     val voice by assistant.state.collectAsStateWithLifecycle()
 
-    SettingGroup("«Hola BMW»") {
+    SettingGroup("«Hola Athos»") {
         var on by remember { mutableStateOf(settings.assistantEnabled) }
-        ToggleRow("Asistente de voz", "Escucha «Hola BMW» para pedir el tiempo, navegar, llamar, poner la radio…", on) {
+        ToggleRow("Asistente de voz", "Escucha «Hola Athos» para pedir el tiempo, navegar, llamar, poner la radio…", on) {
             on = it; assistant.setEnabled(ctx, it)
         }
         var talks by remember { mutableStateOf(settings.assistantSpeaks) }
@@ -209,13 +209,13 @@ private fun AssistantSettings() {
             )
         }
         var follow by remember { mutableStateOf(settings.assistantFollowUp) }
-        ToggleRow("Sigue escuchando tras responder", "Puedes decir «otra», «¿y mañana?» o «repite» sin volver a decir «Hola BMW».", follow, enabled = on) {
+        ToggleRow("Sigue escuchando tras responder", "Puedes decir «otra», «¿y mañana?» o «repite» sin volver a decir «Hola Athos».", follow, enabled = on) {
             follow = it; settings.assistantFollowUp = it
         }
         if (follow) {
             var secs by remember { mutableStateOf(settings.assistantFollowSeconds) }
             val opts = listOf(3, 5, 8, 12)
-            ChoiceRow("Tiempo de escucha tras responder", "Lo que espera tu respuesta antes de volver a «Hola BMW». Si empiezas a hablar, espera a que acabes.", opts.map { "$it s" }, opts.indexOf(secs).let { if (it < 0) 1 else it }) {
+            ChoiceRow("Tiempo de escucha tras responder", "Lo que espera tu respuesta antes de volver a «Hola Athos». Si empiezas a hablar, espera a que acabes.", opts.map { "$it s" }, opts.indexOf(secs).let { if (it < 0) 1 else it }) {
                 secs = opts[it]; settings.assistantFollowSeconds = secs
             }
         }
@@ -223,14 +223,14 @@ private fun AssistantSettings() {
         val hasGoogle = remember { assistant.googleAvailable() }
         ChoiceRow(
             "Entender las órdenes con",
-            if (hasGoogle) "Google entiende el habla normal mucho mejor (necesita conexión o el idioma descargado). «Hola BMW» lo sigue oyendo el reconocedor sin conexión."
+            if (hasGoogle) "Google entiende el habla normal mucho mejor (necesita conexión o el idioma descargado). «Hola Athos» lo sigue oyendo el reconocedor sin conexión."
             else "Esta radio no tiene el reconocedor de Google: se usa el de sin conexión.",
             listOf("Google", "Sin conexión"), if (withGoogle && hasGoogle) 0 else 1,
         ) {
             withGoogle = it == 0; settings.commandsWithGoogle = withGoogle
         }
         var sens by remember { mutableStateOf(settings.wakeSensitivity) }
-        ChoiceRow("Sensibilidad al oír «Hola BMW»", "Alta lo oye mejor con ruido, pero salta más veces sin querer.", listOf("Baja", "Normal", "Alta"), 2 - sens) {
+        ChoiceRow("Sensibilidad al oír «Hola Athos»", "Alta lo oye mejor con ruido, pero salta más veces sin querer.", listOf("Baja", "Normal", "Alta"), 2 - sens) {
             sens = 2 - it; settings.wakeSensitivity = sens
         }
     }
@@ -409,7 +409,7 @@ private fun RadioSettings(onOpen: (Screen) -> Unit) {
 
 /**
  * Con Google Maps en pantalla completa: Android no deja meter Maps dentro de la app, así que
- * la app se queda «al lado»: mini cockpit flotante encima, «Hola BMW» sigue escuchando y las
+ * la app se queda «al lado»: mini cockpit flotante encima, «Hola Athos» sigue escuchando y las
  * indicaciones de Maps se ven en el cockpit al volver.
  */
 @Composable
@@ -439,7 +439,7 @@ private fun MapsSettings() {
         }
         var listen by remember { mutableStateOf(settings.listenOutsideApp) }
         ToggleRow(
-            "«Hola BMW» también con Maps delante",
+            "«Hola Athos» también con Maps delante",
             "El micrófono sigue abierto fuera de la app. Las preguntas se contestan sin quitar el mapa; «abre la radio» o «vuelve al inicio» traen la app.",
             listen,
         ) {
@@ -455,7 +455,7 @@ private fun MapsSettings() {
                 com.cockpitf30.nav.MapsGuidanceState.requestAccess(ctx)
             }
         } else {
-            ActionRow("Acceso a notificaciones", "En la lista que se abre, activa Cockpit F30.", "Dar acceso ›") {
+            ActionRow("Acceso a notificaciones", "En la lista que se abre, activa Athos.", "Dar acceso ›") {
                 if (!com.cockpitf30.nav.MapsGuidanceState.requestAccess(ctx)) {
                     android.widget.Toast.makeText(ctx, "Esta radio no tiene esa pantalla de ajustes", android.widget.Toast.LENGTH_LONG).show()
                 }
@@ -482,7 +482,7 @@ private fun SystemSettings(onOpen: (Screen) -> Unit) {
         val isHome = remember { isDefaultHome(ctx) }
         ActionRow(
             "Lanzador de la radio",
-            if (isHome) "Cockpit F30 es la pantalla de inicio." else "La pantalla de inicio es otra app.",
+            if (isHome) "Athos es la pantalla de inicio." else "La pantalla de inicio es otra app.",
             "Elegir",
         ) { chooseHome(ctx) }
         ActionRow("Lanzador de serie (BMW)", "Abre el de fábrica sin cambiar el de inicio.", "Abrir") { openStockLauncher(ctx) }
@@ -525,7 +525,7 @@ private fun SystemSettings(onOpen: (Screen) -> Unit) {
         ) { BatteryOptimization.request(ctx) }
     }
     SettingGroup("Acerca de") {
-        ActionRow("Cockpit F30 ${installedVersion(ctx)}", "Información técnica, datos del CAN e informe para depurar.", "Diagnóstico ›") {
+        ActionRow("Athos ${installedVersion(ctx)}", "Información técnica, datos del CAN e informe para depurar.", "Diagnóstico ›") {
             onOpen(Screen.DIAGNOSTICS)
         }
     }

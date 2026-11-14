@@ -92,7 +92,7 @@ fun assistantStatus(s: AssistantState, now: Long): String = when (s.phase) {
     AssistantPhase.LISTENING -> s.heard?.let { "«$it»" } ?: s.lingeringReply(now) ?: if (s.paused) "En pausa · di «sigue»" else if (s.followUp) "Sigo escuchando…" else "Te escucho…"
     AssistantPhase.ANSWERING -> s.reply ?: ""
     AssistantPhase.WAITING, AssistantPhase.PAUSED ->
-        s.reply?.takeIf { now - s.replyAt < REPLY_VISIBLE_MS || now < s.replyUntil } ?: "Di «Hola BMW» o toca aquí"
+        s.reply?.takeIf { now - s.replyAt < REPLY_VISIBLE_MS || now < s.replyUntil } ?: "Di «Hola Athos» o toca aquí"
 }
 
 /** Ilustración de la tarjeta: onda de voz que se mueve con el micrófono y un orbe de cristal. */
@@ -164,7 +164,7 @@ fun AssistantCardBody() {
     Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
         Text("ASISTENTE DE VOZ", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
         Box(Modifier.weight(1f))
-        Text("Hola BMW", style = MaterialTheme.typography.headlineSmall)
+        Text("Hola Athos", style = MaterialTheme.typography.headlineSmall)
         Text(
             assistantStatus(s, now), style = MaterialTheme.typography.bodyMedium,
             color = if (s.active) Cockpit.Text else Cockpit.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -198,10 +198,10 @@ fun BoxScope.AssistantOverlay() {
                 val showReply = lingering && heard.isNullOrBlank()
                 if (s.phase == AssistantPhase.LISTENING && showReply) {
                     Text(s.reply.orEmpty(), Modifier.fillMaxWidth(), style = MaterialTheme.typography.headlineSmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    Text(if (s.paused) "En pausa · di «sigue» para continuar" else "Puedes seguir sin decir «Hola BMW»", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
+                    Text(if (s.paused) "En pausa · di «sigue» para continuar" else "Puedes seguir sin decir «Hola Athos»", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
                 } else if (s.phase == AssistantPhase.LISTENING) {
                     Text(if (heard.isNullOrBlank()) (if (s.paused) "En pausa · di «sigue» para continuar" else if (s.followUp) "Sigo escuchando…" else "Te escucho…") else "«$heard»", style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(if (s.engine == "Google") "Con el reconocedor de Google" else if (s.followUp) "Puedes seguir sin decir «Hola BMW»" else "Di qué quieres: gasolineras, vehículo, tiempo…", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
+                    Text(if (s.engine == "Google") "Con el reconocedor de Google" else if (s.followUp) "Puedes seguir sin decir «Hola Athos»" else "Di qué quieres: gasolineras, vehículo, tiempo…", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
                 } else {
                     if (!heard.isNullOrBlank()) Text("«$heard»", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(s.reply.orEmpty(), Modifier.fillMaxWidth(), style = MaterialTheme.typography.headlineSmall, maxLines = 3, overflow = TextOverflow.Ellipsis)

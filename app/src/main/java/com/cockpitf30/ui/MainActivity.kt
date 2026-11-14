@@ -142,7 +142,7 @@ class MainActivity : ComponentActivity() {
             swallowKey = raw.keyCode
             return true
         }
-        // Botón de voz del volante (si llega como tecla): como decir «Hola BMW».
+        // Botón de voz del volante (si llega como tecla): como decir «Hola Athos».
         if (com.cockpitf30.assistant.VoiceButton.onKey(this, raw)) return true
         if (swallowKey == raw.keyCode) {
             if (raw.action == KeyEvent.ACTION_UP) swallowKey = null
@@ -303,7 +303,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 add(Manifest.permission.ACCESS_COARSE_LOCATION)
                 add(Manifest.permission.ACCESS_FINE_LOCATION)
             }
-            // Agenda y llamadas: para «Hola BMW, llama a …».
+            // Agenda y llamadas: para «Hola Athos, llama a …».
             if (!settings.askedContacts) {
                 settings.askedContacts = true
                 if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.READ_CONTACTS)

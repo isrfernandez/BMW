@@ -242,7 +242,7 @@ object Radio {
             val lines = withContext(Dispatchers.IO) {
                 runCatching { FactoryTuner.runTest(app, freq) }.getOrElse { listOf("Error en la prueba: $it") }
             }
-            _fmTest.value = FmTest(false, listOf("Cockpit F30 · prueba FM · ${java.time.LocalDateTime.now()}") + lines)
+            _fmTest.value = FmTest(false, listOf("Athos · prueba FM · ${java.time.LocalDateTime.now()}") + lines)
             startPolling()
         }
     }

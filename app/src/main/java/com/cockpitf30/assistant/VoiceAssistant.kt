@@ -75,9 +75,9 @@ enum class AssistantPhase {
     NO_MODEL,
     DOWNLOADING,
     LOADING,
-    /** Escuchando en segundo plano a la espera de «Hola BMW». */
+    /** Escuchando en segundo plano a la espera de «Hola Athos». */
     WAITING,
-    /** Tras «Hola BMW»: escuchando la orden. */
+    /** Tras «Hola Athos»: escuchando la orden. */
     LISTENING,
     /** Respondiendo (en voz o en pantalla). */
     ANSWERING,
@@ -104,9 +104,9 @@ data class AssistantState(
     val error: String? = null,
     /** Quién reconoce la orden en curso: "Vosk" (sin conexión) o "Google". */
     val engine: String? = null,
-    /** Último texto reconocido, también mientras espera «Hola BMW» (para Diagnóstico). */
+    /** Último texto reconocido, también mientras espera «Hola Athos» (para Diagnóstico). */
     val lastText: String? = null,
-    /** Escuchando sin «Hola BMW» justo después de responder (conversación seguida). */
+    /** Escuchando sin «Hola Athos» justo después de responder (conversación seguida). */
     val followUp: Boolean = false,
     /** En pausa («pausa»): «sigue» retoma lo que estaba diciendo. */
     val paused: Boolean = false,
@@ -114,7 +114,7 @@ data class AssistantState(
 
 /**
  * Asistente de voz del cockpit. Escucha sin conexión con Vosk (modelo pequeño en español) mientras
- * la app está en pantalla; al oír «Hola BMW» atiende la orden (en la misma frase o en la siguiente),
+ * la app está en pantalla; al oír «Hola Athos» atiende la orden (en la misma frase o en la siguiente),
  * la interpreta con [VoiceCommands] y responde en voz alta con el TextToSpeech de la radio.
  *
  * Si no hay modelo (aún se descarga o no hay Internet), al tocar la tarjeta se usa el reconocedor de
@@ -124,15 +124,15 @@ data class AssistantState(
 object VoiceAssistant {
     private const val TAG = "VoiceAssistant"
     private const val RATE = 16_000
-    /** Tiempo para decir la orden después de «Hola BMW». */
+    /** Tiempo para decir la orden después de «Hola Athos». */
     private const val LISTEN_MS = 7_000L
-    /** Tras una pregunta suya, tiempo mínimo para contestar sin «Hola BMW». */
+    /** Tras una pregunta suya, tiempo mínimo para contestar sin «Hola Athos». */
     private const val ASKED_MS = 8_000L
-    /** Tras «espera» / «un momento», tiempo mínimo para seguir sin «Hola BMW». */
+    /** Tras «espera» / «un momento», tiempo mínimo para seguir sin «Hola Athos». */
     private const val HOLD_MS = 8_000L
     /** Silencio tras la última palabra para dar la frase por terminada (Vosk corta en cada pausa). */
     private const val END_SILENCE_MS = 1_200L
-    /** Tras «pausa», tiempo para decir «sigue» sin «Hola BMW». */
+    /** Tras «pausa», tiempo para decir «sigue» sin «Hola Athos». */
     private const val PAUSE_MS = 30_000L
     /** Lo mismo cuando lo dicho hasta ahora todavía no se entiende (frase a medias). */
     private const val END_SILENCE_UNSURE_MS = 2_500L
@@ -184,9 +184,9 @@ object VoiceAssistant {
 
     /** Memoria de la conversación en curso. */
     private val conversation = Conversation()
-    /** Escuchando sin «Hola BMW» tras una respuesta. */
+    /** Escuchando sin «Hola Athos» tras una respuesta. */
     private var followUp = false
-    /** Abrir la escucha sin «Hola BMW» al terminar de hablar (y durante cuánto). */
+    /** Abrir la escucha sin «Hola Athos» al terminar de hablar (y durante cuánto). */
     private var listenAfterReply = 0L
     /** Por dónde va hablando (carácter de la respuesta, lo dice el motor de voz). */
     @Volatile private var spokenPos = 0
@@ -241,7 +241,7 @@ object VoiceAssistant {
     private var recentLoaded = false
 
     /**
-     * La app sale de pantalla (Maps, Spotify…) pero el conductor quiere seguir usando «Hola BMW»:
+     * La app sale de pantalla (Maps, Spotify…) pero el conductor quiere seguir usando «Hola Athos»:
      * el micrófono sigue abierto (lo permite el servicio en primer plano con tipo micrófono) y el
      * mini cockpit enseña lo que oye y responde.
      */
@@ -373,7 +373,7 @@ object VoiceAssistant {
         // texto libre, porque el modelo no conoce «BMW») y otro libre para la orden.
         val wakeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.WAKE_GRAMMAR).apply { setWords(true) }
         val cmdRec = Recognizer(m, RATE.toFloat())
-        // Mientras habla la radio solo se escucha «Hola BMW», para poder interrumpirla
+        // Mientras habla la radio solo se escucha «Hola Athos», para poder interrumpirla
         // (con gramática cerrada: su propia voz no se confunde con eso).
         val bargeRec = Recognizer(m, RATE.toFloat(), VoiceCommands.WAKE_GRAMMAR).apply { setWords(true) }
         val freeRec = Recognizer(m, RATE.toFloat())
@@ -414,7 +414,7 @@ object VoiceAssistant {
                 for (i in 0 until n) if (buf[i].toInt() != 0) { allZero = false; break }
                 if (!allZero) { silentSince = 0L; if (!heardSomething) { heardSomething = true; onAudio() } }
                 else if (!muted) {
-                    // Solo esperando «Hola BMW»: en plena conversación no se reabre (cortaba la frase).
+                    // Solo esperando «Hola Athos»: en plena conversación no se reabre (cortaba la frase).
                     // Windows/el emulador dan ceros exactos en silencio, así que se espera bastante.
                     if (silentSince == 0L) silentSince = now
                     else if (heardSomething && now - silentSince > 15_000 && _state.value.phase == AssistantPhase.WAITING) throw MicLost("sin audio")
@@ -439,7 +439,7 @@ object VoiceAssistant {
                     if (mutedSince != 0L && now - mutedSince < BARGE_GRACE_MS) { bargeRec.reset(); freeRec.reset(); echoLevels.clear(); continue }
                     echoLevels.add(rms(buf, n)); if (echoLevels.size > ECHO_WINDOW) echoLevels.removeAt(0)
                     // Dos oídos mientras habla:
-                    // - «Hola BMW» con la gramática cerrada (el modelo no conoce «BMW»);
+                    // - «Hola Athos» con la gramática cerrada (el modelo no conoce «BMW»);
                     // - las palabras de corte («para», «cancela», «pausa»…) con el reconocedor LIBRE. Antes iban
                     //   en la gramática cerrada, que mete cualquier sonido en una de sus palabras: de su propia
                     //   voz («Castillo de Alcalá») sacaba «cállate». El libre transcribe su eco como lo que es,
@@ -529,7 +529,7 @@ object VoiceAssistant {
     }
 
     /**
-     * Un fallo al ejecutar una orden no debe matar la escucha (antes, tras un error, «Hola BMW» dejaba
+     * Un fallo al ejecutar una orden no debe matar la escucha (antes, tras un error, «Hola Athos» dejaba
      * de funcionar hasta reiniciar la app): se avisa y se vuelve a esperar.
      */
     /** Último fallo atendiendo una orden, con hora y lo último oído (Diagnóstico). */
@@ -563,7 +563,7 @@ object VoiceAssistant {
         val minConf = if (words == null || words.length() == 0) 1.0
         else (0 until words.length()).minOf { words.getJSONObject(it).optDouble("conf", 1.0) }
         val needed = when (sensitivity) { 0 -> 0.85; 1 -> 0.6; else -> 0.0 }
-        val full = VoiceCommands.normalize(text).let { it.contains("eme uve doble") || it.contains("eme doble uve") }
+        val full = VoiceCommands.hasFullName(text)
         val ok = minConf >= needed && (sensitivity > 0 || full)
         _state.update { it.copy(lastText = "$text (confianza ${"%.2f".format(minConf)}${if (ok) "" else ", descartada"})") }
         return ok
@@ -593,7 +593,7 @@ object VoiceAssistant {
     private fun onPartial(text: String) {
         when (_state.value.phase) {
             AssistantPhase.WAITING -> {
-                // Con resultados parciales se activaba sin decir «Hola BMW»: solo en sensibilidad alta.
+                // Con resultados parciales se activaba sin decir «Hola Athos»: solo en sensibilidad alta.
                 if (settings().wakeSensitivity < 2) return
                 val rest = VoiceCommands.afterWakeWord(text) ?: return
                 wake()
@@ -608,7 +608,7 @@ object VoiceAssistant {
         when (_state.value.phase) {
             AssistantPhase.WAITING -> {
                 val rest = VoiceCommands.afterWakeWord(text) ?: return
-                // «Hola BMW pon la radio» de un tirón: si Vosk lo ha entendido se hace; si no, se escucha con Google.
+                // «Hola Athos pon la radio» de un tirón: si Vosk lo ha entendido se hace; si no, se escucha con Google.
                 if (rest.isBlank() || (useGoogle() && VoiceCommands.parse(rest) is Command.Unknown)) wake() else execute(rest)
             }
             AssistantPhase.LISTENING -> {
@@ -630,10 +630,10 @@ object VoiceAssistant {
         _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, reply = "No te he oído", replyAt = System.currentTimeMillis(), engine = null) }
     }
 
-    /** «Hola BMW»: pitido y a escuchar la orden. */
+    /** «Hola Athos»: pitido y a escuchar la orden. */
     private fun wake() {
         // Las órdenes las entiende mucho mejor el reconocedor de Google (si la radio lo tiene); Vosk
-        // solo escucha «Hola BMW» y las interrupciones.
+        // solo escucha «Hola Athos» y las interrupciones.
         if (useGoogle()) { listenWithGoogle(); return }
         followUp = false
         listenUntil = System.currentTimeMillis() + LISTEN_MS
@@ -651,7 +651,7 @@ object VoiceAssistant {
 
     // ---------------------------------------------------------------- toque en la tarjeta
 
-    /** Tocar la tarjeta: atender una orden ya, sin «Hola BMW». */
+    /** Tocar la tarjeta: atender una orden ya, sin «Hola Athos». */
     fun tap(context: Context) {
         app = context.applicationContext
         when (_state.value.phase) {
@@ -688,7 +688,7 @@ object VoiceAssistant {
     /**
      * Escucha una orden con el reconocedor de Google (entiende el habla normal mucho mejor que el
      * modelo pequeño de Vosk). El micrófono de Vosk se suelta mientras tanto y se vuelve a abrir al
-     * acabar, para oír «Hola BMW» y las interrupciones. [followUp]: conversación seguida, sin pitido
+     * acabar, para oír «Hola Athos» y las interrupciones. [followUp]: conversación seguida, sin pitido
      * ni «No te he oído» si no se dice nada.
      */
     private fun listenWithGoogle(followUp: Boolean = false, timeoutMs: Long = LISTEN_MS) {
@@ -826,7 +826,7 @@ object VoiceAssistant {
         val echo = inFollowUp && !waitingAnswer && command !is Command.Cancel && VoiceCommands.isEcho(text, lastSaid)
         if (echo) Log.i(TAG, "Eco de su propia voz, se ignora: «$text»")
         if (echo || inFollowUp && !waitingAnswer && ((command is Command.Unknown && words < 3) || command == Command.Yes || command == Command.Another)) {
-            // Sin «Hola BMW» y sin sentido: será la radio o alguien hablando. No se contesta.
+            // Sin «Hola Athos» y sin sentido: será la radio o alguien hablando. No se contesta.
             _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, paused = false) }
             return
         }
@@ -987,7 +987,7 @@ object VoiceAssistant {
         val p = _state.value.phase
         if (p == AssistantPhase.WAITING || p == AssistantPhase.NO_MODEL || (p == AssistantPhase.LISTENING && followUp && _state.value.heard == null)) {
             conversation.record(null, Command.TourInfo, text, System.currentTimeMillis())
-            // Tras una explicación larga no se queda escuchando: «Hola BMW» si quieres algo más.
+            // Tras una explicación larga no se queda escuchando: «Hola Athos» si quieres algo más.
             say(text)
         }
     }
@@ -1816,7 +1816,7 @@ object VoiceAssistant {
 
     /**
      * Mientras habla se le puede interrumpir:
-     * - «Hola BMW»: corta y escucha una orden nueva.
+     * - «Hola Athos»: corta y escucha una orden nueva.
      * - «para», «cancela», «silencio», «basta»…: corta y se calla.
      * - «pausa»: corta y espera a «sigue» / «continúa» para retomar donde iba.
      * - «espera», «un momento», «a ver»…: corta y escucha sin perder el hilo («sigue» también retoma).
@@ -1830,7 +1830,7 @@ object VoiceAssistant {
         if (!wake && saysItNow(text)) { logState("«$text» ignorado: lo está diciendo ella"); return }
         Log.i(TAG, "Interrumpida ($action): «$text»")
         noteCut("me has interrumpido: oí «$text»")
-        // «Hola BMW» = orden nueva: lo pendiente se descarta. «Para», «espera»…: se hace ya.
+        // «Hola Athos» = orden nueva: lo pendiente se descarta. «Para», «espera»…: se hace ya.
         if (wake) afterSpeech = null else runAfterSpeech()
         val reply = _state.value.reply.orEmpty()
         val rest = remainingText(reply, spokenPos)
@@ -1915,7 +1915,7 @@ object VoiceAssistant {
                 }
             }
             audioJob?.isActive == true && resumed && follow > 0 -> {
-                // Conversación seguida: se puede contestar sin volver a decir «Hola BMW».
+                // Conversación seguida: se puede contestar sin volver a decir «Hola Athos».
                 followUp = true
                 listenUntil = System.currentTimeMillis() + follow
                 _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, engine = "Vosk", followUp = true, level = 0f) }
@@ -1923,7 +1923,7 @@ object VoiceAssistant {
             audioJob?.isActive == true -> set(AssistantPhase.WAITING)
             installJob?.isActive == true -> set(AssistantPhase.DOWNLOADING)
             else -> {
-                // La orden fue con Google (sin Vosk): volvemos a lo que toque (escuchar «Hola BMW» si ya hay modelo).
+                // La orden fue con Google (sin Vosk): volvemos a lo que toque (escuchar «Hola Athos» si ya hay modelo).
                 set(AssistantPhase.NO_MODEL)
                 refresh()
             }

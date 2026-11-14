@@ -12,7 +12,7 @@ import androidx.core.content.ContextCompat
 import com.cockpitf30.vehicle.VehicleRepository
 
 /**
- * Botón de voz del volante = «Hola BMW». No sabemos qué manda la radio al pulsarlo, así que se
+ * Botón de voz del volante = «Hola Athos». No sabemos qué manda la radio al pulsarlo, así que se
  * atienden las tres vías posibles y cada una queda apuntada en Diagnóstico › Entradas:
  * - el aviso del servicio del coche «android.car.action.VOICE_BUTTON» (está en el lanzador de serie);
  * - una tecla de voz (VOICE_ASSIST, SEARCH, ASSIST) con la app delante;
@@ -104,7 +104,7 @@ object VoiceButton {
         return true
     }
 
-    /** Como decir «Hola BMW» (o tocar el asistente). Dos avisos seguidos del mismo toque cuentan una vez. */
+    /** Como decir «Hola Athos» (o tocar el asistente). Dos avisos seguidos del mismo toque cuentan una vez. */
     fun press(context: Context, source: String) {
         VehicleRepository.logInput("Botón de voz: $source")
         val now = System.currentTimeMillis()

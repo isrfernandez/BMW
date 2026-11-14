@@ -42,7 +42,7 @@ class RecentLines(private val capacity: Int = 150) {
 
 /**
  * Carácter del asistente, al estilo del robot TARS: respuestas secas, con un nivel de humor
- * ajustable de 0 a 100 % («Hola BMW, humor al 60 por ciento»). Las frases están en [Lines].
+ * ajustable de 0 a 100 % («Hola Athos, humor al 60 por ciento»). Las frases están en [Lines].
  */
 object Personality {
     const val DEFAULT_HUMOR = 75

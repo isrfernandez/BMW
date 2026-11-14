@@ -98,11 +98,10 @@ object Startup {
 }
 
 /**
- * Pantalla de arranque: la imagen del usuario (núcleo geométrico y rótulo «CockPit F30»).
+ * Pantalla de arranque: la imagen de Athos (triángulo de cristal y rótulo «Athos UI»).
  * Antes era un vídeo: tardaba en salir (el sonido se oía antes que la imagen) y se entrecortaba
  * mientras la app cargaba detrás. Ahora la imagen se decodifica aparte y, cuando está lista,
- * aparece desde negro a la vez que empieza el sonido del logo, con su golpe al terminar el
- * fundido. Se queda [HOLD_MS], espera a la precarga (como mucho [maxMs]), funde a negro, avisa con
+ * aparece desde negro a la vez que empieza el sonido del logo. Se queda [HOLD_MS], espera a la precarga (como mucho [maxMs]), funde a negro, avisa con
  * [Startup.splashDone] (barrido de agujas y saludo) y el negro se retira dejando ver la app.
  */
 @Composable
@@ -142,7 +141,7 @@ fun StartupSplash(maxMs: Long = 9_000) {
         ) {
             image?.let {
                 androidx.compose.foundation.Image(
-                    it, contentDescription = "CockPit F30",
+                    it, contentDescription = "Athos",
                     modifier = Modifier.fillMaxSize().graphicsLayer { alpha = shown.value },
                     contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                 )
@@ -169,11 +168,12 @@ private fun logoPlayer(ctx: android.content.Context): android.media.MediaPlayer 
     }
 }
 
-// res/drawable-nodpi/splash_cockpit.webp: la imagen del usuario a 1920×720 (la franja con el
-// núcleo y el rótulo, con los laterales prolongados y fundidos). res/raw/logo_sound.ogg: su sonido
-// de logo (2,2 s) con el golpe a ~0,55 s, justo al acabar el fundido de entrada.
-private const val FADE_IN_MS = 550
-private const val HOLD_MS = 2_200L
+// res/drawable-nodpi/splash_cockpit.webp: la imagen de inicio de Athos a 1920×720 (la franja con
+// el triángulo y el rótulo, con los laterales prolongados y fundidos). res/raw/logo_sound.ogg: el
+// «cinematic boom» del usuario recortado a 5,65 s; la subida acompaña al fundido de entrada y el
+// golpe (~2,8 s) cae con la imagen ya entera; la app entra mientras se apaga.
+private const val FADE_IN_MS = 900
+private const val HOLD_MS = 3_500L
 private const val FADE_OUT_MS = 500
 
 /**

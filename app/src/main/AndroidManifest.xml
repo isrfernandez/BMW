@@ -7,11 +7,11 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
-    <!-- Asistente de voz: escuchar «Hola BMW» (también con Maps delante, si se elige en Ajustes). -->
+    <!-- Asistente de voz: escuchar «Hola Athos» (también con Maps delante, si se elige en Ajustes). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <!-- «Hola BMW» con Maps delante: el servicio del coche también es de tipo micrófono. -->
+    <!-- «Hola Athos» con Maps delante: el servicio del coche también es de tipo micrófono. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!-- Mini cockpit flotante encima de Maps (y volver a la app desde él o por voz). -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
@@ -110,14 +110,14 @@
                 <action android:name="com.cockpitf30.action.VOICE_BUTTON" />
             </intent-filter>
         </receiver>
-        <!-- Botón de voz del volante, si la radio abre «la app de voz»: actúa como «Hola BMW». -->
+        <!-- Botón de voz del volante, si la radio abre «la app de voz»: actúa como «Hola Athos». -->
         <activity
             android:name=".assistant.VoiceButtonActivity"
             android:exported="true"
             android:excludeFromRecents="true"
             android:noHistory="true"
             android:taskAffinity=""
-            android:label="Hola BMW"
+            android:label="Hola Athos"
             android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>
                 <action android:name="android.intent.action.VOICE_COMMAND" />

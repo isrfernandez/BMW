@@ -214,7 +214,7 @@ private fun FmTestPanel(test: Radio.FmTest) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(if (test.running) "Probando el sintonizador…" else "Prueba FM", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
             if (!test.running) {
-                SmallButton("Compartir") { shareReport(context, test.lines.joinToString("\n"), "Cockpit F30 prueba FM") }
+                SmallButton("Compartir") { shareReport(context, test.lines.joinToString("\n"), "Athos prueba FM") }
                 SmallButton("Guardar en Descargas") { saveReport(context, test.lines.joinToString("\n"), "cockpit-prueba-fm") }
                 SmallButton("Cerrar") { Radio.closeFmTest() }
             }

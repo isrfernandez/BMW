@@ -97,7 +97,7 @@ import kotlinx.coroutines.delay
 /**
  * Mini cockpit flotante: con Google Maps (u otra app) en pantalla completa, una barra pequeña
  * encima con velocidad, marcha y flecha de cambio, rpm, autonomía, el radar más cercano y el
- * asistente (lo que oye y lo que responde; tocar el micrófono = hablar sin «Hola BMW»).
+ * asistente (lo que oye y lo que responde; tocar el micrófono = hablar sin «Hola Athos»).
  *
  * Android no deja meter la ventana de otra app (Maps) dentro de la nuestra; lo que sí deja es
  * pintar encima de las demás con el permiso «Mostrar sobre otras apps». Se arrastra a donde
@@ -471,7 +471,7 @@ private fun RadarChip(distance: String, limit: Int?) {
     }
 }
 
-/** Orbe del asistente: tenue esperando «Hola BMW», late al escuchar, cobre al responder. */
+/** Orbe del asistente: tenue esperando «Hola Athos», late al escuchar, cobre al responder. */
 @Composable
 private fun MicOrb(s: AssistantState, onTap: () -> Unit) {
     val listening = s.phase == AssistantPhase.LISTENING
