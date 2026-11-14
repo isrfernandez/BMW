@@ -1076,13 +1076,13 @@ internal fun ShiftArrow(shift: com.cockpitf30.vehicle.Shift?, modifier: Modifier
 }
 
 /**
- * Línea inferior: franjas M y hora, surtidor y autonomía a la izquierda; estado y temperatura
+ * Línea inferior: filo de luz de Athos y hora, surtidor y autonomía a la izquierda; estado y temperatura
  * exterior a la derecha.
  */
 @Composable
 private fun StatusLine(state: VehicleState, status: SourceStatus, modifier: Modifier = Modifier) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        MStripe(segment = 14.dp)
+        AthosStripe(segment = 14.dp)
         Spacer(Modifier.width(18.dp))
         ClockText(style = numeric(28, FontWeight.SemiBold))
         Spacer(Modifier.width(36.dp))

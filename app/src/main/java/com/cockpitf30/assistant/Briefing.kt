@@ -26,7 +26,8 @@ object Briefing {
 
     fun text(b: BriefingInput): String {
         val greet = when (b.hour) { in 6..12 -> "Buenos días"; in 13..20 -> "Buenas tardes"; else -> "Buenas noches" }
-        val parts = mutableListOf(greet + (b.name?.let { ", $it" } ?: "") + ".")
+        // Se presenta: la app y el asistente se llaman Athos.
+        val parts = mutableListOf(greet + (b.name?.let { ", $it" } ?: "") + ". Aquí Athos.")
         val w = listOfNotNull(b.tempC?.let { "$it grados" }, b.weather?.lowercase()).joinToString(" y ")
         if (w.isNotEmpty()) parts += "Fuera hay $w" + if (b.rainLater) ", y puede llover más tarde." else "."
         b.rangeKm?.let { r ->

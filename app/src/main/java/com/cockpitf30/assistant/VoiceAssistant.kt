@@ -1587,7 +1587,7 @@ object VoiceAssistant {
         applyVoice()
         say(
             Personality.spice(
-                "Hola. Soy el asistente del coche. Humor al ${humor()} por ciento.", humor(), null,
+                "Hola. Soy Athos, el asistente del coche. Humor al ${humor()} por ciento.", humor(), null,
                 "Todo listo para el despegue.", "Prometo no abrir ninguna escotilla.",
             ),
         )
