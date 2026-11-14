@@ -1448,6 +1448,7 @@ object VoiceAssistant {
                 }
                 // Palabra que está diciendo: para saber dónde seguir tras «pausa» y no confundir su voz con una orden.
                 override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
+                    if (utteranceId?.startsWith(ROBOT_ID) != true) SpeechPulse.word()
                     chunkIndex(utteranceId)?.let { i -> spokenPos = (speechOffsets.getOrNull(i) ?: 0) + start }
                 }
                 override fun onError(utteranceId: String?, errorCode: Int) {
@@ -1626,6 +1627,7 @@ object VoiceAssistant {
         spokenPos = 0
         replyId = REPLY_ID + (++replySeq)
         _state.update { it.copy(phase = AssistantPhase.ANSWERING, reply = text, replyAt = System.currentTimeMillis(), engine = null, paused = false) }
+        SpeechPulse.speaking(true)
         unmuteJob?.cancel()
         stopSpeaking()
         // Por frases: empieza a sonar antes (no espera a preparar todo el texto, que con poca
@@ -1742,6 +1744,7 @@ object VoiceAssistant {
                         return
                     }
                     player = track
+                    SpeechPulse.robotTrack(track, rate)
                 }
                 // Mientras suena este trozo, todo él cuenta como «ya dicho» (para no tomar su eco por una orden).
                 spokenPos = speechOffsets.getOrNull(i + 1) ?: (_state.value.reply?.length ?: 0)
@@ -1749,6 +1752,7 @@ object VoiceAssistant {
                 val out = gained(pcm.samples)
                 val n = withContext(Dispatchers.IO) { runCatching { tr.write(out, 0, out.size) }.getOrDefault(-1) }
                 if (n < 0 || replyId != rid) return
+                SpeechPulse.robotSamples(out, n)
                 written += n
             }
             track?.let { waitPlayed(it, written) }
@@ -1891,6 +1895,7 @@ object VoiceAssistant {
     }
 
     private fun doneSpeaking(why: String = "?") {
+        SpeechPulse.speaking(false)
         if (_state.value.phase == AssistantPhase.ANSWERING) {
             val took = System.currentTimeMillis() - speechStartedAt
             lastSpeechEnd = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()) +

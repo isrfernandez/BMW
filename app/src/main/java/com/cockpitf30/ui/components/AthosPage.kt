@@ -153,13 +153,19 @@ internal fun DrawScope.drawAthos(b: Rect, image: ImageBitmap, feed: AthosFeed, t
     var sw = image.width.toFloat(); var sh = image.height.toFloat()
     if (srcAspect > dstAspect) sw = sh * dstAspect else sh = sw / dstAspect
     sw /= zoom; sh /= zoom
-    val sx = ((image.width - sw) / 2 + sin(t / 11000f) * (image.width - sw) / 2).coerceIn(0f, image.width - sw)
+    // Vaivén lateral pequeño: el triángulo no se aleja del centro del anillo.
+    val sx = ((image.width - sw) / 2 + sin(t / 11000f) * (image.width - sw) * 0.08f).coerceIn(0f, image.width - sw)
     // El triángulo (a ~56 % del alto de athos_view.webp) queda a la altura del anillo.
     val sy = (image.height * TRIANGLE_Y - sh * RING_Y).coerceIn(0f, image.height - sh)
     drawImage(
         image, IntOffset(sx.toInt(), sy.toInt()), IntSize(sw.toInt(), sh.toInt()),
         IntOffset(b.left.toInt(), b.top.toInt()), IntSize(w.toInt(), h.toInt()),
     )
+    // 1b) Cuando habla el asistente, el triángulo «habla»: ondula por franjas, se separa en
+    //     azul y cobre, brilla y lanza ondas, todo al ritmo de la voz.
+    val speaking = com.cockpitf30.assistant.VoiceAssistant.state.value.phase == com.cockpitf30.assistant.AssistantPhase.ANSWERING
+    val lvl = if (speaking) com.cockpitf30.assistant.SpeechPulse.level(t) else 0f
+    if (lvl > 0.02f) drawTriangleVoice(b, image, sx, sy, sw, sh, lvl, t)
     // Laterales oscurecidos para leer las cifras; el centro (el triángulo) queda limpio.
     drawRect(
         Brush.horizontalGradient(
@@ -284,6 +290,69 @@ internal fun DrawScope.drawAthos(b: Rect, image: ImageBitmap, feed: AthosFeed, t
     if (cams.near.isNotEmpty()) {
         centered(tm, "${cams.near.size} RADARES EN ZONA", st.mono, Color(0xFFFF8A7A), Offset(c.x, c.y + r * 1.05f))
     }
+}
+
+/** Caja del triángulo en athos_view.webp (px de la imagen). */
+private const val TRI_X0 = 555f
+private const val TRI_X1 = 1040f
+private const val TRI_Y0 = 135f
+private const val TRI_Y1 = 580f
+
+private fun DrawScope.drawTriangleVoice(b: Rect, image: ImageBitmap, sx: Float, sy: Float, sw: Float, sh: Float, lvl: Float, t: Long) {
+    val kx = b.width / sw; val ky = b.height / sh
+    fun dx(ix: Float) = b.left + (ix - sx) * kx
+    fun dy(iy: Float) = b.top + (iy - sy) * ky
+    val center = Offset(dx((TRI_X0 + TRI_X1) / 2), dy(TRI_Y0 + (TRI_Y1 - TRI_Y0) * 0.5f))
+    val size = (TRI_Y1 - TRI_Y0) * ky
+
+    // Halo que respira con la voz.
+    drawCircle(
+        Brush.radialGradient(listOf(AthosBlue.copy(alpha = 0.45f * lvl), AthosBlue.copy(alpha = 0.12f * lvl), Color.Transparent), center, size * (0.55f + 0.15f * lvl)),
+        size * (0.55f + 0.15f * lvl), center, blendMode = BlendMode.Plus,
+    )
+    // Separación de color: copias del triángulo teñidas de azul y cobre, desplazadas a los lados.
+    val boxSrc = IntOffset(TRI_X0.toInt(), TRI_Y0.toInt())
+    val boxSize = IntSize((TRI_X1 - TRI_X0).toInt(), (TRI_Y1 - TRI_Y0).toInt())
+    val dstSize = IntSize(((TRI_X1 - TRI_X0) * kx).toInt(), ((TRI_Y1 - TRI_Y0) * ky).toInt())
+    val split = 1.5f + 4f * lvl
+    drawImage(image, boxSrc, boxSize, IntOffset((dx(TRI_X0) - split).toInt(), dy(TRI_Y0).toInt()), dstSize,
+        alpha = 0.30f * lvl, colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(AthosBlue, BlendMode.Modulate), blendMode = BlendMode.Plus)
+    drawImage(image, boxSrc, boxSize, IntOffset((dx(TRI_X0) + split).toInt(), dy(TRI_Y0).toInt()), dstSize,
+        alpha = 0.26f * lvl, colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(AthosCopper, BlendMode.Modulate), blendMode = BlendMode.Plus)
+    // Ondulación por franjas horizontales y, con la voz alta, alguna franja que salta (glitch).
+    val strips = 30
+    val stripH = (TRI_Y1 - TRI_Y0) / strips
+    val glitch = if (lvl > 0.55f) (((t / 70) * 2654435761L) ushr 7).toInt().let { ((it % strips) + strips) % strips } else -1
+    for (k in 0 until strips) {
+        val iy = TRI_Y0 + k * stripH
+        var off = lvl * 4.5f * sin(iy * 0.05f + t / 85f) + lvl * 2f * sin(iy * 0.21f - t / 47f)
+        if (k == glitch || k == glitch + 1) off += lvl * 11f * if ((t / 70) % 2 == 0L) 1f else -1f
+        if (abs(off) < 0.6f) continue
+        drawImage(
+            image, IntOffset(TRI_X0.toInt(), iy.toInt()), IntSize((TRI_X1 - TRI_X0).toInt(), stripH.toInt() + 1),
+            IntOffset((dx(TRI_X0) + off).toInt(), dy(iy).toInt()), IntSize(dstSize.width, (stripH * ky).toInt() + 1),
+            alpha = 0.85f,
+        )
+    }
+    // Ondas que salen del triángulo mientras habla.
+    for (i in 0 until 3) {
+        val f = ((t / 1100f) + i / 3f) % 1f
+        val rr = size * (0.35f + 0.75f * f)
+        drawCircle(AthosBlue.copy(alpha = (1f - f) * 0.55f * lvl), rr, center, style = Stroke(1.5f + 2f * lvl), blendMode = BlendMode.Plus)
+    }
+    // Línea de «forma de onda» bajo el triángulo, como un ecualizador fino.
+    val ww = size * 0.9f
+    val wy = center.y + size * 0.56f
+    val p = Path()
+    val n = 48
+    for (i in 0..n) {
+        val x = center.x - ww / 2 + ww * i / n
+        val env = sin(Math.PI * i / n).toFloat()
+        val y = wy - env * lvl * size * 0.08f * sin(i * 0.9f + t / 40f) * (0.6f + 0.4f * sin(i * 0.37f - t / 90f))
+        if (i == 0) p.moveTo(x, y) else p.lineTo(x, y)
+    }
+    drawPath(p, AthosBlue.copy(alpha = 0.35f), style = Stroke(5f), blendMode = BlendMode.Plus)
+    drawPath(p, Color.White.copy(alpha = 0.8f * lvl + 0.2f), style = Stroke(1.4f))
 }
 
 private fun DrawScope.spark(ring: AthosFeed.Ring, r: Rect, color: Color) {
