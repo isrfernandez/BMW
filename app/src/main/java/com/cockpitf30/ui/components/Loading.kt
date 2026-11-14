@@ -33,6 +33,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -97,97 +98,83 @@ object Startup {
 }
 
 /**
- * Pantalla de arranque: el vídeo del usuario (triángulo de cristal y rótulo «CockPit F30»).
- * Mientras se ve, la app se carga detrás (precarga de MainActivity). Se ve entero, centrado a
- * toda la altura, con los laterales fundidos a negro porque es casi 16:9 y la pantalla 21:8.
- * Al acabar funde a negro; si la precarga aún no ha terminado espera en negro (como mucho hasta
- * [maxMs] desde el arranque). Entonces avisa con [Startup.splashDone] (barrido de agujas y
- * después el saludo) y el negro se retira dejando ver la app.
+ * Pantalla de arranque: la imagen del usuario (núcleo geométrico y rótulo «CockPit F30»).
+ * Antes era un vídeo: tardaba en salir (el sonido se oía antes que la imagen) y se entrecortaba
+ * mientras la app cargaba detrás. Ahora la imagen se decodifica aparte y, cuando está lista,
+ * aparece desde negro a la vez que empieza el sonido del logo, con su golpe al terminar el
+ * fundido. Se queda [HOLD_MS], espera a la precarga (como mucho [maxMs]), funde a negro, avisa con
+ * [Startup.splashDone] (barrido de agujas y saludo) y el negro se retira dejando ver la app.
  */
 @Composable
-@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-fun StartupSplash(maxMs: Long = 12_000) {
+fun StartupSplash(maxMs: Long = 9_000) {
     // Si la actividad se recrea, el arranque ya pasó: no se repite.
     if (remember { Startup.splashDone.value }) return
     val ctx = androidx.compose.ui.platform.LocalContext.current
-    val black = remember { androidx.compose.animation.core.Animatable(0f) }
+    val shown = remember { androidx.compose.animation.core.Animatable(0f) }
     var gone by remember { mutableIntStateOf(0) } // 1 = el negro se retira
-    val player = remember {
-        androidx.media3.exoplayer.ExoPlayer.Builder(ctx).build().apply {
-            // El sonido del logo suena encima de lo que haya (radio, música) sin quitarle el foco.
-            setAudioAttributes(
-                androidx.media3.common.AudioAttributes.Builder()
-                    .setUsage(androidx.media3.common.C.USAGE_MEDIA)
-                    .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_SONIFICATION)
-                    .build(),
-                false,
-            )
-            setMediaItem(androidx.media3.common.MediaItem.fromUri(androidx.media3.datasource.RawResourceDataSource.buildRawResourceUri(R.raw.intro)))
-            prepare()
-            playWhenReady = true
-        }
-    }
-    androidx.compose.runtime.DisposableEffect(player) { onDispose { player.release() } }
-    LaunchedEffect(player) {
+    var image by remember { androidx.compose.runtime.mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    LaunchedEffect(Unit) {
         val started = System.currentTimeMillis()
-        // Fin del vídeo: el fundido a negro termina justo cuando acaba (o al fallar el vídeo).
-        while (true) {
-            val st = player.playbackState
-            if (player.playerError != null || st == androidx.media3.common.Player.STATE_ENDED) break
-            val dur = player.duration
-            if (st == androidx.media3.common.Player.STATE_READY && dur > 0 && dur - player.currentPosition <= FADE_MS) break
-            if (System.currentTimeMillis() - started > maxMs) break
-            delay(40)
+        // Imagen y sonido se preparan a la vez, fuera del hilo principal.
+        val sound = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            image = runCatching {
+                android.graphics.BitmapFactory.decodeResource(ctx.resources, R.drawable.splash_cockpit)?.asImageBitmapCompat()
+            }.getOrNull()
+            runCatching { logoPlayer(ctx) }.getOrNull()
         }
-        black.animateTo(1f, androidx.compose.animation.core.tween(FADE_MS.toInt(), easing = androidx.compose.animation.core.LinearEasing))
-        // En negro hasta que la app esté lista (imágenes y lista de apps).
+        // Mismo fotograma: empieza el fundido desde negro y suena el logo.
+        withFrameNanos { }
+        runCatching { sound?.start() }
+        shown.animateTo(1f, androidx.compose.animation.core.tween(FADE_IN_MS, easing = androidx.compose.animation.core.LinearOutSlowInEasing))
+        delay(HOLD_MS)
+        // Si la app aún no ha terminado de cargar, la imagen sigue (como mucho hasta maxMs).
         while (!Startup.ready.value && System.currentTimeMillis() - started < maxMs) delay(50)
-        player.stop()
+        shown.animateTo(0f, androidx.compose.animation.core.tween(FADE_OUT_MS, easing = androidx.compose.animation.core.LinearEasing))
         Startup.splashDone.value = true
         gone = 1
+        delay(1_500)
+        runCatching { sound?.release() }
     }
-    // Proporción real del vídeo: se lee del propio fichero, así basta con cambiar res/raw/intro.mp4.
-    var aspect by remember { androidx.compose.runtime.mutableFloatStateOf(1920f / 720f) }
-    androidx.compose.runtime.DisposableEffect(player) {
-        val l = object : androidx.media3.common.Player.Listener {
-            override fun onVideoSizeChanged(v: androidx.media3.common.VideoSize) {
-                if (v.width > 0 && v.height > 0) aspect = v.width * v.pixelWidthHeightRatio / v.height
-            }
-        }
-        player.addListener(l)
-        onDispose { player.removeListener(l) }
-    }
-    AnimatedVisibility(gone == 0, enter = androidx.compose.animation.EnterTransition.None, exit = fadeOut(androidx.compose.animation.core.tween(500))) {
-        androidx.compose.foundation.layout.BoxWithConstraints(
+    AnimatedVisibility(gone == 0, enter = androidx.compose.animation.EnterTransition.None, exit = fadeOut(androidx.compose.animation.core.tween(400))) {
+        Box(
             Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { } },
             contentAlignment = Alignment.Center,
         ) {
-            // Entero y centrado: a toda la altura si es más estrecho que la pantalla (laterales
-            // fundidos a negro), a todo el ancho si es más panorámico.
-            val narrower = aspect < maxWidth / maxHeight
-            Box(if (narrower) Modifier.fillMaxHeight().aspectRatio(aspect) else Modifier.fillMaxWidth().aspectRatio(aspect)) {
-                androidx.compose.ui.viewinterop.AndroidView(
-                    factory = { c -> android.view.TextureView(c).also { player.setVideoTextureView(it) } },
-                    modifier = Modifier.fillMaxSize(),
+            image?.let {
+                androidx.compose.foundation.Image(
+                    it, contentDescription = "CockPit F30",
+                    modifier = Modifier.fillMaxSize().graphicsLayer { alpha = shown.value },
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                 )
-                if (narrower) {
-                    val edge = androidx.compose.ui.graphics.Brush.horizontalGradient(
-                        0f to Color.Black, 0.07f to Color.Black.copy(alpha = 0.55f), 0.14f to Color.Transparent,
-                        0.86f to Color.Transparent, 0.93f to Color.Black.copy(alpha = 0.55f), 1f to Color.Black,
-                    )
-                    Box(Modifier.fillMaxSize().background(edge))
-                }
             }
-            Box(Modifier.fillMaxSize().graphicsLayer { alpha = black.value }.background(Color.Black))
         }
     }
 }
 
-// res/raw/intro.mp4: el vídeo del usuario (1920×720) a 24 fps, algo más nítido y con los laterales
-// fundidos en un fondo desenfocado del propio vídeo (H.264). Audio: el sonido de logo del usuario
-// (AAC, 1,7 s) con su golpe (0,65 s) sobre el destello del vídeo (0,67 s).
-// Para cambiarlo basta con sustituir el fichero: duración y proporción se leen al reproducirlo.
-private const val FADE_MS = 700L
+private fun android.graphics.Bitmap.asImageBitmapCompat(): androidx.compose.ui.graphics.ImageBitmap = asImageBitmap()
+
+/** Sonido del logo como multimedia sin pedir el foco de audio: suena encima de la radio sin pararla. */
+private fun logoPlayer(ctx: android.content.Context): android.media.MediaPlayer {
+    val afd = ctx.resources.openRawResourceFd(R.raw.logo_sound)
+    return android.media.MediaPlayer().apply {
+        setAudioAttributes(
+            android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build(),
+        )
+        setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+        afd.close()
+        prepare()
+    }
+}
+
+// res/drawable-nodpi/splash_cockpit.webp: la imagen del usuario a 1920×720 (la franja con el
+// núcleo y el rótulo, con los laterales prolongados y fundidos). res/raw/logo_sound.ogg: su sonido
+// de logo (2,2 s) con el golpe a ~0,55 s, justo al acabar el fundido de entrada.
+private const val FADE_IN_MS = 550
+private const val HOLD_MS = 2_200L
+private const val FADE_OUT_MS = 500
 
 /**
  * «COCKPIT F30»: COCKPIT fino y muy espaciado en plata, F30 en cobre pulido, con un filo de luz

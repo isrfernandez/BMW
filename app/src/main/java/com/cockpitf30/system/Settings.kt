@@ -53,6 +53,14 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_ASSISTANT, true)
         set(value) = prefs.edit().putBoolean(KEY_ASSISTANT, value).apply()
 
+    /**
+     * Volumen de la voz del asistente en % (10..150) sobre el volumen general: para equilibrarla
+     * con Maps y la radio. Por encima de 100 % solo sube la voz TARS (se amplifica la señal).
+     */
+    var assistantVolume: Int
+        get() = prefs.getInt("assistant_volume", 100)
+        set(value) = prefs.edit().putInt("assistant_volume", value.coerceIn(10, 150)).apply()
+
     /** Responder también en voz alta (si la radio tiene motor de voz). */
     var assistantSpeaks: Boolean
         get() = prefs.getBoolean(KEY_ASSISTANT_TTS, true)
@@ -297,6 +305,11 @@ class AppSettings(context: Context) {
     var tripSummary: Boolean
         get() = prefs.getBoolean("trip_summary", true)
         set(value) = prefs.edit().putBoolean("trip_summary", value).apply()
+
+    /** Inicio del último viaje cuyo resumen ya se enseñó (para no repetirlo ni perderlo). */
+    var lastSummaryStart: Long
+        get() = prefs.getLong("last_summary_start", 0L)
+        set(value) = prefs.edit().putLong("last_summary_start", value).apply()
 
     /** Flecha de cambio de marcha en el cuadro. */
     /** Con Maps u otra app delante, seguir escuchando «Hola BMW» (servicio en primer plano con micrófono). */

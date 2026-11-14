@@ -85,8 +85,11 @@ fun RadioScreen() {
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         SourceTab("FM · antena", RadioSource.FM, tab == RadioSource.FM, enabled = st.tunerAvailable == true) { tab = RadioSource.FM }
                         SourceTab("Internet", RadioSource.INTERNET, tab == RadioSource.INTERNET, enabled = true) { tab = RadioSource.INTERNET }
-                        Spacer(Modifier.weight(1f))
-                        st.error?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = Color(0xFFFFC94D), maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(520.dp)) }
+                        // Siempre a la vista (antes solo al final del panel de FM y quedaba fuera de pantalla).
+                        SmallButton("Prueba FM") { Radio.runFmTest() }
+                        Box(Modifier.weight(1f)) {
+                            st.error?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = Color(0xFFFFC94D), maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                        }
                     }
                     val test by Radio.fmTest.collectAsStateWithLifecycle()
                     when {
@@ -170,7 +173,6 @@ private fun NowPlaying(st: RadioState, modifier: Modifier, first: FocusRequester
                 SmallButton("◂ Buscar") { Radio.fmSeek(-1) }
                 SmallButton("Buscar ▸") { Radio.fmSeek(1) }
                 SmallButton("Explorar") { Radio.fmScan() }
-                SmallButton("Prueba FM") { Radio.runFmTest() }
             }
         }
     }

@@ -50,6 +50,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
@@ -206,6 +207,7 @@ object VoiceAssistant {
     private var ttsReady = false
     private var google: SpeechRecognizer? = null
     private var unmuteJob: Job? = null
+    private var deferJob: Job? = null
 
     private fun settings() = AppSettings(app)
     private fun hasMic() = ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -283,6 +285,10 @@ object VoiceAssistant {
             !VoiceModel.isReady(app) -> install()
             audioJob?.isActive == true || google != null -> Unit
             phase == AssistantPhase.LOADING -> Unit
+            // Cargar el modelo de Vosk pesa: espera a que pase la imagen de inicio (arranque más ágil).
+            !com.cockpitf30.ui.components.Startup.splashDone.value -> if (deferJob?.isActive != true) {
+                deferJob = scope.launch { com.cockpitf30.ui.components.Startup.splashDone.first { it }; delay(1_500); refresh() }
+            }
             else -> startAudio()
         }
     }
@@ -895,7 +901,23 @@ object VoiceAssistant {
      */
     fun announce(text: String, urgent: Boolean = false, onSaid: (() -> Unit)? = null) {
         scope.launch {
-            if (!resumed || _state.value.phase == AssistantPhase.LISTENING) {
+            // Si el motor de voz aún arranca (justo al encender), se espera un poco en vez de
+            // enseñar el subtítulo sin voz.
+            if (!ttsReady && ::app.isInitialized) {
+                initTts()
+                var w = 0L
+                while (!ttsReady && w < TTS_WAIT_MS && _tts.value == TtsStatus.STARTING) { delay(100); w += 100 }
+            }
+            if (urgent && _state.value.phase != AssistantPhase.ANSWERING) {
+                // Un radar se dice siempre: aunque la app esté detrás (Maps) o se esté escuchando.
+                // Antes se descartaba en esos casos y el halo se ponía rojo sin aviso hablado.
+                logState("aviso urgente: «${text.take(40)}»" + if (!resumed) " (app detrás)" else "")
+                conversation.record(null, null, text, System.currentTimeMillis())
+                say(text)
+                onSaid?.invoke()
+                return@launch
+            }
+            if (!urgent && (!resumed || _state.value.phase == AssistantPhase.LISTENING)) {
                 logState("aviso descartado (${if (!resumed) "app fuera de pantalla" else "escuchando"}): «${text.take(30)}»")
                 return@launch
             }
@@ -926,6 +948,34 @@ object VoiceAssistant {
 
     /** Para que otros módulos (briefing) dejen constancia en Diagnóstico. */
     fun note(what: String) = logState(what)
+
+    /** Contexto para avisar sin pantalla (radares desde el servicio). */
+    fun attach(context: Context) {
+        if (!::app.isInitialized) app = context.applicationContext
+    }
+
+    /**
+     * Arranca el motor de voz al encender (mientras se ve la imagen de inicio) y le hace sintetizar
+     * una palabra a un fichero, sin sonido: así carga la voz y el briefing suena al instante. Antes
+     * el motor se iniciaba al mostrarse la app y la primera frase tardaba varios segundos.
+     */
+    fun warmUp(context: Context) {
+        attach(context)
+        scope.launch {
+            initTts()
+            var w = 0L
+            while (!ttsReady && w < 15_000 && _tts.value == TtsStatus.STARTING) { delay(100); w += 100 }
+            val t = tts ?: return@launch
+            if (!ttsReady) { logState("voz: no lista para precalentar (${_tts.value.text})"); return@launch }
+            val f = java.io.File(app.cacheDir, "warmup.wav")
+            val started = System.currentTimeMillis()
+            runCatching { t.synthesizeToFile("Hola.", Bundle(), f, "warmup") }
+            logState("voz precalentada (motor listo en ${w} ms)")
+            // Sin aviso de fin para «warmup»: se borra luego.
+            delay(10_000)
+            if (System.currentTimeMillis() - started >= 10_000) f.delete()
+        }
+    }
 
     /**
      * Una respuesta que llega después (p. ej. el resumen de Wikipedia que se estaba descargando):
@@ -1447,6 +1497,8 @@ object VoiceAssistant {
     }
 
     private const val ROBOT_ID = "robot-"
+    /** Espera máxima a que arranque el motor de voz antes de decir un aviso. */
+    private const val TTS_WAIT_MS = 6_000L
     private const val REPLY_ID = "reply-"
     private var replySeq = 0
     /** Id de la frase que se está diciendo: los avisos de otras se ignoran. */
@@ -1521,6 +1573,13 @@ object VoiceAssistant {
         return next
     }
 
+    /** Ajustes: una frase corta con el volumen nuevo (se corta si se vuelve a pulsar). */
+    fun testVolume(context: Context) {
+        app = context.applicationContext
+        initTts()
+        say("Volumen del asistente al ${settings().assistantVolume} por ciento.")
+    }
+
     /** Diagnóstico: probar la voz con una frase. */
     fun testVoice(context: Context) {
         app = context.applicationContext
@@ -1591,10 +1650,22 @@ object VoiceAssistant {
         }
     }
 
+    /** Volumen propio del asistente (Ajustes), 0..1 para el motor de voz. */
+    private fun volumeFraction(): Float = (settings().assistantVolume / 100f).coerceIn(0.05f, 1f)
+
+    private fun volumeParams(): Bundle = Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volumeFraction()) }
+
+    /** Voz TARS por encima de 100 %: se amplifica la señal (recortando picos). */
+    private fun gained(samples: ShortArray): ShortArray {
+        val g = settings().assistantVolume / 100f
+        if (g <= 1.01f) return samples
+        return ShortArray(samples.size) { i -> (samples[i] * g).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort() }
+    }
+
     /** Dice con la voz normal los trozos desde [from] (en cola, uno tras otro). */
     private fun speakPlain(t: TextToSpeech, chunks: List<String>, from: Int) {
         for (i in from until chunks.size) {
-            t.speak(chunks[i], if (i == from) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, "$replyId#$i")
+            t.speak(chunks[i], if (i == from) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, volumeParams(), "$replyId#$i")
         }
         // El aviso real es onDone del último trozo; esto es solo por si el motor no lo manda.
         val left = chunks.drop(from).sumOf { it.length }
@@ -1660,7 +1731,7 @@ object VoiceAssistant {
                             .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
                             .setBufferSizeInBytes(maxOf(minBuf, rate)) // ~0,5 s
                             .setTransferMode(AudioTrack.MODE_STREAM)
-                            .build().also { it.play() }
+                            .build().also { it.setVolume(volumeFraction()); it.play() }
                     }.onFailure { Log.w(TAG, "AudioTrack", it) }.getOrNull()
                     if (track == null) {
                         robotBroken = true
@@ -1672,7 +1743,8 @@ object VoiceAssistant {
                 // Mientras suena este trozo, todo él cuenta como «ya dicho» (para no tomar su eco por una orden).
                 spokenPos = speechOffsets.getOrNull(i + 1) ?: (_state.value.reply?.length ?: 0)
                 val tr = track
-                val n = withContext(Dispatchers.IO) { runCatching { tr.write(pcm.samples, 0, pcm.samples.size) }.getOrDefault(-1) }
+                val out = gained(pcm.samples)
+                val n = withContext(Dispatchers.IO) { runCatching { tr.write(out, 0, out.size) }.getOrDefault(-1) }
                 if (n < 0 || replyId != rid) return
                 written += n
             }

@@ -233,6 +233,15 @@ class VendorCar private constructor(
 
     fun readAll(): Map<String, Any?> = read(PREFIXES)
 
+    /** Ajuste de texto del almacén del fabricante (CarDataManager.getString), o null. */
+    fun getString(key: String): String? = runCatching {
+        data.javaClass.getMethod("getString", String::class.java, String::class.java).invoke(data, key, null) as String?
+    }.getOrNull()
+
+    /** Escribe un ajuste de texto (CarDataManager.setString, como hace el propio sistema con SettingData). */
+    fun setString(key: String, value: String): Boolean =
+        data.javaClass.getMethod("setString", String::class.java, String::class.java).invoke(data, key, value) as? Boolean ?: false
+
     /** Claves que empiezan por cualquiera de [prefixes] (p. ej. "data.radio.") con su valor. */
     fun read(prefixes: List<String>): Map<String, Any?> {
         val out = LinkedHashMap<String, Any?>()

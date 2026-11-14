@@ -125,6 +125,46 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                // FM por la antena: la prueba que hace falta para depurar el sintonizador.
+                val fm by com.cockpitf30.radio.Radio.fmTest.collectAsStateWithLifecycle()
+                val radio by com.cockpitf30.radio.Radio.state.collectAsStateWithLifecycle()
+                DiagCard("Radio FM (sintonizador)") {
+                    Info("Sintonizador: " + when (radio.tunerAvailable) { true -> "accesible"; false -> "no accesible"; null -> "comprobando" } + " · " + radio.tunerInfo, Cockpit.TextDim)
+                    radio.error?.let { Info(it, Cockpit.Alert) }
+                    fm?.let { t ->
+                        Info(if (t.running) "Prueba FM en marcha…" else (t.lines.firstOrNull { it.startsWith("Resultado:") } ?: "Prueba FM hecha (${t.lines.size} líneas)"), Cockpit.BlueLight)
+                    }
+                    ChipRow(listOf("Prueba FM", "Compartir prueba FM", "Guardar prueba FM en Descargas"), -1) {
+                        val lines = fm?.takeIf { !it.running }?.lines
+                        when {
+                            it == 0 -> com.cockpitf30.radio.Radio.runFmTest()
+                            lines == null -> com.cockpitf30.radio.Radio.runFmTest()
+                            it == 1 -> shareReport(context, lines.joinToString("\n"), "Cockpit F30 prueba FM")
+                            else -> saveReport(context, lines.joinToString("\n"), "cockpit-prueba-fm")
+                        }
+                    }
+                    fm?.takeIf { !it.running }?.lines?.take(30)?.forEach { Mono(it) }
+                }
+            }
+            item {
+                DiagCard("Botón de voz del volante") {
+                    Info(com.cockpitf30.assistant.VoiceButton.claimNote, Cockpit.TextDim)
+                    Info("Pulsa el botón y mira «Eventos de entrada» (abajo): se apunta cualquier tecla, aviso del coche o apertura de la app de voz.", Cockpit.TextDim)
+                    ChipRow(listOf("Volver a asignar la tecla de voz"), -1) {
+                        Thread({ com.cockpitf30.assistant.VoiceButton.claim(context) }, "boton-voz").start()
+                    }
+                }
+            }
+            item {
+                val tripLog by com.cockpitf30.vehicle.trip.TripComputer.summaryLog.collectAsStateWithLifecycle()
+                DiagCard("Resumen al apagar el motor") {
+                    Info("Se enseña al apagar el motor (rpm a cero o ACC apagado) si el trayecto pasa de ${com.cockpitf30.vehicle.trip.TripComputer.SUMMARY_MIN_KM} km; si la radio se apaga antes, al volver a arrancar.", Cockpit.TextDim)
+                    ChipRow(listOf("Ver el resumen ahora"), -1) { com.cockpitf30.vehicle.trip.TripComputer.showSummary() }
+                    if (tripLog.isEmpty()) Info("Sin eventos todavía", Cockpit.TextDim)
+                    tripLog.take(15).forEach { Mono(it) }
+                }
+            }
+            item {
                 DiagCard("GPS") {
                     val fix = route.fix
                     Info(gpsText(route, now).third, if (gpsText(route, now).second) Cockpit.Text else Cockpit.Alert)

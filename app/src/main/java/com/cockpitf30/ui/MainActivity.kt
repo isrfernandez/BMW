@@ -105,6 +105,8 @@ class MainActivity : ComponentActivity() {
             com.cockpitf30.ui.components.Startup.ready.value = true
         }, "precarga").apply { priority = Thread.MIN_PRIORITY + 2 }.start()
 
+        // El motor de voz arranca ya, mientras se ve la imagen: el briefing sonará sin esperar.
+        VoiceAssistant.warmUp(this)
         openRequested(intent)
         setContent {
             CockpitTheme {
@@ -350,17 +352,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
             delay(5000)
         }
     }
-    // Radares: aviso hablado al acercarse a uno que queda delante. Tiempo en ruta: se recalcula solo.
-    DisposableEffect(Unit) {
-        com.cockpitf30.nav.SpeedCameras.onAlert = { v ->
-            if (AppSettings(ctx).alertOn(com.cockpitf30.nav.AlertCategory.RADAR)) {
-                val limit = v.camera.maxspeed?.let { ", límite $it" } ?: ""
-                val what = if (v.camera.kind == "Tramo") "Tramo de radar" else "Radar"
-                VoiceAssistant.announce(urgent = true, text = "$what a ${com.cockpitf30.ui.components.radarDistance(v.meters).replace(" m", " metros").replace(" km", " kilómetros")}$limit")
-            }
-        }
-        onDispose { com.cockpitf30.nav.SpeedCameras.onAlert = null }
-    }
+    // Radares: el aviso hablado lo pone CockpitApp (sigue aunque la pantalla de la app no esté).
     // Avisos en ruta (peligros, descanso, turismo, combustible): los dice el asistente.
     DisposableEffect(Unit) {
         val deliver: (com.cockpitf30.nav.RouteAlert) -> Boolean = { VoiceAssistant.announceIfFree(it.speech) }
@@ -379,6 +371,8 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
         // Los avisos en ruta esperan al briefing (antes salía antes la información turística).
         if (com.cockpitf30.assistant.StartupBriefing.due(ctx)) com.cockpitf30.nav.RouteAlerts.holdUntil = System.currentTimeMillis() + 45_000
         com.cockpitf30.ui.components.Startup.splashDone.first { it }
+        // Resumen del viaje que terminó con la radio apagada (si lo hay).
+        launch { repeat(3) { delay(3_000); com.cockpitf30.vehicle.trip.TripComputer.showPendingSummary() } }
         com.cockpitf30.assistant.StartupBriefing.maybeRun(ctx)
     }
     // Al elegir Sport se abre Rendimiento (relojes de potencia y G-meter).

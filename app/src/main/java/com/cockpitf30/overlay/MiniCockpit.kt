@@ -141,7 +141,8 @@ object MiniCockpit {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             this.x = x.coerceAtLeast(0)
-            this.y = if (y >= 0) y else 14
+            // Por debajo de la barra superior de la radio (antes quedaba encima y costaba moverlo).
+            this.y = if (y >= topMin()) y else defaultY()
         }
         val o = OverlayOwner()
         val v = ComposeView(app).apply {
@@ -186,12 +187,18 @@ object MiniCockpit {
         update()
     }
 
+    /** Lo más arriba que puede ir: bajo la barra de estado de la radio (~10 % de la altura). */
+    private fun topMin(): Int = (app.resources.displayMetrics.heightPixels * 0.10f).toInt()
+
+    /** Posición inicial: algo más abajo, para no rozar la barra al cogerlo. */
+    private fun defaultY(): Int = (app.resources.displayMetrics.heightPixels * 0.15f).toInt()
+
     private fun moveBy(dx: Float, dy: Float) {
         val p = params ?: return
         val m = app.resources.displayMetrics
         val v = view ?: return
         p.x = (p.x + dx.toInt()).coerceIn(0, (m.widthPixels - v.width).coerceAtLeast(0))
-        p.y = (p.y + dy.toInt()).coerceIn(0, (m.heightPixels - v.height).coerceAtLeast(0))
+        p.y = (p.y + dy.toInt()).coerceIn(topMin(), (m.heightPixels - v.height).coerceAtLeast(topMin()))
         update()
     }
 

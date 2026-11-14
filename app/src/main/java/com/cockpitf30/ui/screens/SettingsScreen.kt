@@ -198,6 +198,16 @@ private fun AssistantSettings() {
         ToggleRow("Responde en voz alta", "Si lo quitas, las respuestas solo salen en pantalla.", talks, enabled = on) {
             talks = it; settings.assistantSpeaks = it
         }
+        if (talks) {
+            var vol by remember { mutableStateOf(settings.assistantVolume) }
+            StepperRow(
+                "Volumen del asistente",
+                "Su voz respecto al volumen general, para equilibrarla con Maps y la radio. Más de 100 % solo con la voz TARS.",
+                "$vol %",
+                onMinus = { vol = (vol - 10).coerceAtLeast(10); settings.assistantVolume = vol; assistant.testVolume(ctx) },
+                onPlus = { vol = (vol + 10).coerceAtMost(150); settings.assistantVolume = vol; assistant.testVolume(ctx) },
+            )
+        }
         var follow by remember { mutableStateOf(settings.assistantFollowUp) }
         ToggleRow("Sigue escuchando tras responder", "Puedes decir «otra», «¿y mañana?» o «repite» sin volver a decir «Hola BMW».", follow, enabled = on) {
             follow = it; settings.assistantFollowUp = it

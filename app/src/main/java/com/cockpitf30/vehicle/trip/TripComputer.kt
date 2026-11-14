@@ -58,6 +58,24 @@ object TripComputer {
     private var engineSeen = false
     private var engineOffSince = 0L
     private var summarizedStart = 0L
+    /** ACC (contacto) de la caja CAN en el tick anterior: true/false, null = no se sabe. */
+    private var lastAcc: Boolean? = null
+
+    /** Resumen de un viaje que terminó con la radio apagada: se enseña al arrancar ([showPendingSummary]). */
+    private var pendingSummary: Trip? = null
+
+    /** Qué ha pasado con el resumen (Diagnóstico), lo más nuevo primero. */
+    private val _summaryLog = MutableStateFlow<List<String>>(emptyList())
+    val summaryLog: StateFlow<List<String>> = _summaryLog
+
+    /** Trayecto mínimo (km) para enseñar el resumen al parar. */
+    const val SUMMARY_MIN_KM = 1.0
+
+    private fun logSummary(what: String) {
+        val t = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+        _summaryLog.value = (listOf("$t $what") + _summaryLog.value).take(30)
+        android.util.Log.i("TripComputer", what)
+    }
     /** Metros del cuentakilómetros aún sin guardar. */
     private var odoPendingM = 0.0
 
@@ -99,11 +117,25 @@ object TripComputer {
     /** Enseña el resumen del viaje en curso (o del último). */
     fun showSummary(now: Long = System.currentTimeMillis()) {
         val s = _state.value
-        val trip = s.current ?: s.last ?: return
+        val trip = s.current ?: s.last ?: run { logSummary("sin viaje que resumir"); return }
+        if (::settings.isInitialized && !s.demo) settings.lastSummaryStart = trip.startMillis
+        logSummary("resumen enseñado (${"%.1f".format(trip.distanceKm)} km)")
         _summary.value = TripSummaryInfo(trip, TripScore.of(trip, s.tankLiters), TripHistory.week(withCurrent(s, trip, now), now), s.tankLiters, now)
     }
 
     fun dismissSummary() { _summary.value = null }
+
+    /** Al arrancar la app: el resumen del viaje que terminó con la radio apagada, si lo hay. */
+    fun showPendingSummary() {
+        val trip = pendingSummary ?: return
+        pendingSummary = null
+        if (!::settings.isInitialized || !settings.tripSummary) { logSummary("resumen pendiente omitido: desactivado en Ajustes"); return }
+        val s = _state.value
+        if (s.current != null) { logSummary("resumen pendiente omitido: ya hay otro viaje en curso"); return }
+        settings.lastSummaryStart = trip.startMillis
+        logSummary("resumen pendiente enseñado (${"%.1f".format(trip.distanceKm)} km)")
+        _summary.value = TripSummaryInfo(trip, TripScore.of(trip, s.tankLiters), TripHistory.week(s.history, System.currentTimeMillis()), s.tankLiters, System.currentTimeMillis())
+    }
 
     /** El histórico contando también el viaje en curso (para la semana del resumen). */
     private fun withCurrent(s: TripsState, trip: Trip, now: Long) =
@@ -134,6 +166,13 @@ object TripComputer {
             last = TripMath.finish(current)
             history = TripHistory.add(history, TripRecord.from(last, settings.tankLiters), now)
             current = null
+            // La radio se apagó con el motor antes de poder enseñar el resumen: se enseña ahora.
+            val done = last
+            if (done != null && done.distanceKm >= SUMMARY_MIN_KM && settings.lastSummaryStart != done.startMillis &&
+                now - done.endMillis < 12 * 3_600_000L) {
+                pendingSummary = done
+                logSummary("viaje de ${"%.1f".format(done.distanceKm)} km terminó con la radio apagada: resumen pendiente para el arranque")
+            }
         }
         _state.value = TripsState(current, last, settings.tankLiters, history = history)
         persist()
@@ -197,17 +236,44 @@ object TripComputer {
      * con el coche quieto. Se enseña el resumen una vez por viaje.
      */
     private fun checkEngineOff(now: Long, rpm: Int?, speed: Int?, trip: Trip?) {
+        val acc = accState()
+        val accOff = lastAcc == true && acc == false
+        if (acc != lastAcc && acc != null) logSummary("ACC ${if (acc) "encendido" else "apagado"}")
+        lastAcc = acc ?: lastAcc
         if (trip == null) return
-        if ((rpm ?: 0) >= 400) { engineSeen = true; engineOffSince = 0L; return }
+        if ((rpm ?: 0) >= 400) {
+            if (!engineSeen) logSummary("motor en marcha ($rpm rpm)")
+            engineSeen = true; engineOffSince = 0L
+            if (!accOff) return
+        }
+        // Con el contacto quitado no se espera: la radio puede apagarse en un par de segundos.
+        if (accOff) return summarize(now, trip, "ACC apagado")
         if (!engineSeen || (speed ?: 0) > 2) { engineOffSince = 0L; return }
         if (engineOffSince == 0L) engineOffSince = now
-        if (now - engineOffSince < ENGINE_OFF_MS || summarizedStart == trip.startMillis) return
-        summarizedStart = trip.startMillis
+        if (now - engineOffSince < ENGINE_OFF_MS) return
         engineSeen = false
-        if (trip.distanceKm >= TripHistory.MIN_KM * 2 && ::settings.isInitialized && settings.tripSummary) showSummary(now)
+        summarize(now, trip, "rpm a cero ${ENGINE_OFF_MS / 1000} s")
     }
 
-    private const val ENGINE_OFF_MS = 4_000L
+    private fun summarize(now: Long, trip: Trip, why: String) {
+        if (summarizedStart == trip.startMillis) return
+        summarizedStart = trip.startMillis
+        engineSeen = false
+        when {
+            trip.distanceKm < SUMMARY_MIN_KM -> logSummary("motor parado ($why) pero el trayecto es corto: ${"%.2f".format(trip.distanceKm)} km")
+            !::settings.isInitialized || !settings.tripSummary -> logSummary("motor parado ($why): resumen desactivado en Ajustes")
+            else -> { logSummary("motor parado ($why)"); showSummary(now) }
+        }
+    }
+
+    /** Contacto (ACC) según la caja CAN o el servicio del coche: null si no se sabe. */
+    private fun accState(): Boolean? {
+        val v = com.cockpitf30.vehicle.source.RadioCarData.values.value
+        val raw = v["can.acc"] ?: v["state.main.acc"] ?: return null
+        return when (raw.trim().lowercase()) { "true", "1" -> true; "false", "0" -> false; else -> null }
+    }
+
+    private const val ENGINE_OFF_MS = 3_000L
 
     private fun persist() {
         val s = _state.value

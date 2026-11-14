@@ -102,6 +102,14 @@
             </intent-filter>
         </activity>
 
+        <!-- Botón de voz del volante: el servicio del coche nos manda este aviso (ajuste data.set.voice_app). -->
+        <receiver
+            android:name=".assistant.VoiceButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.cockpitf30.action.VOICE_BUTTON" />
+            </intent-filter>
+        </receiver>
         <!-- Botón de voz del volante, si la radio abre «la app de voz»: actúa como «Hola BMW». -->
         <activity
             android:name=".assistant.VoiceButtonActivity"
