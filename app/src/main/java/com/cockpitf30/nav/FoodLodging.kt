@@ -38,6 +38,19 @@ data class Stay(
      * comida rápida restan.
      */
     val score: Int = 0,
+    /** Calle y número, y localidad si viene. */
+    val address: String? = null,
+    /** Horario tal como lo da OSM («Mo-Fr 09:00-14:00»); [hoursText] lo pone en español. */
+    val hours: String? = null,
+    val website: String? = null,
+    /** Foto: etiqueta «image» (URL), «wikimedia_commons» (File:…) o la de Wikidata (P18). */
+    val image: String? = null,
+    val commons: String? = null,
+    val wikidata: String? = null,
+    val wikipedia: String? = null,
+    /** «Terraza», «Para llevar», «Opciones vegetarianas»… */
+    val features: List<String> = emptyList(),
+    val description: String? = null,
 ) {
     val point get() = GeoPoint(lat, lon)
     val what: String get() = FoodLodging.describe(tag)
@@ -214,7 +227,38 @@ object FoodLodging {
             if (tag("cuisine") != null) score += 1
             tag("stars")?.toIntOrNull()?.let { score += it.coerceIn(0, 5) }
             if (tag("brand") != null && t == "fast_food") score -= 2
-            out += Stay("$type${e.getLong("id")}", lat, lon, kind, t, name, detail, tag("phone") ?: tag("contact:phone"), score)
+            val street = tag("addr:street")?.let { st -> tag("addr:housenumber")?.let { "$st, $it" } ?: st }
+            val town = tag("addr:city") ?: tag("addr:place")
+            val address = listOfNotNull(street, town).joinToString(" · ").ifBlank { null }
+            val features = buildList {
+                if (tag("outdoor_seating") == "yes") add("Terraza")
+                if (tag("takeaway") == "yes" || tag("takeaway") == "only") add("Para llevar")
+                if (tag("delivery") == "yes") add("A domicilio")
+                if (tag("diet:vegetarian") in setOf("yes", "only")) add("Opciones vegetarianas")
+                if (tag("diet:vegan") in setOf("yes", "only")) add("Opciones veganas")
+                if (tag("diet:gluten_free") in setOf("yes", "only")) add("Sin gluten")
+                if (tag("wheelchair") == "yes") add("Accesible")
+                if (tag("internet_access") in setOf("wlan", "yes", "wifi")) add("Wifi")
+                if (tag("parking") != null || tag("capacity:caravans") != null) add("Aparcamiento")
+                if (tag("air_conditioning") == "yes") add("Aire acondicionado")
+                if (tag("swimming_pool") == "yes") add("Piscina")
+                if (tag("dog") == "yes" || tag("pets") == "yes") add("Admite perros")
+                if (tag("reservation") in setOf("yes", "recommended", "required")) add(if (tag("reservation") == "required") "Hay que reservar" else "Se puede reservar")
+                tag("rooms")?.toIntOrNull()?.let { add("$it habitaciones") }
+                tag("beds")?.toIntOrNull()?.let { add("$it camas") }
+            }
+            out += Stay(
+                "$type${e.getLong("id")}", lat, lon, kind, t, name, detail, tag("phone") ?: tag("contact:phone") ?: tag("contact:mobile"), score,
+                address = address,
+                hours = tag("opening_hours"),
+                website = tag("website") ?: tag("contact:website") ?: tag("url"),
+                image = tag("image")?.takeIf { it.startsWith("http") },
+                commons = tag("wikimedia_commons")?.takeIf { it.startsWith("File:", ignoreCase = true) },
+                wikidata = tag("wikidata"),
+                wikipedia = tag("wikipedia"),
+                features = features,
+                description = tag("description:es") ?: tag("description"),
+            )
         }
         return out.distinctBy { it.id }
     }
@@ -247,6 +291,33 @@ object FoodLodging {
     )
 
     private fun cuisine(v: String): String? = v.split(';', ',').map { it.trim().lowercase() }.firstNotNullOfOrNull { CUISINE[it] }
+
+    /** «Mo-Fr 09:00-14:00; Sa 10:00-14:00» → «L-V 09:00-14:00 · S 10:00-14:00». */
+    fun hoursText(h: String): String {
+        if (h.trim() == "24/7") return "Abierto 24 horas"
+        val days = mapOf("Mo" to "L", "Tu" to "M", "We" to "X", "Th" to "J", "Fr" to "V", "Sa" to "S", "Su" to "D", "PH" to "festivos")
+        var t = h
+        days.forEach { (en, es) -> t = t.replace(Regex("\\b$en\\b"), es) }
+        return t.replace(" off", " cerrado").replace("closed", "cerrado").split(';').map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" · ")
+    }
+
+    private val photos = HashMap<String, ByteArray?>()
+
+    /**
+     * Foto del sitio (bloqueante, en IO): la URL de «image», el archivo de Commons o la imagen de
+     * su ficha de Wikidata. null si no tiene ninguna (entonces la pantalla pone un mapa).
+     */
+    fun photo(s: Stay): ByteArray? {
+        synchronized(photos) { if (photos.containsKey(s.id)) return photos[s.id] }
+        val bytes = runCatching {
+            val url = s.image?.takeIf { it.matches(Regex("(?i).+\\.(jpe?g|png|webp)(\\?.*)?$")) }
+                ?: s.commons?.let { Wiki.commonsThumb(it.substringAfter(':')) }
+                ?: s.wikidata?.let { Wiki.wikidataImage(it) }?.let { Wiki.commonsThumb(it) }
+            url?.let { Wiki.download(it) }
+        }.getOrNull()
+        synchronized(photos) { photos[s.id] = bytes }
+        return bytes
+    }
 
     /** ¿Hora de comer o de cenar? (13:00–15:30 y 20:00–22:30) */
     fun mealTime(cal: Calendar = Calendar.getInstance()): Boolean {

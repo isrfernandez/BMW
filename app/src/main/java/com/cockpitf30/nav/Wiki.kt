@@ -81,6 +81,24 @@ object Wiki {
         return out
     }
 
+    /** Miniatura de 640 px de un archivo de Wikimedia Commons («Casa Pepe.jpg»). */
+    fun commonsThumb(file: String): String =
+        "https://commons.wikimedia.org/wiki/Special:FilePath/" + URLEncoder.encode(file.trim().replace(' ', '_'), "UTF-8").replace("+", "%20") + "?width=640"
+
+    /** Archivo de la imagen principal (P18) de un Wikidata, o el logotipo (P154) si no hay. */
+    fun wikidataImage(qid: String): String? {
+        val json = get("https://www.wikidata.org/w/api.php?action=wbgetclaims&format=json&entity=" + URLEncoder.encode(qid, "UTF-8")) ?: return null
+        val claims = JSONObject(json).optJSONObject("claims") ?: return null
+        for (prop in listOf("P18", "P154")) {
+            val v = claims.optJSONArray(prop)?.optJSONObject(0)?.optJSONObject("mainsnak")?.optJSONObject("datavalue")?.optString("value")
+            if (!v.isNullOrBlank()) return v
+        }
+        return null
+    }
+
+    /** Descarga una imagen (bloqueante, en IO). */
+    fun download(url: String): ByteArray? = bytes(url)
+
     private fun esTitle(qid: String): String? {
         val json = get("https://www.wikidata.org/w/api.php?action=wbgetentities&props=sitelinks&sitefilter=eswiki&format=json&ids=" + URLEncoder.encode(qid, "UTF-8"))
             ?: return null

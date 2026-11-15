@@ -11,7 +11,7 @@ import org.junit.Test
 class FoodLodgingTest {
     private val json = """
         {"elements":[
-          {"type":"node","id":1,"lat":40.40,"lon":-3.70,"tags":{"amenity":"restaurant","name":"Casa Pepe","cuisine":"regional","website":"x","opening_hours":"x"}},
+          {"type":"node","id":1,"lat":40.40,"lon":-3.70,"tags":{"amenity":"restaurant","name":"Casa Pepe","cuisine":"regional","website":"x","opening_hours":"Mo-Fr 13:00-16:00; Su off","outdoor_seating":"yes","addr:street":"Calle Mayor","addr:housenumber":"3","wikimedia_commons":"File:Casa Pepe.jpg"}},
           {"type":"node","id":2,"lat":40.41,"lon":-3.71,"tags":{"amenity":"bar","name":"Bar Manolo"}},
           {"type":"way","id":3,"center":{"lat":40.42,"lon":-3.72},"tags":{"tourism":"hotel","name":"Hotel Sol","stars":"3"}},
           {"type":"node","id":4,"lat":40.43,"lon":-3.73,"tags":{"tourism":"camp_site","name":"Camping El Pinar"}},
@@ -31,6 +31,15 @@ class FoodLodgingTest {
         assertEquals("w3", hotel.id)
         assertEquals(StayKind.CAMP, list.first { it.name.startsWith("Camping") }.kind)
         assertEquals(StayKind.DRINK, list.first { it.name == "Bar Manolo" }.kind)
+    }
+
+    @Test fun parsesDetails() {
+        val pepe = FoodLodging.parse(json).first { it.name == "Casa Pepe" }
+        assertEquals("Calle Mayor, 3", pepe.address)
+        assertEquals(listOf("Terraza"), pepe.features)
+        assertEquals("File:Casa Pepe.jpg", pepe.commons)
+        assertEquals("L-V 13:00-16:00 · D cerrado", FoodLodging.hoursText(pepe.hours!!))
+        assertEquals("https://commons.wikimedia.org/wiki/Special:FilePath/Casa_Pepe.jpg?width=640", Wiki.commonsThumb("Casa Pepe.jpg"))
     }
 
     @Test fun alertsOnlyAtMealTimeOrNight() {

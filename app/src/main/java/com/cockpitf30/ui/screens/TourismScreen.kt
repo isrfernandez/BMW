@@ -57,6 +57,7 @@ import com.cockpitf30.ui.components.PanelTitle
 import com.cockpitf30.ui.components.TopBar
 import com.cockpitf30.ui.components.TriangleBackground
 import com.cockpitf30.ui.components.alertColor
+import com.cockpitf30.ui.components.drawStationMap
 import com.cockpitf30.ui.components.glassPanel
 import com.cockpitf30.ui.theme.Cockpit
 import com.cockpitf30.ui.theme.numeric
@@ -80,6 +81,7 @@ data class TourItem(
     val popularityText: String?,
     val poi: com.cockpitf30.nav.Poi? = null,
     val phone: String? = null,
+    val stay: com.cockpitf30.nav.Stay? = null,
 )
 
 private enum class TourTab(val label: String) { SEE("Para ver"), EAT("Comer"), SLEEP("Dormir") }
@@ -216,7 +218,7 @@ private fun buildItems(
             stays.filter { it.kind in kinds }.map { s ->
                 TourItem(
                     s.id, s.name, s.what, s.detail, RouteTracker.distance(pos, s.point), rel(s.lat, s.lon), s.lat, s.lon,
-                    s.score, null, phone = s.phone,
+                    s.score, null, phone = s.phone, stay = s,
                 )
             }
         }
@@ -270,31 +272,94 @@ private fun TourDetail(item: TourItem?, tab: TourTab, context: Context) {
         Text("Elige un sitio de la lista.", style = MaterialTheme.typography.bodyLarge, color = Cockpit.TextDim)
         return
     }
-    var wiki by remember(item.id) { mutableStateOf<WikiSummary?>(item.poi?.let { Wiki.cached(it) }) }
-    LaunchedEffect(item.id) { item.poi?.let { p -> if (wiki == null) wiki = withContext(Dispatchers.IO) { Wiki.load(p) } } }
-    val image = remember(wiki) { wiki?.image?.let { b -> runCatching { BitmapFactory.decodeByteArray(b, 0, b.size)?.asImageBitmap() }.getOrNull() } }
+    val stay = item.stay
+    // Sitios: el Wikipedia del punto. Comer y dormir: el suyo si lo tiene (Wikidata / wikipedia de OSM).
+    val wikiPoi = item.poi ?: stay?.takeIf { it.wikidata != null || it.wikipedia != null }?.let {
+        com.cockpitf30.nav.Poi("stay." + it.id, it.lat, it.lon, AlertCategory.FOOD, it.tag, it.name, it.wikipedia, it.wikidata)
+    }
+    var wiki by remember(item.id) { mutableStateOf<WikiSummary?>(wikiPoi?.let { Wiki.cached(it) }) }
+    var wikiDone by remember(item.id) { mutableStateOf(wikiPoi == null || Wiki.isCached(wikiPoi)) }
+    var photo by remember(item.id) { mutableStateOf<ByteArray?>(null) }
+    var photoDone by remember(item.id) { mutableStateOf(stay == null) }
+    LaunchedEffect(item.id) {
+        wikiPoi?.let { p -> if (!wikiDone) { wiki = withContext(Dispatchers.IO) { Wiki.load(p) }; wikiDone = true } }
+        stay?.let { st -> photo = withContext(Dispatchers.IO) { FoodLodging.photo(st) }; photoDone = true }
+    }
+    val bytes = wiki?.image ?: photo
+    val image = remember(bytes) { bytes?.let { b -> runCatching { BitmapFactory.decodeByteArray(b, 0, b.size)?.asImageBitmap() }.getOrNull() } }
     Column(Modifier.fillMaxSize().padding(top = 12.dp)) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            image?.let {
-                Image(it, null, Modifier.fillMaxWidth().height(170.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Crop)
-                Spacer(Modifier.height(12.dp))
+            if (image != null) {
+                Image(image, null, Modifier.fillMaxWidth().height(170.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Crop)
+            } else if (wikiDone && photoDone) {
+                // Sin foto: un mapa pequeño con el sitio y el coche.
+                PlaceMap(item, Modifier.fillMaxWidth().height(170.dp).clip(RoundedCornerShape(12.dp)))
+            } else {
+                Box(Modifier.fillMaxWidth().height(170.dp), contentAlignment = Alignment.Center) {
+                    Text("Buscando foto…", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
+                }
             }
+            Spacer(Modifier.height(12.dp))
             Text(item.name, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(
                 listOfNotNull(item.what, item.detail, "${distance(item.meters)} ${RouteAlerts.side(item.relBearing).second}").joinToString(" · "),
                 style = MaterialTheme.typography.bodyLarge, color = Cockpit.TextDim,
             )
             item.popularityText?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Cockpit.CopperLight) }
-            item.phone?.let { Text("Tel. $it", style = MaterialTheme.typography.bodyLarge, color = Cockpit.TextDim) }
+            if (stay != null) {
+                Spacer(Modifier.height(8.dp))
+                stay.hours?.let { InfoLine("Horario", FoodLodging.hoursText(it)) }
+                stay.phone?.let { InfoLine("Teléfono", it) }
+                stay.address?.let { InfoLine("Dirección", it) }
+                stay.website?.let { InfoLine("Web", it.removePrefix("https://").removePrefix("http://").removePrefix("www.").trimEnd('/')) }
+                if (stay.features.isNotEmpty()) InfoLine("Tiene", stay.features.joinToString(" · "))
+                stay.description?.let { Text(it, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 6.dp)) }
+                if (stay.hours == null && stay.phone == null && stay.address == null && stay.website == null && stay.features.isEmpty() && wiki == null) {
+                    Text(
+                        "OpenStreetMap no tiene más datos de este sitio (horario, teléfono…).",
+                        style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim, modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+            }
             Spacer(Modifier.height(10.dp))
             val text = wiki?.extract?.let { Wiki.firstSentences(it, 520) }
             if (text != null) Text(text, style = MaterialTheme.typography.bodyLarge)
-            else if (item.poi != null) Text("Buscando en Wikipedia…", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
+            else if (wikiPoi != null && !wikiDone) Text("Buscando en Wikipedia…", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
         }
         Spacer(Modifier.height(12.dp))
         FocusTile(onClick = { goTo(context, item.lat, item.lon) }, modifier = Modifier.fillMaxWidth()) {
             Text("Llévame con Google Maps", Modifier.fillMaxWidth().padding(vertical = 14.dp).align(Alignment.Center), style = MaterialTheme.typography.titleMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
+    }
+}
+
+@Composable
+private fun InfoLine(label: String, value: String) {
+    Row(Modifier.padding(vertical = 2.dp)) {
+        Text(label.uppercase(), Modifier.width(110.dp).padding(top = 3.dp), style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
+        Text(value, style = MaterialTheme.typography.bodyLarge, maxLines = 3, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** Mapa pequeño (las teselas del Inicio) centrado en el sitio, con el coche si cabe. */
+@Composable
+private fun PlaceMap(item: TourItem, modifier: Modifier) {
+    val tm = androidx.compose.ui.text.rememberTextMeasurer()
+    val tiles by com.cockpitf30.nav.MapTiles.version.collectAsStateWithLifecycle()
+    val route by RouteTracker.state.collectAsStateWithLifecycle()
+    val numberStyle = numeric(16, FontWeight.Bold)
+    val labelStyle = numeric(13, FontWeight.SemiBold)
+    val point = GeoPoint(item.lat, item.lon)
+    androidx.compose.foundation.Canvas(modifier) {
+        tiles // se vuelve a dibujar cuando llega una tesela
+        val car = route.position
+        val (center, zoom) = if (car != null && item.meters < 4000) {
+            com.cockpitf30.ui.components.fitView(listOf(car, point), size.width / density, size.height / density, 0.7f)
+        } else point to 16f
+        drawStationMap(
+            androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height), center, zoom, car, route.bearing,
+            listOf(com.cockpitf30.ui.components.StationMark(point, 1, true, item.name)), tm, numberStyle, labelStyle, 0f,
+        )
     }
 }
 
