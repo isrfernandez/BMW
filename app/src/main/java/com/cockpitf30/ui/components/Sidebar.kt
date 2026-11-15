@@ -92,7 +92,7 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(9.dp),
     ) {
-        MStripe(Modifier.padding(bottom = 2.dp), segment = 22.dp)
+        AthosStripe(Modifier.padding(bottom = 2.dp), segment = 22.dp)
         items.forEach { item ->
             FocusTile(
                 onClick = item.onClick, onLongClick = item.onLongClick, selected = item.active,

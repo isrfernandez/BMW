@@ -36,8 +36,7 @@ import java.time.format.DateTimeFormatter
  *    perder el foco con una fuente de la MCU activa, se pasa a EmptySource (cortando la radio), y al
  *    recuperarlo nos quitaba el foco a nosotros y nuestra app paraba la FM. La FM ya no pide foco.
  *
- * [trace] guarda paso a paso lo que se pide y lo que contesta, y [runTest] hace una prueba
- * completa para el informe.
+ * [trace] guarda paso a paso lo que se pide y lo que contesta (sale en el informe de Diagnóstico).
  */
 object FactoryTuner {
     private const val TAG = "FactoryTuner"
@@ -208,51 +207,4 @@ object FactoryTuner {
         is Array<*> -> v.joinToString(prefix = "[", postfix = "]")
         else -> v.toString()
     }
-
-    /**
-     * Prueba completa para el informe: lee el estado, entra en la fuente Radio, sintoniza [freq],
-     * busca la siguiente emisora y vuelve a leer, apuntando qué claves cambian. Tarda unos 10 s.
-     */
-    fun runTest(context: Context, freq: Int): List<String> = buildList {
-        add("== Prueba FM (sintonizador de la radio)")
-        val radioApp = runCatching { context.packageManager.getApplicationInfo("android.car.app.radio", 0); true }.getOrDefault(false)
-        add("App de radio de serie (android.car.app.radio): ${if (radioApp) "instalada" else "no instalada"}")
-        add("Propiedad car.ky_home_radio_to_originalcar = ${sysProp("car.ky_home_radio_to_originalcar")}")
-        val vc = VendorCar.connect(context)
-        val car = vc.getOrNull()
-        if (car == null) { add("Sin servicio del coche: ${vc.exceptionOrNull()}"); return@buildList }
-        fun snap(title: String): Map<String, Any?> {
-            val s = snapshot(car)
-            add("-- $title (${s.size} claves) · fuente ${sourceName(s[KEY_SOURCE] as? Int)}")
-            s.toSortedMap().forEach { (k, v) -> add("  $k = ${describe(v)}") }
-            return s
-        }
-        fun diff(title: String, a: Map<String, Any?>, b: Map<String, Any?>) {
-            val changed = (a.keys + b.keys).sorted().filter { describe(a[it]) != describe(b[it]) }
-            add("-- Cambios $title: ${if (changed.isEmpty()) "ninguno" else ""}")
-            changed.forEach { add("  $it: ${describe(a[it])} → ${describe(b[it])}") }
-        }
-        val s0 = snap("Antes")
-        val entered = enter(context)
-        add("Entrar en la fuente Radio: ${if (entered) "SÍ" else "NO"}")
-        val s1 = snapshot(car)
-        diff("al entrar", s0, s1)
-        tune(context, freq)
-        SystemClock.sleep(2500)
-        val s2 = snapshot(car)
-        diff("al sintonizar ${RadioLogic.formatFm(freq)}", s1, s2)
-        seekNext(context)
-        SystemClock.sleep(5000)
-        val s3 = snap("Tras buscar la siguiente emisora")
-        diff("al buscar", s2, s3)
-        val st = status(context)
-        add("Resultado: fuente ${sourceName(st?.source)} · la MCU ${if (st?.mcuAnswered == true) "SÍ" else "NO"} da frecuencia" +
-            (st?.freq?.let { " · ${RadioLogic.formatFm(it)} MHz" } ?: "") + (st?.rds?.let { " · RDS «$it»" } ?: ""))
-        add("-- Órdenes y respuestas")
-        addAll(trace.value)
-    }
-
-    private fun sysProp(key: String): String = runCatching {
-        Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, key) as String
-    }.getOrDefault("?").ifBlank { "(vacía)" }
 }

@@ -48,10 +48,18 @@ class AppSettings(context: Context) {
         get() = IDriveInput.decode(prefs.getString(KEY_KNOB_KEYS, null))
         set(value) = prefs.edit().putString(KEY_KNOB_KEYS, IDriveInput.encode(value)).apply()
 
-    /** Asistente de voz: escuchar «Hola BMW» mientras la app está en pantalla. */
+    /** Asistente de voz: escuchar «Hola Athos» mientras la app está en pantalla. */
     var assistantEnabled: Boolean
         get() = prefs.getBoolean(KEY_ASSISTANT, true)
         set(value) = prefs.edit().putBoolean(KEY_ASSISTANT, value).apply()
+
+    /**
+     * Volumen de la voz del asistente en % (10..150) sobre el volumen general: para equilibrarla
+     * con Maps y la radio. Por encima de 100 % solo sube la voz TARS (se amplifica la señal).
+     */
+    var assistantVolume: Int
+        get() = prefs.getInt("assistant_volume", 100)
+        set(value) = prefs.edit().putInt("assistant_volume", value.coerceIn(10, 150)).apply()
 
     /** Responder también en voz alta (si la radio tiene motor de voz). */
     var assistantSpeaks: Boolean
@@ -74,30 +82,22 @@ class AppSettings(context: Context) {
         get() = prefs.getInt(KEY_ASSISTANT_HUMOR, com.cockpitf30.assistant.Personality.DEFAULT_HUMOR)
         set(value) = prefs.edit().putInt(KEY_ASSISTANT_HUMOR, value.coerceIn(0, 100)).apply()
 
-    /** Sensibilidad de «Hola BMW»: 0 baja (sigla entera y muy clara), 1 normal, 2 alta (como antes). */
+    /** Sensibilidad de «Hola Athos»: 0 baja (sigla entera y muy clara), 1 normal, 2 alta (como antes). */
     var wakeSensitivity: Int
         get() = prefs.getInt("wake_sensitivity", 1)
         set(value) = prefs.edit().putInt("wake_sensitivity", value.coerceIn(0, 2)).apply()
 
-    /** Tras responder, seguir escuchando unos segundos sin «Hola BMW» (conversación seguida). */
+    /** Tras responder, seguir escuchando unos segundos sin «Hola Athos» (conversación seguida). */
     var assistantFollowUp: Boolean
         get() = prefs.getBoolean("assistant_follow_up", true)
         set(value) = prefs.edit().putBoolean("assistant_follow_up", value).apply()
 
-    /**
-     * Interrumpir mientras habla con palabras sueltas («para», «cállate», «pausa»…). Apagado: solo con
-     * «Hola BMW» o tocando el asistente (el micrófono oye su propia voz y la cortaba).
-     */
-    var bargeWords: Boolean
-        get() = prefs.getBoolean("barge_words", false)
-        set(value) = prefs.edit().putBoolean("barge_words", value).apply()
-
-    /** Las órdenes (lo que va tras «Hola BMW») con el reconocedor de Google, si la radio lo tiene. */
+    /** Las órdenes (lo que va tras «Hola Athos») con el reconocedor de Google, si la radio lo tiene. */
     var commandsWithGoogle: Boolean
         get() = prefs.getBoolean("commands_with_google", true)
         set(value) = prefs.edit().putBoolean("commands_with_google", value).apply()
 
-    /** Segundos que sigue escuchando sin «Hola BMW» tras responder (antes 12 s fijos: demasiado). */
+    /** Segundos que sigue escuchando sin «Hola Athos» tras responder (antes 12 s fijos: demasiado). */
     var assistantFollowSeconds: Int
         get() = prefs.getInt("assistant_follow_seconds", 5)
         set(value) = prefs.edit().putInt("assistant_follow_seconds", value.coerceIn(2, 20)).apply()
@@ -301,13 +301,28 @@ class AppSettings(context: Context) {
         get() = prefs.getInt("itv_years", 1)
         set(value) = prefs.edit().putInt("itv_years", value.coerceIn(1, 2)).apply()
 
+    /** Sonido de Athos al arrancar (pantalla de inicio). */
+    var startSound: Boolean
+        get() = prefs.getBoolean("start_sound", true)
+        set(value) = prefs.edit().putBoolean("start_sound", value).apply()
+
+    /** Sonido de Athos al pasar a la vista Athos del cuadro del Inicio. */
+    var athosViewSound: Boolean
+        get() = prefs.getBoolean("athos_view_sound", true)
+        set(value) = prefs.edit().putBoolean("athos_view_sound", value).apply()
+
     /** Ventana de resumen al parar el motor. */
     var tripSummary: Boolean
         get() = prefs.getBoolean("trip_summary", true)
         set(value) = prefs.edit().putBoolean("trip_summary", value).apply()
 
+    /** Inicio del último viaje cuyo resumen ya se enseñó (para no repetirlo ni perderlo). */
+    var lastSummaryStart: Long
+        get() = prefs.getLong("last_summary_start", 0L)
+        set(value) = prefs.edit().putLong("last_summary_start", value).apply()
+
     /** Flecha de cambio de marcha en el cuadro. */
-    /** Con Maps u otra app delante, seguir escuchando «Hola BMW» (servicio en primer plano con micrófono). */
+    /** Con Maps u otra app delante, seguir escuchando «Hola Athos» (servicio en primer plano con micrófono). */
     var listenOutsideApp: Boolean
         get() = prefs.getBoolean("listen_outside_app", true)
         set(value) = prefs.edit().putBoolean("listen_outside_app", value).apply()

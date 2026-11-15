@@ -18,6 +18,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -125,6 +127,52 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                // Google Maps baja la FM con la «mezcla de navegación» de la propia radio (no pasa por la app).
+                val carValues by com.cockpitf30.vehicle.source.RadioCarData.values.collectAsStateWithLifecycle()
+                var mix by remember { mutableStateOf<String?>(null) }
+                var reads by remember { mutableStateOf(0) }
+                LaunchedEffect(reads) {
+                    mix = withContext(Dispatchers.IO) {
+                        runCatching {
+                            val car = com.cockpitf30.vehicle.source.VendorCar.connect(context).getOrThrow()
+                            listOf("gps_app", "gps_mix_level", "gps_sound_mode").joinToString(" · ") { k -> "$k = ${car.getString("data.set.$k") ?: "∅"}" }
+                        }.getOrElse { "no se puede leer ($it)" }
+                    }
+                }
+                DiagCard("Mezcla del navegador (FM con Google Maps)") {
+                    Info("Ajustes de la radio: ${mix ?: "leyendo…"}", Cockpit.TextDim)
+                    val gpsSound = carValues.entries.filter { "gps_sound" in it.key || "gps_mix" in it.key }.joinToString(" · ") { "${it.key} = ${it.value}" }
+                    Info("En vivo: ${gpsSound.ifBlank { "state.main.gps_sound no aparece" }}", Cockpit.TextDim)
+                    Info("Con esta pantalla abierta, deja que Google Maps dé una indicación: si «gps_sound» no cambia, la radio no se entera de que habla el navegador y por eso no baja la FM.", Cockpit.TextDim)
+                    ChipRow(listOf("Volver a leer"), -1) { reads++ }
+                }
+            }
+            item {
+                val radio by com.cockpitf30.radio.Radio.state.collectAsStateWithLifecycle()
+                DiagCard("Radio FM (sintonizador)") {
+                    Info("Sintonizador: " + when (radio.tunerAvailable) { true -> "accesible"; false -> "no accesible"; null -> "comprobando" } + " · " + radio.tunerInfo, Cockpit.TextDim)
+                    radio.error?.let { Info(it, Cockpit.Alert) }
+                }
+            }
+            item {
+                DiagCard("Botón de voz del volante") {
+                    Info(com.cockpitf30.assistant.VoiceButton.claimNote, Cockpit.TextDim)
+                    Info("Pulsa el botón y mira «Eventos de entrada» (abajo): se apunta cualquier tecla, aviso del coche o apertura de la app de voz.", Cockpit.TextDim)
+                    ChipRow(listOf("Volver a asignar la tecla de voz"), -1) {
+                        Thread({ com.cockpitf30.assistant.VoiceButton.claim(context) }, "boton-voz").start()
+                    }
+                }
+            }
+            item {
+                val tripLog by com.cockpitf30.vehicle.trip.TripComputer.summaryLog.collectAsStateWithLifecycle()
+                DiagCard("Resumen al apagar el motor") {
+                    Info("Se enseña al apagar el motor (rpm a cero o ACC apagado) si el trayecto pasa de ${com.cockpitf30.vehicle.trip.TripComputer.SUMMARY_MIN_KM} km; si la radio se apaga antes, al volver a arrancar.", Cockpit.TextDim)
+                    ChipRow(listOf("Ver el resumen ahora"), -1) { com.cockpitf30.vehicle.trip.TripComputer.showSummary() }
+                    if (tripLog.isEmpty()) Info("Sin eventos todavía", Cockpit.TextDim)
+                    tripLog.take(15).forEach { Mono(it) }
+                }
+            }
+            item {
                 DiagCard("GPS") {
                     val fix = route.fix
                     Info(gpsText(route, now).third, if (gpsText(route, now).second) Cockpit.Text else Cockpit.Alert)
@@ -186,6 +234,7 @@ fun DiagnosticsScreen() {
                 val assistant = com.cockpitf30.assistant.VoiceAssistant
                 val voice by assistant.state.collectAsStateWithLifecycle()
                 val ttsStatus by assistant.ttsStatus.collectAsStateWithLifecycle()
+                val stateLog by assistant.stateLog.collectAsStateWithLifecycle()
                 DiagCard("Asistente de voz (técnico)") {
                     Info("Motor de voz: ${ttsStatus.text}" + (assistant.ttsEngine?.let { " · $it" } ?: "") + (assistant.ttsLastError?.let { " · $it" } ?: ""),
                         if (ttsStatus == com.cockpitf30.assistant.VoiceAssistant.TtsStatus.READY) Cockpit.TextDim else Cockpit.Alert)
@@ -199,6 +248,10 @@ fun DiagnosticsScreen() {
                     assistant.lastCut?.let { Info("Último corte de voz: $it", Cockpit.TextDim) }
                     assistant.lastSpeechEnd?.let { Info("Última frase dicha: $it", Cockpit.TextDim) }
                     Info("Reconocedor de Google: " + if (android.speech.SpeechRecognizer.isRecognitionAvailable(context)) "disponible" else "no disponible", Cockpit.TextDim)
+                    if (stateLog.isNotEmpty()) {
+                        Info("Registro (lo más nuevo arriba):", Cockpit.TextDim)
+                        stateLog.take(15).forEach { Mono(it) }
+                    }
                 }
             }
             item {
@@ -286,7 +339,7 @@ private fun buildReport(
     input: List<String>,
 ): String = buildString {
     val dm = context.resources.displayMetrics
-    appendLine("Cockpit F30 ${installedVersion(context)} · informe de diagnóstico · ${java.time.LocalDateTime.now()}")
+    appendLine("Athos ${installedVersion(context)} · informe de diagnóstico · ${java.time.LocalDateTime.now()}")
     appendLine("Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT}) · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · ${android.os.Build.DISPLAY}")
     appendLine("Pantalla ${dm.widthPixels}x${dm.heightPixels} ${dm.densityDpi} dpi")
     appendLine()
@@ -331,8 +384,8 @@ private fun radioReport(values: Map<String, String>, changes: List<String>, vehi
     appendLine()
     appendLine("== Sintonizador FM")
     com.cockpitf30.radio.FactoryTuner.lastProbe?.let { appendLine("Comprobación: ${it.reason}") }
-    com.cockpitf30.radio.Radio.fmTest.value?.takeIf { !it.running }?.lines?.forEach(::appendLine)
-        ?: run { appendLine("(sin «Prueba FM»; últimas órdenes:)"); com.cockpitf30.radio.FactoryTuner.trace.value.forEach(::appendLine) }
+    appendLine("(últimas órdenes:)")
+    com.cockpitf30.radio.FactoryTuner.trace.value.forEach(::appendLine)
     appendLine()
     appendLine("== Datos del coche (radio)")
     appendLine(vehicleSummary(vehicle))
@@ -349,7 +402,7 @@ private fun radioReport(values: Map<String, String>, changes: List<String>, vehi
     changes.forEach(::appendLine)
 }
 
-internal fun shareReport(context: android.content.Context, text: String, subject: String = "Cockpit F30 diagnóstico") {
+internal fun shareReport(context: android.content.Context, text: String, subject: String = "Athos diagnóstico") {
     val send = android.content.Intent(android.content.Intent.ACTION_SEND)
         .setType("text/plain")
         .putExtra(android.content.Intent.EXTRA_SUBJECT, subject)

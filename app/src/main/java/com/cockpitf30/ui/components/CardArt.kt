@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -48,6 +49,7 @@ enum class CardTheme(val from: Color, val to: Color) {
     RADAR(Color(0xFFFF3B30), Color(0xFFFFC94D)),
     SERVICE(Color(0xFF00A88F), Color(0xFF9CFFD9)),
     RADIO(Color(0xFF1C69D8), Color(0xFF3DDC97)),
+    TOURISM(Color(0xFFB8733F), Color(0xFF7FD3FF)),
 }
 
 /**
@@ -111,6 +113,10 @@ fun BoxScope.CardArt(theme: CardTheme) {
         CardTheme.SERVICE -> Box(Modifier.align(Alignment.TopEnd).padding(top = 14.dp, end = 30.dp).size(160.dp)) {
             Canvas(Modifier.fillMaxSize()) { rings(theme) }
             GlassBadge(theme, Modifier.align(Alignment.Center).size(110.dp)) { GradientIcon(Icons.Filled.DateRange, theme, 50) }
+        }
+        CardTheme.TOURISM -> Box(Modifier.align(Alignment.TopEnd).padding(top = 14.dp, end = 30.dp).size(160.dp)) {
+            Canvas(Modifier.fillMaxSize()) { rings(theme) }
+            GlassBadge(theme, Modifier.align(Alignment.Center).size(110.dp)) { GradientIcon(Icons.Filled.Place, theme, 54) }
         }
         CardTheme.WEATHER, CardTheme.MODE, CardTheme.RADAR, CardTheme.RADIO -> Unit
     }

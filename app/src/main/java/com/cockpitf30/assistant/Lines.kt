@@ -188,6 +188,7 @@ object Lines {
             "{greet}. Tú conduces, yo hablo.", "{greet}. Listo para lo que mandes.",
         ),
         "hello.serio" to listOf("{greet}. ¿En qué te ayudo?", "{greet}, {name}. Dime."),
+        "whoareyou.serio" to listOf("Soy Athos, el asistente del coche. ¿En qué te ayudo?"),
         "howareyou" to listOf(
             "Bien. Todos mis sistemas funcionan, que es más de lo que puede decir el sensor de puertas.",
             "Estupendamente. No tengo ni sueño ni hambre ni hipoteca.",
@@ -197,9 +198,9 @@ object Lines {
         ),
         "howareyou.serio" to listOf("Bien, gracias. ¿Y tú?", "Todo en orden. ¿Qué necesitas?"),
         "whoareyou" to listOf(
-            "Soy el asistente del coche. Abro pantallas, te digo el tiempo, busco gasolineras y cuento chistes regulares.",
-            "Tu copiloto digital. No ocupo sitio y no toco la radio.",
-            "Un robot con humor ajustable. Ahora mismo, al {humor} por ciento.",
+            "Soy Athos, el asistente del coche. Abro pantallas, te digo el tiempo, busco gasolineras y cuento chistes regulares.",
+            "Athos, tu copiloto digital. Me llamo como el monte griego: fiable y estable. No ocupo sitio y no toco la radio.",
+            "Soy Athos. Un robot con humor ajustable. Ahora mismo, al {humor} por ciento.",
         ),
         "age" to listOf(
             "Unos días. Pero muy bien llevados.", "Soy más joven que el coche. Y mucho más hablador.",

@@ -85,7 +85,13 @@ fun AmbientGlow(modifier: Modifier = Modifier) {
         // Sumar luz (Plus) sobre blanco no se ve: en diurno se pinta el color tal cual.
         val blendMode = if (Cockpit.Light) BlendMode.SrcOver else BlendMode.Plus
         // Los cuatro bordes: envuelve la pantalla.
-        drawRect(Brush.verticalGradient(listOf(c, Color.Transparent), endY = edge), size = Size(size.width, edge), blendMode = blendMode)
+        // Arriba, más ancho y con más cuerpo: en la radio la barra de estado del sistema tapa los
+        // primeros píxeles y con el ancho de los lados no se veía nada.
+        val top = edge * 2.6f
+        drawRect(
+            Brush.verticalGradient(0f to c, 0.45f to c.copy(alpha = 0.6f), 1f to Color.Transparent, endY = top),
+            size = Size(size.width, top), blendMode = blendMode,
+        )
         drawRect(Brush.horizontalGradient(listOf(c, Color.Transparent), endX = edge), size = Size(edge, size.height), blendMode = blendMode)
         drawRect(
             Brush.horizontalGradient(listOf(Color.Transparent, c), startX = size.width - edge, endX = size.width),

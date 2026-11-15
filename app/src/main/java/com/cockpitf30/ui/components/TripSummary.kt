@@ -120,7 +120,7 @@ internal fun SummaryPanel(s: TripSummaryInfo) {
             Column(Modifier.weight(1f)) {
                 Text(if (s.trip.finished) "ÚLTIMO TRAYECTO" else "TRAYECTO TERMINADO", style = MaterialTheme.typography.labelLarge, color = Cockpit.TextDim)
                 Spacer(Modifier.height(6.dp))
-                MStripe()
+                AthosStripe()
             }
             FocusTile(onClick = { TripComputer.dismissSummary() }, modifier = Modifier.focusRequester(close)) {
                 Text("Cerrar", Modifier.padding(horizontal = 26.dp, vertical = 12.dp), style = MaterialTheme.typography.titleMedium)

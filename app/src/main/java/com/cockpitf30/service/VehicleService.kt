@@ -48,7 +48,7 @@ class VehicleService : LifecycleService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         // Arrancado desde la app en pantalla: se vuelve a declarar el servicio, ahora también con
-        // micrófono, para que «Hola BMW» siga funcionando con Maps delante.
+        // micrófono, para que «Hola Athos» siga funcionando con Maps delante.
         if (intent?.getBooleanExtra(EXTRA_FROM_UI, false) == true) goForeground()
         if (source == null || intent?.action == ACTION_RESTART) restartSource()
         return START_STICKY

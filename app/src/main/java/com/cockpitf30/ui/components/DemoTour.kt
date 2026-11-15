@@ -73,7 +73,7 @@ object DemoTour {
         Step(Screen.WEATHER, "Tiempo", "Tiempo de aquí y las próximas horas, y el de la ruta."),
         Step(Screen.ROUTE, "Ruta", "Lo que hay por delante: radares, peligros, áreas de descanso y turismo a 10, 25 y 50 km."),
         Step(Screen.RADIO, "Radio", "FM de la radio y emisoras por Internet, con favoritas."),
-        Step(Screen.PHONE, "Teléfono", "Agenda y llamadas; también con la voz: «Hola BMW, llama a…»."),
+        Step(Screen.PHONE, "Teléfono", "Agenda y llamadas; también con la voz: «Hola Athos, llama a…»."),
         Step(Screen.MAINTENANCE, "Mantenimiento", "Aceite, frenos, ITV y demás avisos con los kilómetros que faltan."),
         Step(Screen.APPS, "Apps", "Todas las apps de la radio, en grupos y en el orden que quieras."),
         Step(Screen.PERFORMANCE, "Modo Sport · Rendimiento", "Paleta roja, relojes de potencia y par, G-meter y cronómetro.", 14, mode = DriveMode.SPORT),

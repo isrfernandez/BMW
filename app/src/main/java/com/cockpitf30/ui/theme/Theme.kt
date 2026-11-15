@@ -66,10 +66,6 @@ object Cockpit {
     val SteelBlueDark: Color get() = DriveModes.palette.steelDark
     val SteelBlue: Color get() = DriveModes.palette.steel
     val SteelBlueLight: Color get() = DriveModes.palette.steelLight
-
-    val MLight = Color(0xFF0066B1)
-    val MDark = Color(0xFF1C2D6B)
-    val MRed = Color(0xFFE10600)
 }
 
 /** Inter (licencia OFL) para textos: SemiBold/Bold en títulos. */

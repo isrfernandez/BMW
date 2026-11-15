@@ -85,6 +85,9 @@ object RouteAlerts {
         fun mark(a: RouteAlert, now: Long) { said[a.id] = now; lastByCat[a.category] = now }
         fun recent(id: String, now: Long) = said[id]?.let { now - it < REPEAT_MS } ?: false
         fun since(c: AlertCategory, now: Long) = lastByCat[c]?.let { now - it } ?: Long.MAX_VALUE
+        val byKey = HashMap<String, Long>()
+        fun markKey(k: String, now: Long) { byKey[k] = now }
+        fun sinceKey(k: String, now: Long) = byKey[k]?.let { now - it } ?: Long.MAX_VALUE
     }
 
     private val memory = Memory()
@@ -124,6 +127,7 @@ object RouteAlerts {
 
         val movingMs = TripComputer.state.value.current?.movingMillis
         val pick = choose(near, on, movingMs, now, demo, memory)
+        val food = if (pick == null && AlertCategory.FOOD in on) foodPick(scope, pos, bearing, movingMs, now, demo) else null
         val alert = when {
             pick != null -> {
                 // Turismo: esperar a tener el resumen, salvo que ya esté muy cerca.
@@ -132,6 +136,7 @@ object RouteAlerts {
                     null
                 } else build(pick, movingMs, Wiki.cached(pick.poi))
             }
+            food != null -> food
             AlertCategory.FUEL in on -> {
                 val range = VehicleRepository.state.value.rangeKm
                 if (fuelDue(range, memory, now)) fuelAlert(range!!, stationsAhead(pos, bearing, live), st.tankLiters) else null
@@ -143,6 +148,20 @@ object RouteAlerts {
             memory.mark(alert, now)
             if (!send(alert, now)) pending = alert
         }
+    }
+
+    /** Comer y dormir: descarga lo de alrededor y elige si toca avisar de un restaurante u hotel. */
+    private fun foodPick(scope: CoroutineScope, pos: GeoPoint, bearing: Float, movingMs: Long?, now: Long, demo: Boolean): RouteAlert? {
+        FoodLodging.maybeFetch(scope, pos)
+        val list = FoodLodging.state.value.stays
+        if (list.isEmpty()) return null
+        val near = FoodLodging.views(pos, bearing, list).filter { it.meters < 5000 }
+        val v = FoodLodging.choose(
+            near, FoodLodging.mealTime(), FoodLodging.nightTime(), movingMs, now,
+            memory.sinceKey("food.eat", now), memory.sinceKey("food.stay", now), { memory.recent("stay.$it", now) }, demo,
+        ) ?: return null
+        memory.markKey(if (v.stay.kind == StayKind.EAT || v.stay.kind == StayKind.DRINK) "food.eat" else "food.stay", now)
+        return FoodLodging.alert(v)
     }
 
     private fun send(a: RouteAlert, now: Long): Boolean {
@@ -390,5 +409,5 @@ object RouteAlerts {
     }
 
     /** Para pruebas. */
-    fun reset() { memory.said.clear(); memory.lastByCat.clear(); memory.fuelRange = null; pending = null; _current.value = null; lastTourism = null }
+    fun reset() { memory.said.clear(); memory.lastByCat.clear(); memory.byKey.clear(); memory.fuelRange = null; pending = null; _current.value = null; lastTourism = null }
 }

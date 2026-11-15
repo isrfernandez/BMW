@@ -100,7 +100,7 @@ class RouteAlertsTest {
         assertEquals(Command.Alerts(AlertCategory.RADAR, true), VoiceCommands.parse("activa los avisos de radares"))
         assertEquals(Command.Alerts(AlertCategory.TOURISM, false), VoiceCommands.parse("desactiva la información turística"))
         assertEquals(Command.TourInfo, VoiceCommands.parse("información turística"))
-        assertEquals(Command.TourInfo, VoiceCommands.parse("hola bmw dame información turística"))
+        assertEquals(Command.TourInfo, VoiceCommands.parse("hola athos dame información turística"))
         assertEquals(Command.Alerts(AlertCategory.TOURISM, true), VoiceCommands.parse("activa la información turística"))
         assertEquals(Command.Nearby, VoiceCommands.parse("qué hay por aquí"))
         assertTrue(VoiceCommands.isEcho("a la derecha iglesia de san pedro", "Cerca tienes Iglesia de San Pedro a 300 metros a la derecha."))
