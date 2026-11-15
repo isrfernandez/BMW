@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Cockpit F30</string>
+    <string name="app_name">Athos</string>
     <string name="channel_name">Datos del vehículo</string>
     <string name="notif_title">Leyendo datos del coche</string>
 </resources>

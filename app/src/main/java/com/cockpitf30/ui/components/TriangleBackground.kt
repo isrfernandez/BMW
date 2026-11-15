@@ -39,6 +39,14 @@ import androidx.compose.ui.graphics.graphicsLayer
  */
 @Composable
 fun TriangleBackground(modifier: Modifier = Modifier, dim: Float = 0.12f, content: @Composable BoxScope.() -> Unit) {
+    if (Cockpit.Light) {
+        // Diurno: la malla oscura se ve como una mancha al sol. Fondo claro liso con un degradado
+        // muy suave y los paneles blancos encima.
+        Box(
+            modifier.background(dayBackdrop()),
+        ) { content() }
+        return
+    }
     Box(modifier.background(Cockpit.Background)) {
         Image(
             com.cockpitf30.ui.components.cachedPainter(R.drawable.bg_triangles), null,
@@ -67,13 +75,16 @@ fun TriangleBackground(modifier: Modifier = Modifier, dim: Float = 0.12f, conten
     }
 }
 
+/** Fondo del tema diurno, el mismo detrás de la barra lateral, del Inicio y de las demás pantallas. */
+fun dayBackdrop(): Brush = Brush.verticalGradient(listOf(Color(0xFFF4F6F9), Cockpit.Background, Color(0xFFDDE3EA)))
+
 /**
  * Panel de cristal ahumado para poner datos sobre el fondo de triángulos: relleno oscuro
  * translúcido, brillo suave arriba, filo de luz en el borde superior y borde biselado con un
  * toque del color [tint].
  */
 fun Modifier.glassPanel(corner: Dp = 18.dp, tint: Color = Cockpit.BlueLight, smoke: Float = 0.48f): Modifier =
-    drawBehind {
+    if (Cockpit.Light) lightPanel(corner, tint) else drawBehind {
         val r = CornerRadius(corner.toPx())
         drawRoundRect(Color(0xFF050B14).copy(alpha = smoke), cornerRadius = r)
         drawRoundRect(
@@ -99,6 +110,25 @@ fun Modifier.glassPanel(corner: Dp = 18.dp, tint: Color = Cockpit.BlueLight, smo
             Offset(c, stroke * 1.6f), Offset(w - c, stroke * 1.6f), 1.dp.toPx(),
         )
     }
+
+/**
+ * Panel del tema diurno: tarjeta blanca opaca con sombra corta y borde gris, y una barrita del
+ * color del acento arriba. Sin transparencias: al sol es lo que mejor se lee.
+ */
+private fun Modifier.lightPanel(corner: Dp, tint: Color): Modifier = drawBehind {
+    val r = CornerRadius(corner.toPx())
+    val off = 2.dp.toPx()
+    drawRoundRect(Color(0xFF0B1320).copy(alpha = 0.10f), Offset(0f, off), Size(size.width, size.height), r)
+    drawRoundRect(Color.White, cornerRadius = r)
+    drawRoundRect(Brush.verticalGradient(0f to tint.copy(alpha = 0.06f), 0.3f to Color.Transparent), cornerRadius = r)
+}.drawWithContent {
+    drawContent()
+    val stroke = 1.2.dp.toPx()
+    drawRoundRect(
+        Color(0xFF0B1320).copy(alpha = 0.16f), Offset(stroke / 2, stroke / 2), Size(size.width - stroke, size.height - stroke),
+        CornerRadius(corner.toPx() - stroke / 2), style = Stroke(stroke),
+    )
+}
 
 /** Rótulo de panel: barrita de acento en degradado y texto en versalitas espaciadas. */
 @Composable

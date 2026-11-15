@@ -158,12 +158,18 @@ object Telemetry {
     fun startGps(context: Context) {
         if (locations != null || !WeatherRepository.hasLocationPermission(context)) return
         val lm = context.getSystemService(LocationManager::class.java) ?: return
+        // Sin mirar si el GPS está encendido: si aún no lo está al arrancar, llega en cuanto se encienda.
         runCatching {
-            if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, gpsListener, Looper.getMainLooper())
-                locations = lm
-            }
+            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, gpsListener, Looper.getMainLooper())
+            locations = lm
         }
+    }
+
+    /** El GPS no manda posiciones: se vuelve a pedir (lo llama el vigilante de [com.cockpitf30.nav.RouteTracker]). */
+    fun restartGps(context: Context) {
+        locations?.let { runCatching { it.removeUpdates(gpsListener) } }
+        locations = null
+        startGps(context)
     }
 
     fun stop() {

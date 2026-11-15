@@ -100,15 +100,43 @@ fun TripScreen() {
             }
             Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 SpeedChart(trip, Modifier.weight(1f).fillMaxHeight())
-                Column(Modifier.width(440.dp).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // Semana con la nota de eficiencia del viaje (en curso o último).
+                val week = remember(trips.history, trips.current?.distanceM?.toInt()?.div(500)) {
+                    val now = System.currentTimeMillis()
+                    val list = trips.current?.let { com.cockpitf30.vehicle.trip.TripHistory.add(trips.history, com.cockpitf30.vehicle.trip.TripRecord.from(it, trips.tankLiters), now) } ?: trips.history
+                    com.cockpitf30.vehicle.trip.TripHistory.week(list, now)
+                }
+                val score = remember(trip?.startMillis, trip?.distanceM?.toInt()?.div(500)) { trip?.let { com.cockpitf30.vehicle.trip.TripScore.of(it, trips.tankLiters) } }
+                Column(Modifier.width(420.dp).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(Modifier.fillMaxWidth().height(96.dp).panel(com.cockpitf30.ui.components.scoreColor(score?.score)).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            PanelTitle("Eficiencia", accent = com.cockpitf30.ui.components.scoreColor(score?.score))
+                            Text(score?.tip ?: "Se puntúa a partir de 1 km", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim, maxLines = 2)
+                        }
+                        Text(score?.score?.toString() ?: "--", style = numeric(48, FontWeight.Bold), color = com.cockpitf30.ui.components.scoreColor(score?.score))
+                    }
+                    com.cockpitf30.ui.components.WeekChart(week, Modifier.fillMaxWidth().weight(1f))
+                }
+                Column(Modifier.width(400.dp).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (ongoing) {
                         LastTrip(trips.last, trips.tankLiters, Modifier.fillMaxWidth().weight(1f))
                     } else {
                         Hint(Modifier.fillMaxWidth().weight(1f))
                     }
                     FocusTile(
+                        onClick = { TripComputer.showSummary() },
+                        modifier = Modifier.fillMaxWidth().height(64.dp).focusRequester(first),
+                    ) {
+                        Text(
+                            "Ver resumen del trayecto",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = if (trip != null) Cockpit.Text else Cockpit.TextDim,
+                            modifier = Modifier.align(Alignment.Center),
+                        )
+                    }
+                    FocusTile(
                         onClick = TripComputer::resetTrip,
-                        modifier = Modifier.fillMaxWidth().height(72.dp).focusRequester(first),
+                        modifier = Modifier.fillMaxWidth().height(64.dp),
                     ) {
                         Text(
                             if (ongoing) "Terminar viaje y empezar otro" else "Empezará al mover el coche",
@@ -207,7 +235,7 @@ private fun SpeedChart(trip: Trip?, modifier: Modifier) {
                 val dash = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 6.dp.toPx()))
                 for (v in 0..top step 50) {
                     val y = h * (1f - v / top.toFloat())
-                    drawLine(Color.White.copy(alpha = 0.08f), Offset(0f, y), Offset(w, y), 1.dp.toPx(), pathEffect = dash)
+                    drawLine(Cockpit.Ink.copy(alpha = 0.08f), Offset(0f, y), Offset(w, y), 1.dp.toPx(), pathEffect = dash)
                 }
                 val pts = samples.mapIndexed { i, v -> Offset(w * i / (samples.size - 1), h * (1f - v / top.toFloat())) }
                 val line = Path().apply {

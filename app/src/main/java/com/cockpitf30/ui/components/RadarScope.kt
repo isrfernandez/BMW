@@ -1,5 +1,6 @@
 package com.cockpitf30.ui.components
 
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -47,7 +48,8 @@ fun RadarScope(state: CameraState, modifier: Modifier = Modifier, rangeM: Float 
     val blink by t.animateFloat(0.3f, 1f, infiniteRepeatable(tween(420), RepeatMode.Reverse), label = "blink")
     val measurer = androidx.compose.ui.text.rememberTextMeasurer()
     val label = numeric(12, FontWeight.Medium)
-    Canvas(modifier) {
+    // Capa propia: el barrido se repinta en cada fotograma sin arrastrar al resto de la pantalla.
+    Canvas(modifier.graphicsLayer()) {
         val c = center
         val r = size.minDimension / 2 - 2.dp.toPx()
         val accent = Cockpit.BlueLight

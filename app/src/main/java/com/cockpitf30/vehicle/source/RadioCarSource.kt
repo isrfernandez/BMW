@@ -82,8 +82,10 @@ class RadioCarSource(private val context: Context) : VehicleDataSource {
                     // Las claves "can.*" van al final: mandan sobre las del almacén si coinciden.
                     val can = CanBoxData.values()
                     val all = values + RadioCarData.broadcastValues() + can
-                    // La lista de Diagnóstico no necesita 10 refrescos por segundo.
-                    if (now - lastPublish >= POLL_MS) { RadioCarData.publish(all); lastPublish = now }
+                    // La lista de Diagnóstico no necesita 10 refrescos por segundo; sin Diagnóstico
+                    // delante solo hace falta para los faros (modo Night, mirado cada 5 s).
+                    val publishEvery = if (com.cockpitf30.system.DiagnosticsGate.active) POLL_MS else IDLE_PUBLISH_MS
+                    if (now - lastPublish >= publishEvery) { RadioCarData.publish(all); lastPublish = now }
                     val tank = settings.tankLiters
                     VehicleRepository.updateState { st ->
                         val mapped = CarKeyMapper.apply(st, all)
@@ -150,6 +152,7 @@ class RadioCarSource(private val context: Context) : VehicleDataSource {
 
     companion object {
         private const val POLL_MS = 300L
+        private const val IDLE_PUBLISH_MS = 2000L
         private const val QUERY_MS = 100L
         private const val DEFAULT_L_100KM = 5.5f
         private val BROADCASTS = listOf(
@@ -185,7 +188,8 @@ object RadioCarData {
     fun publish(all: Map<String, Any?>) {
         val shown = all.mapValues { describe(it.value) }
         val before = _values.value
-        if (before.isNotEmpty()) {
+        // El historial de cambios solo se mira en Diagnóstico.
+        if (before.isNotEmpty() && com.cockpitf30.system.DiagnosticsGate.active) {
             val now = LocalTime.now().format(time)
             val diff = buildList {
                 shown.forEach { (k, v) -> val old = before[k]; if (old != v) add("$now $k: ${old ?: "∅"} → $v") }
@@ -227,9 +231,21 @@ class VendorCar private constructor(
     // Referencias fuertes al callback: si el recolector se lo lleva, el servicio deja de avisar.
     private var callback: Any? = null
 
-    fun readAll(): Map<String, Any?> {
+    fun readAll(): Map<String, Any?> = read(PREFIXES)
+
+    /** Ajuste de texto del almacén del fabricante (CarDataManager.getString), o null. */
+    fun getString(key: String): String? = runCatching {
+        data.javaClass.getMethod("getString", String::class.java, String::class.java).invoke(data, key, null) as String?
+    }.getOrNull()
+
+    /** Escribe un ajuste de texto (CarDataManager.setString, como hace el propio sistema con SettingData). */
+    fun setString(key: String, value: String): Boolean =
+        data.javaClass.getMethod("setString", String::class.java, String::class.java).invoke(data, key, value) as? Boolean ?: false
+
+    /** Claves que empiezan por cualquiera de [prefixes] (p. ej. "data.radio.") con su valor. */
+    fun read(prefixes: List<String>): Map<String, Any?> {
         val out = LinkedHashMap<String, Any?>()
-        for (p in PREFIXES) {
+        for (p in prefixes) {
             val items = byPrefix.invoke(data, p) as Array<*>? ?: continue
             for (item in items) {
                 item ?: continue
@@ -283,6 +299,25 @@ class VendorCar private constructor(
     }
 
     private var sendMethod: Method? = null
+    private var syncMethod: Method? = null
+
+    /** Petición al servicio del coche con respuesta, igual que las librerías del fabricante. */
+    fun requestSync(key: String, args: Bundle?): Int {
+        val m = syncMethod ?: generateSequence<Class<*>>(base.javaClass) { it.superclass }
+            .firstNotNullOf { c -> runCatching { c.getDeclaredMethod("requestSync", String::class.java, Bundle::class.java) }.getOrNull() }
+            .apply { isAccessible = true }.also { syncMethod = it }
+        return (m.invoke(base, key, args) as? Int) ?: 0
+    }
+
+    /** Petición sin respuesta (requestOneway). */
+    fun requestOneway(key: String, args: Bundle?) {
+        val m = onewayMethod ?: generateSequence<Class<*>>(base.javaClass) { it.superclass }
+            .firstNotNullOf { c -> runCatching { c.getDeclaredMethod("requestOneway", String::class.java, Bundle::class.java) }.getOrNull() }
+            .apply { isAccessible = true }.also { onewayMethod = it }
+        m.invoke(base, key, args)
+    }
+
+    private var onewayMethod: Method? = null
 
     companion object {
         val CLIENT_PACKAGES = listOf("com.bmw1.launcher2", "android.car.app.canbus")

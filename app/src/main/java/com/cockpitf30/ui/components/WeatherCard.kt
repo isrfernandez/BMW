@@ -43,24 +43,30 @@ fun WeatherCardContent(state: WeatherState, modifier: Modifier = Modifier, anima
     val today = f?.days?.firstOrNull()
     if (compact) {
         // Versión baja para la fila del Inicio: temperatura y estado a la izquierda, lugar y próximos días a la derecha.
+        // Con la escena del tiempo detrás (cielo, siempre oscuro) el texto va en blanco también en diurno.
+        val text = if (animated) Cockpit.OnDark else Cockpit.Text
+        val dim = if (animated) Cockpit.OnDarkDim else Cockpit.TextDim
+        // Con letra muy grande no caben tres días: se enseñan dos.
+        val big = com.cockpitf30.ui.theme.DriveModes.textSize == com.cockpitf30.ui.theme.TextSize.XLARGE
+        val days = if (big) 2 else 3
         Row(modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
-            Column(Modifier.width(120.dp)) {
+            Column(Modifier.width(if (big) 104.dp else 120.dp)) {
                 Spacer(Modifier.weight(1f))
-                Text(f?.let { "${it.tempC}°" } ?: "--°", style = numeric(44, FontWeight.Medium), color = Cockpit.Text)
-                Text(condition?.text ?: "Sin datos", style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(f?.let { "${it.tempC}°" } ?: "--°", style = numeric(44, FontWeight.Medium), color = text, maxLines = 1, softWrap = false)
+                Text(condition?.text ?: "Sin datos", style = MaterialTheme.typography.bodyMedium, color = text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                Text(state.placeName ?: "Elige localidad", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(today?.let { "${it.minC}~${it.maxC}°" } ?: "--~--°", style = numeric(16), color = Cockpit.TextDim)
+                Text(state.placeName ?: "Elige localidad", style = MaterialTheme.typography.titleMedium, color = text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(today?.let { "${it.minC}~${it.maxC}°" } ?: "--~--°", style = numeric(16), color = dim, maxLines = 1)
                 Spacer(Modifier.weight(1f))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    val next = f?.days?.drop(1)?.take(3).orEmpty()
-                    (0 until 3).forEach { i ->
+                Row(horizontalArrangement = Arrangement.spacedBy(if (big) 8.dp else 10.dp)) {
+                    val next = f?.days?.drop(1)?.take(days).orEmpty()
+                    (0 until days).forEach { i ->
                         val d = next.getOrNull(i)
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(d?.let { dayLabel(it.date) } ?: "--", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
+                            Text(d?.let { dayLabel(it.date) } ?: "--", style = MaterialTheme.typography.labelMedium, color = dim, maxLines = 1)
                             WeatherIcon(d?.let { wmoCondition(it.code).kind } ?: WeatherKind.CLOUDY, true, Modifier.size(28.dp))
-                            Text(d?.let { "${it.minC}/${it.maxC}°" } ?: "--/--", style = numeric(14, FontWeight.Medium), maxLines = 1, softWrap = false)
+                            Text(d?.let { "${it.minC}/${it.maxC}°" } ?: "--/--", style = numeric(14, FontWeight.Medium), color = text, maxLines = 1, softWrap = false)
                         }
                     }
                 }

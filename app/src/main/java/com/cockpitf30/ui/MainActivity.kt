@@ -1,6 +1,7 @@
 package com.cockpitf30.ui
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -17,10 +18,13 @@ import androidx.compose.foundation.layout.Row
 import android.content.pm.PackageManager
 import androidx.compose.runtime.DisposableEffect
 import androidx.core.content.ContextCompat
+import com.cockpitf30.ui.components.TripSummaryOverlay
 import com.cockpitf30.assistant.VoiceAssistant
 import com.cockpitf30.ui.components.AssistantOverlay
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -75,6 +79,7 @@ import com.cockpitf30.vehicle.VehicleRepository
 import com.cockpitf30.ui.components.ClusterIntro
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 
@@ -86,6 +91,7 @@ class MainActivity : ComponentActivity() {
         hideSystemBars()
         IDriveInput.learned = AppSettings(this).knobKeys
         com.cockpitf30.ui.theme.DriveModes.load(this)
+        com.cockpitf30.ui.components.DemoTour.recover(this)
         VehicleService.start(this)
         askBatteryExemptionOnce()
         // Lo pesado, en segundo plano y antes de que haga falta: imágenes grandes y lista de apps.
@@ -99,6 +105,9 @@ class MainActivity : ComponentActivity() {
             com.cockpitf30.ui.components.Startup.ready.value = true
         }, "precarga").apply { priority = Thread.MIN_PRIORITY + 2 }.start()
 
+        // El motor de voz arranca ya, mientras se ve la imagen: el briefing sonará sin esperar.
+        VoiceAssistant.warmUp(this)
+        openRequested(intent)
         setContent {
             CockpitTheme {
                 Box(Modifier.fillMaxSize()) {
@@ -117,7 +126,7 @@ class MainActivity : ComponentActivity() {
 
     // Interceptamos aquí, antes que las vistas, para que la ruleta siempre mueva el foco.
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
-        VehicleRepository.logInput(IDriveInput.describe(event))
+        if (com.cockpitf30.system.DiagnosticsGate.active) VehicleRepository.logInput(IDriveInput.describe(event))
         val action = IDriveInput.fromMotion(event) ?: return super.dispatchGenericMotionEvent(event)
         navActions.tryEmit(action)
         return true
@@ -126,13 +135,15 @@ class MainActivity : ComponentActivity() {
     // Falso positivo de lint: sobrescribir dispatchKeyEvent es API pública de Activity.
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(raw: KeyEvent): Boolean {
-        VehicleRepository.logInput(IDriveInput.describe(raw))
-        // Modo aprender (Diagnóstico): la tecla se asigna a la función elegida y no hace nada más.
+        if (com.cockpitf30.system.DiagnosticsGate.active) VehicleRepository.logInput(IDriveInput.describe(raw))
+        // Modo aprender (Ajustes › Sistema): la tecla se asigna a la función elegida y no hace nada más.
         IDriveInput.learn(raw)?.let { map ->
             AppSettings(this).knobKeys = map
             swallowKey = raw.keyCode
             return true
         }
+        // Botón de voz del volante (si llega como tecla): como decir «Hola Athos».
+        if (com.cockpitf30.assistant.VoiceButton.onKey(this, raw)) return true
         if (swallowKey == raw.keyCode) {
             if (raw.action == KeyEvent.ACTION_UP) swallowKey = null
             return true
@@ -159,15 +170,45 @@ class MainActivity : ComponentActivity() {
         return true
     }
 
-    // El asistente solo escucha con la app en pantalla: al salir suelta el micrófono.
+    // Con la app en pantalla el asistente escucha siempre. Al abrir Maps u otra app, si así se ha
+    // elegido en Ajustes, sigue escuchando y aparece el mini cockpit encima; si no, suelta el micrófono.
     override fun onStart() {
         super.onStart()
+        // Se vuelve a arrancar el servicio desde primer plano para que pueda usar el micrófono fuera de la app.
+        VehicleService.start(this)
         VoiceAssistant.resume(this)
+        com.cockpitf30.overlay.MiniCockpit.hide()
     }
 
     override fun onStop() {
-        VoiceAssistant.pause()
+        val settings = AppSettings(this)
+        if (settings.listenOutsideApp && !isChangingConfigurations) VoiceAssistant.background(this) else VoiceAssistant.pause()
+        if (settings.miniCockpit && !isChangingConfigurations) com.cockpitf30.overlay.MiniCockpit.show(this)
         super.onStop()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        openRequested(intent)
+    }
+
+    private fun openRequested(intent: Intent?) {
+        val name = intent?.getStringExtra(EXTRA_SCREEN) ?: return
+        runCatching { Screen.valueOf(name) }.getOrNull()?.let { requestedScreen.value = it }
+    }
+
+    companion object {
+        private const val EXTRA_SCREEN = "screen"
+        /** Pantalla pedida desde fuera (asistente encima de Maps, mini cockpit). */
+        val requestedScreen = kotlinx.coroutines.flow.MutableStateFlow<Screen?>(null)
+
+        /** Vuelve a poner la app delante, en [screen] si se indica. */
+        fun show(context: android.content.Context, screen: Screen? = null) {
+            val i = Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            screen?.let { i.putExtra(EXTRA_SCREEN, it.name) }
+            runCatching { context.startActivity(i) }
+        }
     }
 
     private var swallowKey: Int? = null
@@ -262,7 +303,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 add(Manifest.permission.ACCESS_COARSE_LOCATION)
                 add(Manifest.permission.ACCESS_FINE_LOCATION)
             }
-            // Agenda y llamadas: para «Hola BMW, llama a …».
+            // Agenda y llamadas: para «Hola Athos, llama a …».
             if (!settings.askedContacts) {
                 settings.askedContacts = true
                 if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.READ_CONTACTS)
@@ -282,11 +323,18 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
         }
     }
     // Gasolineras: el listado del Ministerio se descarga como mucho cada 12 h; si falla (p. ej. sin
-    // conexión al arrancar), se reintenta a los 10 minutos.
+    // conexión al arrancar), se reintenta pronto (30 s, 1 min, 2 min… hasta 10 min).
     LaunchedEffect(Unit) {
+        var retry = 30_000L
         while (true) {
             FuelRepository.refresh(ctx)
-            delay(if (FuelRepository.state.value.error != null) 10 * 60 * 1000L else 60 * 60 * 1000L)
+            if (FuelRepository.state.value.error != null) {
+                delay(retry)
+                retry = (retry * 2).coerceAtMost(10 * 60 * 1000L)
+            } else {
+                retry = 30_000L
+                delay(60 * 60 * 1000L)
+            }
         }
     }
     BackHandler(enabled = screen != Screen.HOME) { screen = Screen.HOME }
@@ -304,16 +352,12 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
             delay(5000)
         }
     }
-    // Radares: aviso hablado al acercarse a uno que queda delante. Tiempo en ruta: se recalcula solo.
+    // Radares: el aviso hablado lo pone CockpitApp (sigue aunque la pantalla de la app no esté).
+    // Avisos en ruta (peligros, descanso, turismo, combustible): los dice el asistente.
     DisposableEffect(Unit) {
-        com.cockpitf30.nav.SpeedCameras.onAlert = { v ->
-            if (AppSettings(ctx).radarVoice) {
-                val limit = v.camera.maxspeed?.let { ", límite $it" } ?: ""
-                val what = if (v.camera.kind == "Tramo") "Tramo de radar" else "Radar"
-                VoiceAssistant.announce("$what a ${com.cockpitf30.ui.components.radarDistance(v.meters).replace(" m", " metros").replace(" km", " kilómetros")}$limit")
-            }
-        }
-        onDispose { com.cockpitf30.nav.SpeedCameras.onAlert = null }
+        val deliver: (com.cockpitf30.nav.RouteAlert) -> Boolean = { VoiceAssistant.announceIfFree(it.speech) }
+        com.cockpitf30.nav.RouteAlerts.deliver = deliver
+        onDispose { if (com.cockpitf30.nav.RouteAlerts.deliver === deliver) com.cockpitf30.nav.RouteAlerts.deliver = null }
     }
     LaunchedEffect(Unit) {
         com.cockpitf30.weather.RouteWeather.load(ctx)
@@ -321,6 +365,15 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
             com.cockpitf30.weather.RouteWeather.refresh(ctx)
             delay(2 * 60 * 1000L)
         }
+    }
+    // Briefing al arrancar: saludo con tiempo, autonomía, radares y mantenimiento.
+    LaunchedEffect(Unit) {
+        // Los avisos en ruta esperan al briefing (antes salía antes la información turística).
+        if (com.cockpitf30.assistant.StartupBriefing.due(ctx)) com.cockpitf30.nav.RouteAlerts.holdUntil = System.currentTimeMillis() + 45_000
+        com.cockpitf30.ui.components.Startup.splashDone.first { it }
+        // Resumen del viaje que terminó con la radio apagada (si lo hay).
+        launch { repeat(3) { delay(3_000); com.cockpitf30.vehicle.trip.TripComputer.showPendingSummary() } }
+        com.cockpitf30.assistant.StartupBriefing.maybeRun(ctx)
     }
     // Al elegir Sport se abre Rendimiento (relojes de potencia y G-meter).
     val selectedMode = com.cockpitf30.ui.theme.DriveModes.selected
@@ -334,6 +387,14 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     // Vehículo abre el iDrive original del coche (la caja CAN no da puertas ni presiones):
     // allí está «Estado del vehículo» con las ruedas y su presión.
     val go: (Screen) -> Unit = { if (it == Screen.VEHICLE) openOriginalBmw(ctx) else screen = it }
+    // Modo demo: recorre las pantallas solo; atrás lo detiene.
+    DisposableEffect(Unit) {
+        val nav: (Screen) -> Unit = { screen = it }
+        com.cockpitf30.ui.components.DemoTour.navigator = nav
+        onDispose { if (com.cockpitf30.ui.components.DemoTour.navigator === nav) com.cockpitf30.ui.components.DemoTour.navigator = null }
+    }
+    BackHandler(enabled = com.cockpitf30.ui.components.DemoTour.running) { com.cockpitf30.ui.components.DemoTour.stop() }
+    LaunchedEffect(Unit) { MainActivity.requestedScreen.collect { s -> if (s != null) { MainActivity.requestedScreen.value = null; go(s) } } }
     DisposableEffect(Unit) {
         val nav: (Screen) -> Unit = go
         VoiceAssistant.navigator = nav
@@ -348,24 +409,38 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
         SideItem("Rendimiento", SideArt.PERF, screen == Screen.PERFORMANCE) { screen = Screen.PERFORMANCE },
         SideItem("Música", SideArt.MUSIC, false) { openMusic(context) },
         SideItem("Apps", SideArt.APPS, screen == Screen.APPS) { screen = Screen.APPS },
-        // Ajustes de la app: fuente de datos, puerto serie, batería.
-        SideItem("Ajustes", SideArt.SETTINGS, screen == Screen.DIAGNOSTICS) { screen = Screen.DIAGNOSTICS },
+        // Ajustes de la app por secciones (lo técnico está en Diagnóstico, en la tarjeta del Inicio).
+        SideItem("Ajustes", SideArt.SETTINGS, screen == Screen.SETTINGS) { screen = Screen.SETTINGS },
     )
 
     // Al cambiar de modo se rehace la interfaz entera con la paleta nueva.
-    androidx.compose.runtime.key(com.cockpitf30.ui.theme.DriveModes.current) {
+    androidx.compose.runtime.key(com.cockpitf30.ui.theme.DriveModes.palette, com.cockpitf30.ui.theme.DriveModes.textSize) {
     Row(
         Modifier
             .fillMaxSize()
-            .background(Cockpit.Background)
-            .background(Brush.radialGradient(listOf(Cockpit.Blue.copy(alpha = 0.10f), Cockpit.Background), radius = 1600f)),
+            // El degradado ya termina en el color de fondo opaco: no hace falta pintar el fondo dos veces.
+            .background(
+                if (Cockpit.Light) com.cockpitf30.ui.components.dayBackdrop()
+                else Brush.radialGradient(listOf(Cockpit.Blue.copy(alpha = 0.10f), Cockpit.Background), radius = 1600f),
+            ),
     ) {
         Sidebar(sideItems)
         Box(Modifier.weight(1f).fillMaxHeight()) {
         AnimatedContent(
             screen,
             modifier = Modifier.fillMaxSize(),
-            transitionSpec = { fadeIn() togetherWith fadeOut() },
+            // Deslizamiento con profundidad: la pantalla nueva entra desde un lado y se acerca;
+            // la anterior se aleja y se apaga. Al volver a Home, al revés.
+            transitionSpec = {
+                val back = targetState == Screen.HOME
+                val dir = if (back) -1 else 1
+                val spec = androidx.compose.animation.core.tween<androidx.compose.ui.unit.IntOffset>(380, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                val fspec = androidx.compose.animation.core.tween<Float>(380, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                (androidx.compose.animation.slideInHorizontally(spec) { w -> dir * w / 8 } +
+                    androidx.compose.animation.scaleIn(fspec, initialScale = if (back) 1.05f else 0.92f) + fadeIn(fspec)) togetherWith
+                    (androidx.compose.animation.slideOutHorizontally(spec) { w -> -dir * w / 12 } +
+                        androidx.compose.animation.scaleOut(fspec, targetScale = if (back) 0.92f else 1.04f) + fadeOut(androidx.compose.animation.core.tween(260)))
+            },
             label = "screen",
         ) { current ->
             when (current) {
@@ -375,14 +450,23 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 Screen.TRIP -> TripScreen()
                 Screen.APPS -> AppsScreen()
                 Screen.DIAGNOSTICS -> DiagnosticsScreen()
+                Screen.SETTINGS -> com.cockpitf30.ui.screens.SettingsScreen(onOpen = go)
                 Screen.WEATHER -> WeatherScreen()
                 Screen.PHONE -> PhoneScreen()
                 Screen.FUEL -> FuelScreen()
                 Screen.PERFORMANCE -> com.cockpitf30.ui.screens.PerformanceScreen()
                 Screen.ROUTE -> com.cockpitf30.ui.screens.RouteScreen()
+                Screen.MAINTENANCE -> com.cockpitf30.ui.screens.MaintenanceScreen()
+                Screen.RADIO -> com.cockpitf30.ui.screens.RadioScreen()
+                Screen.TOURISM -> com.cockpitf30.ui.screens.TourismScreen()
             }
         }
+            com.cockpitf30.ui.components.MapsGuidanceBanner(Modifier.align(androidx.compose.ui.Alignment.TopCenter).padding(top = 14.dp))
+            com.cockpitf30.ui.components.RouteAlertPopup(Modifier.align(androidx.compose.ui.Alignment.TopEnd).padding(top = 20.dp, end = 24.dp))
+            com.cockpitf30.ui.components.AmbientGlow()
+            TripSummaryOverlay()
             AssistantOverlay()
+            com.cockpitf30.ui.components.DemoTourBanner(Modifier.align(androidx.compose.ui.Alignment.BottomCenter).padding(bottom = 18.dp))
         }
     }
     }

@@ -52,14 +52,19 @@ import kotlinx.coroutines.delay
 
 
 
-/** Tres franjas M como acento. */
+/** Filo de luz de Athos como acento de cabeceras. */
 @Composable
-fun MStripe(modifier: Modifier = Modifier, segment: Dp = 28.dp) {
-    Row(modifier.height(3.dp)) {
-        listOf(Cockpit.MLight, Cockpit.MDark, Cockpit.MRed).forEach {
-            Box(Modifier.width(segment).height(3.dp).background(it))
-        }
-    }
+fun AthosStripe(modifier: Modifier = Modifier, segment: Dp = 28.dp) {
+    // El filo de luz de Athos (como la línea bajo «Athos UI»): azul en los extremos y cobre en el centro.
+    Box(
+        modifier.width(segment * 3).height(3.dp).background(
+            androidx.compose.ui.graphics.Brush.horizontalGradient(
+                0f to Cockpit.BlueLight.copy(alpha = 0.25f), 0.3f to Cockpit.BlueLight,
+                0.5f to Cockpit.CopperLight, 0.7f to Cockpit.BlueLight, 1f to Cockpit.BlueLight.copy(alpha = 0.25f),
+            ),
+            androidx.compose.foundation.shape.RoundedCornerShape(1.5.dp),
+        ),
+    )
 }
 
 /**
@@ -148,21 +153,26 @@ object DefaultFocus {
 
 @Composable
 fun ClockText(modifier: Modifier = Modifier, style: TextStyle = numeric(26, FontWeight.Medium)) {
-    val now by produceState(LocalTime.now()) {
+    // La hora ya formateada: el texto solo se recompone al cambiar de minuto (antes, cada segundo).
+    // Se despierta justo al cambio de minuto y, como mucho, cada 10 s por si la radio ajusta su reloj.
+    val now by produceState(LocalTime.now().format(ClockFormat)) {
         while (true) {
-            value = LocalTime.now()
-            delay(1_000)
+            val t = LocalTime.now()
+            value = t.format(ClockFormat)
+            delay((60_000L - (t.second * 1000L + t.nano / 1_000_000L) + 20L).coerceAtMost(10_000L))
         }
     }
     Text(
-        now.format(DateTimeFormatter.ofPattern("HH:mm")),
+        now,
         modifier = modifier,
         style = style,
         color = Cockpit.Text,
     )
 }
 
-/** Barra superior común: título, franja M y reloj. */
+private val ClockFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+
+/** Barra superior común: título, filo de luz de Athos y reloj. */
 @Composable
 fun TopBar(title: String, modifier: Modifier = Modifier, trailing: @Composable () -> Unit = {}) {
     Row(
@@ -173,7 +183,7 @@ fun TopBar(title: String, modifier: Modifier = Modifier, trailing: @Composable (
         Column {
             Text(title.uppercase(), style = MaterialTheme.typography.labelLarge, color = Cockpit.TextDim)
             Spacer(Modifier.height(6.dp))
-            MStripe()
+            AthosStripe()
         }
         Spacer(Modifier.weight(1f))
         trailing()

@@ -100,7 +100,7 @@ private class Card(
     val theme: CardTheme,
     val action: (Context) -> Unit,
     val bodyAlignment: Alignment = Alignment.Center,
-    val body: (@Composable (VehicleState) -> Unit)? = null,
+    val body: (@Composable () -> Unit)? = null,
 )
 
 /**
@@ -113,6 +113,13 @@ object Reorder {
     var step: ((Int) -> Unit)? = null
 }
 
+/** Posición de la fila de tarjetas y última pulsada, entre visitas al Inicio (mientras viva la app). */
+private object CardRowMemory {
+    var index = 0
+    var offset = 0
+    var lastId: String? = null
+}
+
 private val CARD_WIDTH = 300.dp
 /** Alto del cuadro de instrumentos: 3/4 de los 720 dp de la pantalla. */
 private val CLUSTER_HEIGHT = 540.dp
@@ -120,26 +127,31 @@ private val CARD_GAP = 16.dp
 
 @Composable
 fun HomeScreen(onOpen: (Screen) -> Unit) {
-    val state by VehicleRepository.state.collectAsStateWithLifecycle()
-    val status by VehicleRepository.status.collectAsStateWithLifecycle()
+    // Los datos del coche (10 lecturas por segundo) se leen solo dentro del cuadro ([LiveCluster]):
+    // leídos aquí, cada lectura recomponía también todas las tarjetas.
     val weather by WeatherRepository.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val settings = remember { AppSettings(context) }
     val cards = remember {
         listOf(
-            // Antes "Música" (ya está en la barra lateral): ahora el asistente de voz «Hola BMW».
-            Card("assistant", "Hola BMW", "Asistente de voz", CardTheme.ASSIST, { VoiceAssistant.tap(it) }),
+            // Antes "Música" (ya está en la barra lateral): ahora el asistente de voz «Hola Athos».
+            Card("assistant", "Hola Athos", "Asistente de voz", CardTheme.ASSIST, { VoiceAssistant.tap(it) }),
             // Antes "Navegación" (repetida en la barra lateral): ahora la gasolinera más cercana.
             Card("fuel", "Gasolinera", "La más cercana", CardTheme.FUEL, { onOpen(Screen.FUEL) }),
             // Modo de conducción: cada pulsación pasa al siguiente (Normal → Sport → Night).
             // Radares cercanos (barrido) y el tiempo en ruta.
             Card("radar", "Radares", "", CardTheme.RADAR, { onOpen(Screen.ROUTE) }),
             Card("mode", "Modo", "", CardTheme.MODE, { com.cockpitf30.ui.theme.DriveModes.cycle(it) }),
-            Card("trip", "Datos de viaje", "Duración, km y consumo", CardTheme.TRIP, { onOpen(Screen.TRIP) }, Alignment.BottomStart) { TripBody(it) },
+            // Radio: FM por la antena si la unidad tiene sintonizador; si no, por Internet.
+            Card("radio", "Radio", "", CardTheme.RADIO, { onOpen(Screen.RADIO) }),
+            // Sitios emblemáticos, dónde comer y dónde dormir, por cercanía y popularidad.
+            Card("tourism", "Turismo", "Ver, comer y dormir", CardTheme.TOURISM, { onOpen(Screen.TOURISM) }),
+            Card("trip", "Datos de viaje", "Duración, km y consumo", CardTheme.TRIP, { onOpen(Screen.TRIP) }, Alignment.BottomStart) { TripBody() },
             Card("weather", "Tiempo", "", CardTheme.WEATHER, { onOpen(Screen.WEATHER) }),
             Card("vehicle", "Vehículo", "iDrive original del coche", CardTheme.VEHICLE, { onOpen(Screen.VEHICLE) }),
             Card("phone", "Teléfono", "Marcador y contactos", CardTheme.PHONE, { onOpen(Screen.PHONE) }),
-            Card("diag", "Diagnóstico", "Fuente de datos e iDrive", CardTheme.DIAG, { onOpen(Screen.DIAGNOSTICS) }),
+            Card("service", "Mantenimiento", "Aceite, neumáticos e ITV", CardTheme.SERVICE, { onOpen(Screen.MAINTENANCE) }, Alignment.BottomStart) { ServiceBody() },
+            Card("diag", "Diagnóstico", "Información técnica y depuración", CardTheme.DIAG, { onOpen(Screen.DIAGNOSTICS) }),
         ).associateBy { it.id }
     }
     // Quien tenía guardado el orden con "nav" o "music" encuentra la gasolinera o el asistente en el mismo sitio.
@@ -152,7 +164,14 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
     var focusedId by remember { mutableStateOf<String?>(null) }
     var suppressClick by remember { mutableStateOf(false) }
     var dragX by remember { mutableFloatStateOf(0f) }
-    val listState = rememberLazyListState()
+    // La fila recuerda dónde estaba: al volver de una tarjeta no salta al principio.
+    val listState = rememberLazyListState(CardRowMemory.index, CardRowMemory.offset)
+    DisposableEffect(listState) {
+        onDispose {
+            CardRowMemory.index = listState.firstVisibleItemIndex
+            CardRowMemory.offset = listState.firstVisibleItemScrollOffset
+        }
+    }
     val scope = rememberCoroutineScope()
 
     fun startMove(id: String) {
@@ -191,7 +210,7 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
 
     Column(Modifier.fillMaxSize().padding(top = 6.dp, bottom = 8.dp)) {
         // El cuadro (mapa e indicadores) ocupa tres cuartos de la altura (540 de 720 dp); las tarjetas, el resto.
-        ClusterStrip(state, status, Modifier.fillMaxWidth().height(CLUSTER_HEIGHT).padding(horizontal = 12.dp))
+        LiveCluster(Modifier.fillMaxWidth().height(CLUSTER_HEIGHT).padding(horizontal = 12.dp))
         Spacer(Modifier.height(2.dp))
         LazyRow(
             Modifier.weight(1f).fillMaxWidth().onPreviewKeyEvent { e ->
@@ -240,13 +259,21 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                             onDragCancel = { dragX = 0f; finish() },
                         )
                     }
-                if (i == 0) mod = mod.focusRequester(firstCard)
+                // El foco inicial vuelve a la última tarjeta pulsada (pedir foco en la primera
+                // desplazaba la fila hasta el principio).
+                val focusId = CardRowMemory.lastId?.takeIf { it in order } ?: order.first()
+                if (id == focusId) mod = mod.focusRequester(firstCard)
                 FocusTile(
                     onClick = {
                         when {
                             suppressClick -> suppressClick = false
                             isMoving -> finish()
-                            moving == null -> card.action(context)
+                            moving == null -> {
+                                CardRowMemory.lastId = id
+                                CardRowMemory.index = listState.firstVisibleItemIndex
+                                CardRowMemory.offset = listState.firstVisibleItemScrollOffset
+                                card.action(context)
+                            }
                         }
                     },
                     selected = isMoving,
@@ -274,12 +301,14 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                             AssistantCardBody()
                         } else if (card.id == "radar") {
                             RadarCardBody()
+                        } else if (card.id == "radio") {
+                            RadioCardBody()
                         } else if (card.id == "mode") {
                             val mode = com.cockpitf30.ui.theme.DriveModes.current
                             Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
                                 Text("MODO DE CONDUCCIÓN", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
                                 Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 8.dp)) {
-                                    ModeFace(mode, active = true, lit = true, glow = 0.6f, hint = "OK: siguiente modo")
+                                    ModeFace(mode, active = true, lit = true, glow = { 0.6f }, hint = "OK: siguiente modo")
                                 }
                             }
                         } else if (card.id == "fuel") {
@@ -296,7 +325,7 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
                             }) { CardArt(card.theme) }
                             Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
                                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = card.bodyAlignment) {
-                                    card.body?.invoke(state)
+                                    card.body?.invoke()
                                 }
                                 Text(card.title, style = MaterialTheme.typography.headlineSmall)
                                 Text(card.subtitle, style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
@@ -308,6 +337,43 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
             }
         }
     }
+}
+
+/** Tarjeta de radio: fuente (antena o Internet), lo que suena y si está sonando. */
+@Composable
+private fun RadioCardBody() {
+    val st by com.cockpitf30.radio.Radio.state.collectAsStateWithLifecycle()
+    val fm = st.source == com.cockpitf30.radio.RadioSource.FM
+    val c = sourceColor(st.source)
+    Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(9.dp).background(if (st.playing) c else Cockpit.TextDim, androidx.compose.foundation.shape.RoundedCornerShape(5.dp)))
+            Text("  " + st.source.label.uppercase(), style = MaterialTheme.typography.labelMedium, color = c)
+        }
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+            if (fm) {
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(com.cockpitf30.radio.RadioLogic.formatFm(st.fmFreq), style = numeric(44, FontWeight.Medium))
+                    Text(" MHz", style = numeric(18), color = Cockpit.TextDim, modifier = Modifier.padding(bottom = 8.dp))
+                }
+            } else {
+                Text(st.station?.name ?: "Elige emisora", style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        Text("Radio", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            (if (st.playing) (if (fm) st.fmRds else st.nowPlaying) ?: "Sonando" else "Parada") + if (st.ducked) " · bajada" else "",
+            style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** El cuadro con los datos del coche en vivo: solo él se recompone con cada lectura. */
+@Composable
+private fun LiveCluster(modifier: Modifier) {
+    val state by VehicleRepository.state.collectAsStateWithLifecycle()
+    val status by VehicleRepository.status.collectAsStateWithLifecycle()
+    ClusterStrip(state, status, modifier)
 }
 
 /**
@@ -331,7 +397,7 @@ private fun RadarCardBody() {
                 }
             }
             Text(
-                if (ahead == null) cams.near.firstOrNull()?.let { "A ${com.cockpitf30.ui.components.radarDistance(it.meters)}" } ?: "Ninguno cerca" else (ahead.camera.kind ?: "Radar fijo"),
+                if (ahead == null) cams.near.firstOrNull()?.let { "A ${com.cockpitf30.ui.components.radarDistance(it.meters)}" } ?: "Sin radares" else (ahead.camera.kind ?: "Radar fijo"),
                 style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
             Text(route.summary ?: "Tiempo en ruta", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -360,7 +426,12 @@ private fun MoveHint(modifier: Modifier = Modifier) {
 private fun FuelCardBody(view: FuelView) {
     val n = view.near.firstOrNull()
     Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
-        Text("GASOLINERA MÁS CERCANA", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim)
+        // Siempre en una línea: con letra muy grande se acorta para no comerse la distancia.
+        val big = com.cockpitf30.ui.theme.DriveModes.textSize == com.cockpitf30.ui.theme.TextSize.XLARGE
+        Text(
+            if (big) "GASOLINERA CERCANA" else "GASOLINERA MÁS CERCANA",
+            style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
+        )
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.BottomStart) {
             if (n != null) {
                 Text(FuelStations.formatDistance(n.meters), style = numeric(34, FontWeight.Medium), maxLines = 1)
@@ -386,12 +457,24 @@ private fun FuelCardBody(view: FuelView) {
 
 /** Kilómetros y duración del viaje en curso (o del último), con ancho fijo para que no salten. */
 @Composable
-private fun TripBody(@Suppress("UNUSED_PARAMETER") state: VehicleState) {
+private fun TripBody() {
     val trips by TripComputer.state.collectAsStateWithLifecycle()
     val trip = trips.current ?: trips.last
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Bottom) {
         Metric(trip?.let { km(it.distanceKm) } ?: "--", "km", 96.dp)
         Metric(trip?.let { hm(it.durationMillis) } ?: "--", if (trips.current != null) "h · en curso" else "h · último", 150.dp)
+    }
+}
+
+/** Lo más urgente del mantenimiento, con su color. */
+@Composable
+private fun ServiceBody() {
+    val context = LocalContext.current
+    val st = remember { com.cockpitf30.vehicle.Maintenance.mostUrgent(com.cockpitf30.ui.screens.serviceStatuses(AppSettings(context))) }
+    Column {
+        Text(st?.item?.label ?: "Sin datos", style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim, maxLines = 1)
+        val c = st?.let { com.cockpitf30.ui.screens.serviceColor(it.level) }
+        Text(st?.text ?: "Pon los km", style = MaterialTheme.typography.titleLarge, maxLines = 1, color = c ?: Cockpit.TextDim)
     }
 }
 
@@ -408,7 +491,7 @@ internal const val GOOGLE_MAPS = "com.google.android.apps.maps"
 
 /**
  * Abre la app Google Maps instalada (no la web) centrada en la posición actual. Sin posición
- * conocida, la abre normal (Maps se centra solo en la ubicación). Si no está instalada,
+ * conocida, o si ya está navegando, la abre normal (Maps se centra solo en la ubicación). Si no está instalada,
  * cualquier app de mapas con un aviso.
  */
 internal fun openMaps(context: Context) {
@@ -420,11 +503,18 @@ internal fun openMaps(context: Context) {
         return
     }
     val here = WeatherRepository.lastKnownLocation(context)
-    val intent = if (here != null) {
+    // Con una ruta en marcha, abrir Maps con un «geo:» es pedirle otra cosa, y pregunta
+    // «¿Continuar con la navegación?». Se abre tal cual estaba, sin intent nuevo.
+    val navigating = com.cockpitf30.nav.MapsGuidanceState.current.value != null
+    val intent = if (here != null && !navigating) {
         Intent(Intent.ACTION_VIEW, Uri.parse("geo:%.6f,%.6f?z=16".format(Locale.US, here.latitude, here.longitude)))
             .setPackage(GOOGLE_MAPS)
     } else {
         maps
+    }
+    // Pantalla dividida: Maps en la otra mitad, si el sistema lo permite (si no, lo ignora).
+    if (com.cockpitf30.system.AppSettings(context).splitScreenMaps) {
+        intent.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT)
     }
     launch(context, intent)
 }
@@ -464,4 +554,4 @@ internal fun launch(context: Context, intent: Intent) {
     }
 }
 
-enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, WEATHER, PHONE, FUEL, PERFORMANCE, ROUTE }
+enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, SETTINGS, WEATHER, PHONE, FUEL, PERFORMANCE, ROUTE, MAINTENANCE, RADIO, TOURISM }

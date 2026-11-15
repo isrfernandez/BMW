@@ -67,6 +67,27 @@ internal val MapTintInverted = ColorFilter.colorMatrix(
     ),
 )
 
+/** Fondo del mapa claro (tema diurno). */
+internal val MapBaseLight = Color(0xFFE6EBF1)
+
+/**
+ * Mapa claro para el tema diurno a partir de las teselas oscuras de Esri: se invierte la
+ * luminancia (fondo casi blanco, calles en gris) con un leve tono azulado.
+ */
+internal val MapLightFromDark = ColorFilter.colorMatrix(
+    ColorMatrix(
+        floatArrayOf(
+            -0.3f * 1.55f, -0.59f * 1.55f, -0.11f * 1.55f, 0f, 280f,
+            -0.3f * 1.55f, -0.59f * 1.55f, -0.11f * 1.55f, 0f, 284f,
+            -0.3f * 1.50f, -0.59f * 1.50f, -0.11f * 1.50f, 0f, 292f,
+            0f, 0f, 0f, 1f, 0f,
+        ),
+    ),
+)
+
+/** OpenStreetMap ya es claro: solo se apaga un poco el color para que destaquen los marcadores. */
+internal val MapLightFromLight = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0.35f) })
+
 /** Estilos del texto del mapa. */
 class MapText(val hud: TextStyle, val small: TextStyle, val alert: TextStyle)
 

@@ -166,6 +166,7 @@ class Conversation {
                 InfoTopic.DOORS -> "las puertas"
                 InfoTopic.TRIP -> "el viaje"
                 InfoTopic.SPEED -> "la velocidad"
+                InfoTopic.GUIDANCE -> "las indicaciones del navegador"
             }
             is Command.Station -> "las gasolineras cercanas"
             is Command.WeatherDay -> if (c.offset == 1) "el tiempo de mañana" else "el tiempo de los próximos días"
@@ -173,6 +174,7 @@ class Conversation {
             is Command.Call -> "llamar a ${c.who}"
             is Command.Joke -> "chistes"
             is Command.Mode -> "el modo de conducción"
+            is Command.Daylight -> "el modo diurno"
             is Command.Humor -> "mi humor"
             is Command.SetName, Command.AskName -> "tu nombre"
             is Command.Chat -> when (c.key) {
@@ -183,6 +185,9 @@ class Conversation {
             }
             is Command.Open -> "la pantalla de ${c.screen.name.lowercase().let(::screenName)}"
             is Command.Copilot -> "el modo copiloto"
+            is Command.Alerts -> "los avisos en ruta"
+            Command.Nearby, Command.AboutThat, Command.TourInfo -> "lo que hay por aquí"
+            is Command.Stays, is Command.GoTo -> "dónde comer y dormir"
             else -> null
         }
 

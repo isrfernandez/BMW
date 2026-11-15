@@ -10,6 +10,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -30,6 +33,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -89,68 +93,104 @@ fun LoadingOverlay(visible: Boolean, text: String? = null, graceMs: Long = 150) 
 /** true cuando las imágenes grandes ya están decodificadas (lo pone la precarga de MainActivity). */
 object Startup {
     val ready = kotlinx.coroutines.flow.MutableStateFlow(false)
+    /** La pantalla de arranque ya se ha ido (empieza la bienvenida del cuadro y el saludo). */
+    val splashDone = kotlinx.coroutines.flow.MutableStateFlow(false)
 }
 
 /**
- * Pantalla de arranque: la imagen del usuario (triángulo y rótulo «CockPit F30») con un haz de
- * luz que recorre las letras. Dura al menos [minMs] y sigue mientras la precarga no termine
- * (imágenes y lista de apps), con un tope de [maxMs] para no quedarse nunca colgada.
+ * Pantalla de arranque: la imagen de Athos (triángulo de cristal y rótulo «Athos UI»).
+ * Antes era un vídeo: tardaba en salir (el sonido se oía antes que la imagen) y se entrecortaba
+ * mientras la app cargaba detrás. Ahora la imagen se decodifica aparte y, cuando está lista,
+ * aparece desde negro a la vez que empieza el sonido del logo. Se queda [HOLD_MS], espera a la precarga (como mucho [maxMs]), funde a negro, avisa con
+ * [Startup.splashDone] (barrido de agujas y saludo) y el negro se retira dejando ver la app.
  */
 @Composable
-fun StartupSplash(minMs: Long = 3000, maxMs: Long = 7000) {
-    val ready by Startup.ready.collectAsState()
-    var elapsed by remember { mutableIntStateOf(0) } // 0 = antes de minMs, 1 = pasado, 2 = tope
-    LaunchedEffect(Unit) { delay(minMs); elapsed = 1; delay(maxMs - minMs); elapsed = 2 }
-    val visible = !(elapsed == 2 || (elapsed == 1 && ready))
-    AnimatedVisibility(visible, enter = fadeIn(), exit = fadeOut(androidx.compose.animation.core.tween(700))) {
-        val scene = cachedBitmap(R.drawable.splash_scene)
-        val mask = cachedBitmap(R.drawable.splash_text_mask)
-        val beam by androidx.compose.animation.core.rememberInfiniteTransition(label = "haz").animateFloat(
-            -0.35f, 1.35f,
-            androidx.compose.animation.core.infiniteRepeatable(
-                androidx.compose.animation.core.tween(1700, delayMillis = 350, easing = androidx.compose.animation.core.FastOutSlowInEasing),
-            ),
-            label = "haz",
-        )
-        Box(Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { } }) {
-            Canvas(Modifier.fillMaxSize()) {
-                drawImage(scene, dstSize = IntSize(size.width.toInt(), size.height.toInt()))
-                // El haz solo ilumina las letras: se pinta dentro de su silueta en una capa
-                // aparte que se suma (Plus) a la imagen.
-                // La silueta está recortada de splash_scene en su tamaño real (1920×720).
-                val kx = size.width / SPLASH_W
-                val ky = size.height / SPLASH_H
-                val left = TEXT_X * kx
-                val top = TEXT_Y * ky
-                val w = mask.width * kx
-                val h = mask.height * ky
-                val layer = androidx.compose.ui.geometry.Rect(left, top, left + w, top + h)
-                val canvas = drawContext.canvas
-                canvas.saveLayer(layer, androidx.compose.ui.graphics.Paint().apply { blendMode = androidx.compose.ui.graphics.BlendMode.Plus })
-                drawImage(mask, dstOffset = IntOffset(left.toInt(), top.toInt()), dstSize = IntSize(w.toInt(), h.toInt()))
-                val cx = left + w * beam
-                val band = w * 0.16f
-                drawRect(
-                    androidx.compose.ui.graphics.Brush.linearGradient(
-                        0f to Color.Transparent, 0.35f to Color(0xFF9FD4FF).copy(alpha = 0.55f), 0.5f to Color.White,
-                        0.65f to Color(0xFFFFD2B0).copy(alpha = 0.55f), 1f to Color.Transparent,
-                        start = androidx.compose.ui.geometry.Offset(cx - band, top), end = androidx.compose.ui.geometry.Offset(cx + band, top + h * 0.6f),
-                    ),
-                    topLeft = androidx.compose.ui.geometry.Offset(left, top), size = androidx.compose.ui.geometry.Size(w, h),
-                    blendMode = androidx.compose.ui.graphics.BlendMode.SrcIn,
+fun StartupSplash(maxMs: Long = 9_000) {
+    // Si la actividad se recrea, el arranque ya pasó: no se repite.
+    if (remember { Startup.splashDone.value }) return
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val shown = remember { androidx.compose.animation.core.Animatable(0f) }
+    var gone by remember { mutableIntStateOf(0) } // 1 = el negro se retira
+    var image by remember { androidx.compose.runtime.mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    LaunchedEffect(Unit) {
+        val started = System.currentTimeMillis()
+        // Imagen y sonido se preparan a la vez, fuera del hilo principal.
+        val sound = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            image = runCatching {
+                android.graphics.BitmapFactory.decodeResource(ctx.resources, R.drawable.splash_cockpit)?.asImageBitmapCompat()
+            }.getOrNull()
+            if (com.cockpitf30.system.AppSettings(ctx).startSound) runCatching { logoPlayer(ctx) }.getOrNull() else null
+        }
+        // Mismo fotograma: empieza el fundido desde negro y suena el logo.
+        withFrameNanos { }
+        runCatching { sound?.start() }
+        shown.animateTo(1f, androidx.compose.animation.core.tween(FADE_IN_MS, easing = androidx.compose.animation.core.LinearOutSlowInEasing))
+        delay(HOLD_MS)
+        // Si la app aún no ha terminado de cargar, la imagen sigue (como mucho hasta maxMs).
+        while (!Startup.ready.value && System.currentTimeMillis() - started < maxMs) delay(50)
+        shown.animateTo(0f, androidx.compose.animation.core.tween(FADE_OUT_MS, easing = androidx.compose.animation.core.LinearEasing))
+        Startup.splashDone.value = true
+        gone = 1
+        delay(1_500)
+        runCatching { sound?.release() }
+    }
+    AnimatedVisibility(gone == 0, enter = androidx.compose.animation.EnterTransition.None, exit = fadeOut(androidx.compose.animation.core.tween(400))) {
+        Box(
+            Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { } },
+            contentAlignment = Alignment.Center,
+        ) {
+            image?.let {
+                androidx.compose.foundation.Image(
+                    it, contentDescription = "Athos",
+                    modifier = Modifier.fillMaxSize().graphicsLayer { alpha = shown.value },
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                 )
-                canvas.restore()
             }
         }
     }
 }
 
-// splash_scene es la imagen 21:9 del usuario ajustada a 1920×720; splash_text_mask, el recorte
-// de sus letras, empieza en (654, 554) de esa imagen.
-private const val SPLASH_W = 1920f
-private const val SPLASH_H = 720f
-private const val TEXT_X = 654f
-private const val TEXT_Y = 554f
+private fun android.graphics.Bitmap.asImageBitmapCompat(): androidx.compose.ui.graphics.ImageBitmap = asImageBitmap()
+
+/** Sonido de Athos para la vista del Inicio: suena una vez y se libera solo (si está activado). */
+object AthosSound {
+    private var player: android.media.MediaPlayer? = null
+
+    fun play(ctx: android.content.Context) {
+        if (!com.cockpitf30.system.AppSettings(ctx).athosViewSound) return
+        stop()
+        player = runCatching { logoPlayer(ctx) }.getOrNull()?.apply {
+            setOnCompletionListener { it.release(); if (player === it) player = null }
+            start()
+        }
+    }
+
+    fun stop() { player?.let { runCatching { it.release() } }; player = null }
+}
+
+/** Sonido del logo como multimedia sin pedir el foco de audio: suena encima de la radio sin pararla. */
+internal fun logoPlayer(ctx: android.content.Context): android.media.MediaPlayer {
+    val afd = ctx.resources.openRawResourceFd(R.raw.logo_sound)
+    return android.media.MediaPlayer().apply {
+        setAudioAttributes(
+            android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build(),
+        )
+        setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+        afd.close()
+        prepare()
+    }
+}
+
+// res/drawable-nodpi/splash_cockpit.webp: la imagen de inicio de Athos a 1920×720 (la franja con
+// el triángulo y el rótulo, con los laterales prolongados y fundidos). res/raw/logo_sound.ogg: el
+// «cinematic boom» del usuario recortado a 5,65 s; la subida acompaña al fundido de entrada y el
+// golpe (~2,8 s) cae con la imagen ya entera; la app entra mientras se apaga.
+private const val FADE_IN_MS = 900
+private const val HOLD_MS = 3_500L
+private const val FADE_OUT_MS = 500
 
 /**
  * «COCKPIT F30»: COCKPIT fino y muy espaciado en plata, F30 en cobre pulido, con un filo de luz
@@ -158,9 +198,11 @@ private const val TEXT_Y = 554f
  */
 @Composable
 fun BrandTitle() {
-    val silver = androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0xFFF4F8FC), Cockpit.SteelBlueLight, Color(0xFF8FA6BF)))
-    val copper = androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Cockpit.CopperLight, Cockpit.Copper, Color(0xFF8A4A28)))
-    val glow = androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(Cockpit.BlueLight.copy(alpha = 0.55f), androidx.compose.ui.geometry.Offset.Zero, 18f))
+    // Arranque sobre negro: colores de la paleta oscura también con el modo diurno.
+    val pal = com.cockpitf30.ui.theme.DriveModes.darkPalette
+    val silver = androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0xFFF4F8FC), pal.steelLight, Color(0xFF8FA6BF)))
+    val copper = androidx.compose.ui.graphics.Brush.verticalGradient(listOf(pal.copperLight, pal.copper, Color(0xFF8A4A28)))
+    val glow = androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(pal.blueLight.copy(alpha = 0.55f), androidx.compose.ui.geometry.Offset.Zero, 18f))
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             androidx.compose.ui.text.buildAnnotatedString {
@@ -174,7 +216,7 @@ fun BrandTitle() {
         Spacer(Modifier.height(10.dp))
         Box(
             Modifier.size(width = 420.dp, height = 2.dp).background(
-                androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color.Transparent, Cockpit.BlueLight.copy(alpha = 0.9f), Cockpit.CopperLight.copy(alpha = 0.8f), Color.Transparent)),
+                androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color.Transparent, pal.blueLight.copy(alpha = 0.9f), pal.copperLight.copy(alpha = 0.8f), Color.Transparent)),
             ),
         )
     }

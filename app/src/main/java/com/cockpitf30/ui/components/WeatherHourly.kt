@@ -1,5 +1,6 @@
 package com.cockpitf30.ui.components
 
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -126,7 +127,7 @@ private fun HourColumn(h: HourForecast) {
 @Composable
 fun WindVane(fromDeg: Int, modifier: Modifier = Modifier) {
     val sway by rememberInfiniteTransition(label = "vane").animateFloat(-6f, 6f, infiniteRepeatable(tween(1400), RepeatMode.Reverse), label = "sway")
-    Canvas(modifier) {
+    Canvas(modifier.graphicsLayer()) {
         // El viento "de" fromDeg sopla hacia fromDeg + 180.
         rotate(fromDeg + 180f + sway) {
             val w = size.width

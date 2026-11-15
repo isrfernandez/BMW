@@ -4,7 +4,7 @@ import com.cockpitf30.ui.screens.Screen
 import java.text.Normalizer
 
 /** Datos que el asistente sabe contar en voz alta. */
-enum class InfoTopic { RANGE, FUEL_NEAR, TYRES, WEATHER, TIME, DOORS, TRIP, SPEED }
+enum class InfoTopic { RANGE, FUEL_NEAR, TYRES, WEATHER, TIME, DOORS, TRIP, SPEED, GUIDANCE }
 
 /** Lo que el usuario ha pedido, ya interpretado. */
 sealed interface Command {
@@ -24,6 +24,8 @@ sealed interface Command {
     /** «Llama a Manuel»: [who] es lo dicho tras «llama a» (nombre o número). */
     data class Call(val who: String) : Command
     data class Mode(val mode: com.cockpitf30.ui.theme.DriveMode) : Command
+    /** Tema diurno (fondos claros): «modo diurno», «quita el modo diurno», «modo oscuro». */
+    data class Daylight(val theme: com.cockpitf30.ui.theme.DayTheme) : Command
     data class Unknown(val text: String) : Command
 
     // ---- conversación
@@ -54,10 +56,36 @@ sealed interface Command {
     data class Chat(val key: String) : Command
     /** «Activa / desactiva el copiloto»; null = activar. */
     data class Copilot(val on: Boolean?) : Command
+    /** «Pausa»: se calla, pero recuerda dónde iba. */
+    data object Pause : Command
+    /** «Continúa», «sigue»: retoma lo que estaba diciendo. */
+    data object Resume : Command
     /** «Cállate un rato»: el copiloto no habla en media hora. */
     data object Quiet : Command
+    /** Activar o desactivar los avisos en ruta, todos ([category] null) o de un tipo. */
+    data class Alerts(val category: com.cockpitf30.nav.AlertCategory?, val on: Boolean) : Command
+    /** «¿Qué hay por aquí?»: sitios de interés cercanos. */
+    data object Nearby : Command
+    /** «Háblame de eso»: más del último sitio del que se avisó. */
+    data object AboutThat : Command
+    /** «Información turística»: el sitio de interés más cercano, contado con su resumen de Wikipedia. */
+    data object TourInfo : Command
+    /** «Dónde comer», «restaurantes», «bares», «alojamiento», «campings»: los más cercanos de ese tipo. */
+    data class Stays(val kinds: Set<com.cockpitf30.nav.StayKind>) : Command
+    /** Ir a un sitio concreto (lo crea la respuesta de [Stays] para «¿te llevo?»). */
+    data class GoTo(val name: String, val lat: Double, val lon: Double) : Command
     /** Una de las gasolineras de las que se acaba de hablar (lo crea [Conversation]). */
     data class Station(val index: Int, val action: StationAction) : Command
+
+    // ---- radio
+    /** «Pon la radio» ([query] null) o «pon la radio Cadena SER», «sintoniza el 102.3». */
+    data class RadioPlay(val query: String?) : Command
+    /** «Apaga / quita la radio». */
+    data object RadioStop : Command
+    /** «Siguiente emisora» (1) / «emisora anterior» (-1). */
+    data class RadioNext(val dir: Int) : Command
+    /** «Sube / baja la radio» ([delta]) o «volumen de la radio al 40» ([set]). */
+    data class RadioVolume(val set: Int? = null, val delta: Int = 0) : Command
 }
 
 enum class StationAction { DESCRIBE, PRICE, GO }
@@ -70,6 +98,14 @@ enum class StationAction { DESCRIBE, PRICE, GO }
 object VoiceCommands {
 
     /** Minúsculas, sin tildes ni signos, palabras separadas por un espacio. */
+    /** ¿[heard] son, casi todas, palabras de lo que acaba de decir ([said])? Entonces es su propio eco. */
+    fun isEcho(heard: String, said: String): Boolean {
+        val h = normalize(heard).split(' ').filter { it.length > 1 }
+        if (h.size < 2) return false
+        val s = normalize(said).split(' ').toSet()
+        return h.count { it in s } >= h.size * 0.7
+    }
+
     fun normalize(text: String): String =
         Normalizer.normalize(text.lowercase(), Normalizer.Form.NFD)
             .replace(Regex("\\p{M}+"), "")
@@ -77,68 +113,144 @@ object VoiceCommands {
             .trim().replace(Regex("\\s+"), " ")
 
     /**
-     * Formas en que el reconocedor escribe «BMW» tras «hola», con las palabras pegadas. El modelo
-     * pequeño de Vosk no conoce la sigla y la deletrea («be eme uve doble»), a menudo mal partida
-     * («beme uve», «me uve doble»); Google suele escribir «BMW».
+     * Formas en que el reconocedor escribe «Athos» tras «hola», con las palabras pegadas. El modelo
+     * pequeño de Vosk puede no conocer el nombre y oír «atos» o «a tos»; Google suele escribir
+     * «Athos» o «Atos». «actos», «altos» y «hatos» son cómo se confunde a veces.
      */
-    private val BMW_FORMS: Set<String> = buildSet {
-        addAll(listOf("bmw", "bm", "bmv", "beemeuvedoble", "beemeuve", "beeme"))
-        // Variantes de cómo se parte o se oye cada letra: «be/ve/pe/de» + «eme/me» + «uve doble/doble uve/doble ve».
-        for (b in listOf("be", "ve", "pe", "de", "")) for (m in listOf("eme", "me", "em")) {
-            for (w in listOf("uvedoble", "uve", "dobleuve", "dobleve", "doble", "")) {
-                val f = b + m + w
-                if (f.length >= 4) add(f)
-            }
-        }
-        addAll(listOf("uvedoble", "vedoble"))
-    }
+    private val NAME_FORMS: Set<String> = setOf(
+        "athos", "atos", "hatos", "actos", "altos", "athus", "atus",
+        // Lo que el modelo pequeño cree oír a menudo: «a dos», «datos», «gatos», «patos».
+        "ados", "datos", "gatos", "patos",
+    )
     /**
-     * Frases que acepta el reconocedor de la palabra de activación (gramática de Vosk). "[unk]" recoge
-     * todo lo demás para que cualquier frase no acabe forzada a «hola BMW».
+     * Frases que acepta el reconocedor de la palabra de activación (gramática de Vosk). Se ponen
+     * varias formas porque Vosk ignora las palabras que no están en su vocabulario. "[unk]" recoge
+     * todo lo demás para que cualquier frase no acabe forzada a «hola Athos».
      */
     val WAKE_GRAMMAR: String = listOf(
-        "hola be eme uve doble", "hola be eme uve", "hola be eme doble uve", "hola be eme doble ve",
-        "hola be eme", "hola uve doble", "ola be eme uve doble", "oye be eme uve doble", "[unk]",
+        "hola athos", "hola atos", "hola a tos", "ola atos", "ola a tos", "oye atos", "oye a tos",
+        "hola actos", "hola altos", "hola a dos", "ola a dos", "hola datos", "hola gatos", "hola patos", "[unk]",
     ).joinToString(",", "[", "]") { "\"$it\"" }
 
     /** Palabras para cortar al asistente mientras habla. */
-    private val STOP_WORDS = listOf("basta", "calla", "callate", "cállate", "espera", "vale ya", "para ya", "stop", "silencio")
+    /** Cortar y callarse. */
+    private val STOP_WORDS = listOf("para", "para ya", "detente", "cancela", "cancelar", "cancélalo", "cancela ya", "silencio", "calla", "callate", "cállate", "basta", "vale ya", "stop")
+    /** Pausar para luego seguir («continúa»). */
+    private val PAUSE_WORDS = listOf("pausa", "haz una pausa")
+    /** Retomar lo que estaba diciendo. */
+    private val RESUME_WORDS = listOf("continua", "continúa", "sigue", "sigue hablando", "continua hablando", "continúa hablando", "sigue por favor")
+    /** Cortar sin perder el hilo y escuchar lo que viene («espera, ¿y mañana?»). */
+    // Sin «a ver», «oye» ni «perdona»: salen a menudo en sus propias respuestas y se cortaba sola.
+    private val HOLD_WORDS = listOf("espera", "un momento", "aclarame", "aclárame", "aclarame esto", "aclárame esto")
 
-    /** Gramática mientras habla la radio: «Hola BMW» o una palabra para cortarla. */
+    /**
+     * Palabras de relleno que se añaden a la gramática de interrupción. Con una gramática cerrada
+     * Vosk mete cualquier sonido en una de sus frases, así que su propia voz acababa «sonando» a
+     * «para» o «espera». Con estas, lo que dice la radio cae aquí y no corta nada.
+     */
+    private val BARGE_DECOYS = listOf(
+        "el", "la", "los", "las", "un", "una", "de", "del", "en", "con", "por", "que", "y", "o", "a", "al", "es", "son",
+        "hay", "está", "esta", "este", "eso", "esto", "muy", "más", "menos", "no", "sí", "si", "ya", "hoy", "mañana", "ahora", "luego",
+        "bien", "vale", "claro", "kilómetros", "metros", "minutos", "grados", "litros", "por ciento", "hora", "horas",
+        "derecha", "izquierda", "recto", "gasolinera", "radar", "tiempo", "lluvia", "sol", "calle", "carretera",
+        "coche", "motor", "velocidad", "llegada", "destino", "tienes", "quieres", "puedo", "te", "lo", "le", "me", "se",
+        "mi", "tu", "su", "cómo", "como", "cuando", "dónde", "todo", "nada", "algo", "siguiente", "cerca", "lejos", "uno", "dos",
+        "tres", "cuatro", "cinco", "diez", "cien", "mil",
+    )
+
+    /** Gramática mientras habla la radio: «Hola Athos» o una palabra para cortarla. */
     val BARGE_GRAMMAR: String = (Regex("\"([^\"]+)\"").findAll(WAKE_GRAMMAR).map { it.groupValues[1] }.filter { it != "[unk]" }.toList() +
-        STOP_WORDS + "[unk]").joinToString(",", "[", "]") { "\"$it\"" }
+        STOP_WORDS + PAUSE_WORDS + HOLD_WORDS + RESUME_WORDS + BARGE_DECOYS + "[unk]").distinct().joinToString(",", "[", "]") { "\"$it\"" }
 
-    fun isStopWord(text: String): Boolean = normalize(text) in STOP_WORDS.map(::normalize)
+    private val BARGE_PHRASES: List<String> by lazy {
+        Regex("\"([^\"]+)\"").findAll(BARGE_GRAMMAR).map { normalize(it.groupValues[1]) }
+            .filter { it.isNotBlank() && it != "unk" && it !in BARGE_DECOY_SET }
+            .distinct().sortedByDescending { it.length }.toList()
+    }
+
+    private val BARGE_DECOY_SET: Set<String> by lazy { BARGE_DECOYS.map { normalize(it) }.toSet() }
+
+    /** La orden de interrupción con la que termina [text] (resultado de la gramática), o null. */
+    fun bargePhraseAtEnd(text: String): String? {
+        val t = normalize(text.replace("[unk]", " "))
+        if (t.isEmpty()) return null
+        return BARGE_PHRASES.firstOrNull { t == it || t.endsWith(" $it") }
+    }
+
+    /** Lo que pide una palabra dicha mientras habla el asistente. */
+    enum class Barge { STOP, PAUSE, HOLD, RESUME }
+
+    fun bargeAction(text: String): Barge? {
+        val t = normalize(text)
+        fun inList(l: List<String>) = l.any { normalize(it) == t }
+        return when {
+            inList(STOP_WORDS) -> Barge.STOP
+            inList(PAUSE_WORDS) -> Barge.PAUSE
+            inList(HOLD_WORDS) -> Barge.HOLD
+            inList(RESUME_WORDS) -> Barge.RESUME
+            else -> null
+        }
+    }
+
+    fun isStopWord(text: String): Boolean = bargeAction(text) == Barge.STOP
 
     private val HELLO = setOf("hola", "ola", "hello", "oye")
 
     /**
-     * Si [text] contiene «hola BMW», devuelve lo que viene después (quizá vacío); si no, null.
-     * Se acepta un «hola» seguido, en las tres palabras siguientes, de alguna forma de la sigla.
+     * Si [text] contiene «hola Athos», devuelve lo que viene después (quizá vacío); si no, null.
+     * Se acepta un «hola» seguido, en las dos palabras siguientes, de alguna forma del nombre.
      */
     fun afterWakeWord(text: String): String? {
         val words = normalize(text).split(' ').filter { it.isNotEmpty() }
         for (i in words.indices) {
             if (words[i] !in HELLO) continue
-            // La forma más larga que encaje: «be eme uve doble» antes que «be eme».
-            val n = (4 downTo 1).firstOrNull { n ->
-                i + n <= words.lastIndex && words.subList(i + 1, i + 1 + n).joinToString("") in BMW_FORMS
+            // «a tos» va en dos palabras: la forma más larga que encaje primero.
+            val n = (2 downTo 1).firstOrNull { n ->
+                i + n <= words.lastIndex && words.subList(i + 1, i + 1 + n).joinToString("") in NAME_FORMS
             } ?: continue
             return words.drop(i + 1 + n).joinToString(" ")
         }
         return null
     }
 
-    private val BRAND_WORDS = setOf("be", "eme", "me", "uve", "doble", "ve", "bmw", "hola", "ola", "oye")
+    /** ¿Está el nombre entero en la frase? (sensibilidad baja: solo «Athos/Atos», no las confusiones). */
+    fun hasFullName(text: String): Boolean = normalize(text).let { t ->
+        listOf("athos", "atos", "a tos").any { t.contains(it) }
+    }
+
+    private val WAKE_PREFIX = Regex("^((hola|ola|oye|hello) )+((a tos|a dos|athos|atos|hatos|actos|altos|atus|athus|datos|gatos|patos) )?|^(a tos|athos|atos|hatos|atus|athus) ")
 
     /**
-     * Quita del principio los restos de «hola BMW»: la activación salta en cuanto se oye «hola be eme»,
-     * así que el reconocedor de la orden puede empezar oyendo «uve doble …».
+     * Quita del principio los restos de «hola Athos»: la activación salta en cuanto se oye, así que
+     * el reconocedor de la orden puede empezar oyendo el nombre o el saludo.
      */
     fun stripWakeWords(text: String): String =
-        normalize(text).split(' ').dropWhile { it in BRAND_WORDS }.joinToString(" ")
+        (normalize(text) + " ").replaceFirst(WAKE_PREFIX, "").trim()
 
     private val QUESTION = setOf("cuanto", "cuanta", "cuantos", "cuantas", "que", "como", "cual", "hay", "dime", "donde", "va", "voy", "tengo", "esta", "estan", "hace")
+
+    /** Comer y dormir: «dónde comer», «busca un restaurante», «hay bares cerca», «hoteles», «campings». */
+    fun stays(t: String, has: (Array<out String>) -> Boolean): Command.Stays? {
+        fun h(vararg w: String) = has(w)
+        // «Activa los avisos de restaurantes» es encender los avisos, no buscar.
+        if (h("aviso", "avisos", "activa", "desactiva")) return null
+        // «Llévame al hotel Sol» es ir a ese sitio; «llévame a un restaurante», buscar.
+        if (Regex("\\b(?:llevame|llevanos|navega|navegar|ruta|como llego|guiame)\\b").containsMatchIn(t) &&
+            !Regex("\\b(?:un|una|unos|unas|algun|alguna|algo|sitio|donde)\\b").containsMatchIn(t)) return null
+        val camp = h("camping", "acampar", "autocaravana", "caravana")
+        val sleep = h("alojamiento", "alojarme", "alojarnos", "hotel", "hostal", "dormir", "pension", "albergue", "casa rural", "pasar la noche", "hospedarnos", "hospedarme")
+        val drink = h("bares", "un bar", "algun bar", "tomar algo", "tomar un cafe", "cafeteria", "un cafe")
+        val eat = h("donde comer", "para comer", "sitio de comer", "comer algo", "restaurante", "donde cenar", "para cenar", "cenar algo", "comida", "un menu", "menu del dia", "tengo hambre", "almorzar")
+        val kinds = buildSet {
+            if (eat) add(com.cockpitf30.nav.StayKind.EAT)
+            if (drink) add(com.cockpitf30.nav.StayKind.DRINK)
+            if (sleep) add(com.cockpitf30.nav.StayKind.SLEEP)
+            if (camp) add(com.cockpitf30.nav.StayKind.CAMP)
+        }
+        if (kinds.isEmpty()) return null
+        // «Restaurantes» incluye bares si no hay restaurantes; «alojamiento» incluye campings.
+        return Command.Stays(kinds)
+    }
 
     fun parse(text: String): Command {
         val t = normalize(text)
@@ -147,6 +259,9 @@ object VoiceCommands {
         fun has(vararg keys: String) = keys.any { k -> if (' ' in k) t.contains(k) else words.any { it.startsWith(k) } }
         val question = words.any { it in QUESTION }
 
+        if (t in setOf("pausa", "haz una pausa")) return Command.Pause
+        if (t in setOf("continua", "sigue", "sigue hablando", "continua hablando", "sigue por favor", "continua por favor", "por donde ibas", "donde te habias quedado")) return Command.Resume
+        if (t in setOf("para", "para ya", "detente", "parate", "stop", "basta", "vale ya")) return Command.Cancel
         if (t in setOf("nada", "no", "no gracias", "cancelar", "cancela", "olvidalo", "salir", "adios", "hasta luego", "nada mas") || has("cancela", "olvidalo")) return Command.Cancel
         if (has("gracias") && words.size <= 4) return Command.Thanks
         if (t in YES || (words.size <= 3 && t.startsWith("si "))) return Command.Yes
@@ -167,6 +282,32 @@ object VoiceCommands {
         if (has("copiloto")) {
             return Command.Copilot(if (has("desactiva", "quita", "apaga", "para ", "deja", "fuera", "sin copiloto")) false else true)
         }
+        radio(t, ::has)?.let { return it }
+
+        // «Información turística», «dame información turística», «guía turística»: que cuente el sitio
+        // más cercano. Con «activa / desactiva / avisos» sigue siendo encender o apagar los avisos.
+        if (has("informacion turistica", "info turistica", "guia turistica", "informacion de turismo", "cuentame algo de la zona", "cuentame algo de aqui", "que ver cerca") &&
+            !has("activa", "desactiva", "quita", "apaga", "enciende", "aviso", "avisos", "deja de", "para de", "no quiero", "sin ", "vuelve a")) return Command.TourInfo
+        // Avisos en ruta: «desactiva los avisos», «quita los avisos turísticos», «activa avisos de radares».
+        val alertWords = has("aviso", "avisos", "puntos de interes", "informacion turistica", "turistic", "turismo") ||
+            (has("restaurante", "alojamiento", "hotel", "camping") && has("activa", "desactiva", "no me avises"))
+        val toggle = has("activa", "desactiva", "quita", "apaga", "enciende", "pon ", "quiero", "sin ", "no quiero", "deja de", "para de", "vuelve a")
+        if (alertWords && toggle) {
+            val off = has("desactiva", "quita", "apaga", "sin ", "no quiero", "deja de", "para de", "no me avises")
+            val cat = when {
+                has("radar") -> com.cockpitf30.nav.AlertCategory.RADAR
+                has("turistic", "turismo", "monumento", "puntos de interes", "lugares", "sitios") -> com.cockpitf30.nav.AlertCategory.TOURISM
+                has("seguridad", "peligro", "paso a nivel", "pasos a nivel") -> com.cockpitf30.nav.AlertCategory.SAFETY
+                has("gasolin", "combustible", "gasoil", "repostar", "autonomia") -> com.cockpitf30.nav.AlertCategory.FUEL
+                has("descanso", "area", "areas", "parar") -> com.cockpitf30.nav.AlertCategory.REST
+                has("restaurante", "comer", "comida", "alojamiento", "hotel", "dormir", "camping", "bares") -> com.cockpitf30.nav.AlertCategory.FOOD
+                else -> null
+            }
+            return Command.Alerts(cat, !off)
+        }
+        stays(t, ::has)?.let { return it }
+        if (has("que hay por aqui", "que hay cerca", "que hay por la zona", "que ver por aqui", "que se puede ver", "algo que ver", "sitios de interes", "lugares de interes", "puntos de interes", "que hay interesante")) return Command.Nearby
+        if (has("hablame de eso", "hablame de ese", "hablame de esa", "cuentame mas", "que es eso", "que es ese", "que es esa", "mas informacion", "cuentame de eso", "dime mas")) return Command.AboutThat
         if (has("callate", "silencio", "no hables", "deja de hablar")) return Command.Quiet
         if (Regex("^(?:llevame|llevanos|vamos|ve|navega|ir|guiame)(?: (?:alli|ahi|alla|hasta alli|hacia alli|para alla|a ella|a esa))?$").matches(t)) return Command.GoThere
         if (!has("google") && has("cuanto cuesta", "precio", "a cuanto esta", "cuanto vale", "a como esta")) return Command.Price
@@ -212,6 +353,10 @@ object VoiceCommands {
             if (what.length >= 4 && what !in setOf("algo", "eso", "esto")) return Command.Navigate(what)
         }
 
+        // Indicaciones de Google Maps: siguiente giro y llegada.
+        if (has("siguiente giro", "proximo giro", "siguiente indicacion", "proxima indicacion", "siguiente maniobra", "por donde tengo que", "por donde sigo",
+                "donde giro", "cuanto falta", "a que hora llego", "hora de llegada", "cuando llego", "cuando llegamos", "a que hora llegamos")) return Command.Info(InfoTopic.GUIDANCE)
+
         // Preguntas: se contestan en voz alta (y se abre la pantalla que corresponda).
         if (question || has("autonomia", "cuanto queda")) {
             when {
@@ -231,6 +376,11 @@ object VoiceCommands {
         // Modos de conducción: «modo sport», «pon el modo noche», «modo normal».
         if (has("modo")) {
             when {
+                has("diurno", "de dia", "dia", "claro") && has("quita", "desactiva", "apaga", "sin") ->
+                    return Command.Daylight(com.cockpitf30.ui.theme.DayTheme.OFF)
+                has("diurno", "de dia", "claro") -> return Command.Daylight(com.cockpitf30.ui.theme.DayTheme.ON)
+                has("oscuro") -> return Command.Daylight(com.cockpitf30.ui.theme.DayTheme.OFF)
+                has("automatico") && has("diurno", "dia") -> return Command.Daylight(com.cockpitf30.ui.theme.DayTheme.AUTO)
                 has("sport", "deportivo", "sporty", "espor") -> return Command.Mode(com.cockpitf30.ui.theme.DriveMode.SPORT)
                 has("noche", "night", "nocturno", "naight") -> return Command.Mode(com.cockpitf30.ui.theme.DriveMode.NIGHT)
                 has("normal", "confort", "comfort") -> return Command.Mode(com.cockpitf30.ui.theme.DriveMode.NORMAL)
@@ -240,15 +390,18 @@ object VoiceCommands {
         // Abrir pantallas (con o sin «abre», «muestra», «pon», «ver»…).
         return when {
             has("gasolinera") && has("cercana", "cerca", "proxima") -> Command.Info(InfoTopic.FUEL_NEAR)
+            has("turismo", "turistic", "emblematic") -> Command.Open(Screen.TOURISM)
             has("radar", "radares", "multa", "en ruta", "en el camino", "por el camino", "destino") -> Command.Open(Screen.ROUTE)
             has("rendimiento", "potencia", "fuerzas g", "fuerza g", "altitud", "pendiente", "telemetria") -> Command.Open(Screen.PERFORMANCE)
             has("gasolinera", "repostar", "echar gasoil", "echar gasolina") -> Command.Open(Screen.FUEL)
+            has("mantenimiento", "aceite", "itv", "revision", "cambio de ruedas") -> Command.Open(Screen.MAINTENANCE)
             has("viaje", "consumo", "recorrido") -> Command.Open(Screen.TRIP)
             has("vehiculo", "coche", "neumatico", "rueda", "puerta", "presion") -> Command.Open(Screen.VEHICLE)
             has("tiempo", "clima", "prevision", "meteo") -> Command.Open(Screen.WEATHER)
             has("telefono", "llama", "llamar", "contacto", "marcador", "agenda") -> Command.Open(Screen.PHONE)
             has("aplicacion", "apps", "app") -> Command.Open(Screen.APPS)
-            has("diagnostico", "ajuste", "configuracion") -> Command.Open(Screen.DIAGNOSTICS)
+            has("diagnostico", "depuracion") -> Command.Open(Screen.DIAGNOSTICS)
+            has("ajuste", "configuracion") -> Command.Open(Screen.SETTINGS)
             has("inicio", "principal", "home") -> Command.Open(Screen.HOME)
             has("musica", "spotify", "cancion", "reproductor") -> Command.Music
             has("mapa", "navegacion", "navegador", "maps", "gps") -> Command.Maps
@@ -256,6 +409,27 @@ object VoiceCommands {
             has("hora") -> Command.Info(InfoTopic.TIME)
             else -> Command.Unknown(t)
         }
+    }
+
+    /** Órdenes de la radio; solo si se nombra la radio, una emisora o se pide «sintoniza». */
+    private fun radio(t: String, has: (Array<out String>) -> Boolean): Command? {
+        fun h(vararg k: String) = has(k)
+        val sintoniza = Regex("^(?:sintoniza|sintonizame|pon la frecuencia|pon el dial)(?: (?:el|la|los|las))? (.+)").find(t)
+        if (sintoniza != null) return Command.RadioPlay(sintoniza.groupValues[1].trim())
+        if (!h("radio", "emisora", "frecuencia")) return null
+        if (h("volumen") || h("sube", "baja", "mas alta", "mas baja", "mas fuerte", "mas flojo", "mas bajo", "mas alto")) {
+            number(t.substringAfter("volumen", t))?.let { return Command.RadioVolume(set = it.coerceIn(0, 100)) }
+            if (h("sube", "mas alta", "mas alto", "mas fuerte", "aumenta")) return Command.RadioVolume(delta = 10)
+            if (h("baja", "mas baja", "mas bajo", "mas flojo", "reduce")) return Command.RadioVolume(delta = -10)
+        }
+        if (h("apaga", "quita", "para la", "para radio", "deten", "silencia", "quitame", "fuera la")) return Command.RadioStop
+        if (h("siguiente emisora", "otra emisora", "cambia de emisora", "cambia la emisora", "emisora siguiente", "proxima emisora")) return Command.RadioNext(1)
+        if (h("emisora anterior", "anterior emisora")) return Command.RadioNext(-1)
+        if (h("abre", "muestra", "ensename", "pantalla")) return Command.Open(Screen.RADIO)
+        // Lo que va tras «radio» / «emisora» es el nombre: «pon la radio cadena ser», «pon la emisora los cuarenta».
+        val rest = t.replace(Regex("^.*?\\b(?:radio|emisora|frecuencia)\\b"), "")
+            .replace(Regex("^(?: (?:de|del|en|la|el|por favor|fm|por internet))+"), "").replace("por favor", "").trim()
+        return Command.RadioPlay(rest.ifBlank { null })
     }
 
     private val WEATHER_WORDS = arrayOf("tiempo", "temperatura", "llover", "llueve", "lluvia", "clima", "frio", "calor", "sol", "nieve", "nevar", "grados")

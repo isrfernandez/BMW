@@ -29,6 +29,11 @@ class AppSettings(context: Context) {
         }
         set(value) = prefs.edit().putString(KEY_SOURCE, value.name).apply()
 
+    /** Fuente de datos que había antes de una demo sin terminar (null si no hay demo a medias). */
+    var demoRestoreSource: String?
+        get() = prefs.getString("demo_restore_source", null)
+        set(value) = prefs.edit().putString("demo_restore_source", value).apply()
+
     var serialPath: String
         get() = prefs.getString(KEY_PATH, "/dev/ttyMT1")!!
         set(value) = prefs.edit().putString(KEY_PATH, value).apply()
@@ -43,10 +48,18 @@ class AppSettings(context: Context) {
         get() = IDriveInput.decode(prefs.getString(KEY_KNOB_KEYS, null))
         set(value) = prefs.edit().putString(KEY_KNOB_KEYS, IDriveInput.encode(value)).apply()
 
-    /** Asistente de voz: escuchar «Hola BMW» mientras la app está en pantalla. */
+    /** Asistente de voz: escuchar «Hola Athos» mientras la app está en pantalla. */
     var assistantEnabled: Boolean
         get() = prefs.getBoolean(KEY_ASSISTANT, true)
         set(value) = prefs.edit().putBoolean(KEY_ASSISTANT, value).apply()
+
+    /**
+     * Volumen de la voz del asistente en % (10..150) sobre el volumen general: para equilibrarla
+     * con Maps y la radio. Por encima de 100 % solo sube la voz TARS (se amplifica la señal).
+     */
+    var assistantVolume: Int
+        get() = prefs.getInt("assistant_volume", 100)
+        set(value) = prefs.edit().putInt("assistant_volume", value.coerceIn(10, 150)).apply()
 
     /** Responder también en voz alta (si la radio tiene motor de voz). */
     var assistantSpeaks: Boolean
@@ -69,15 +82,25 @@ class AppSettings(context: Context) {
         get() = prefs.getInt(KEY_ASSISTANT_HUMOR, com.cockpitf30.assistant.Personality.DEFAULT_HUMOR)
         set(value) = prefs.edit().putInt(KEY_ASSISTANT_HUMOR, value.coerceIn(0, 100)).apply()
 
-    /** Sensibilidad de «Hola BMW»: 0 baja (sigla entera y muy clara), 1 normal, 2 alta (como antes). */
+    /** Sensibilidad de «Hola Athos»: 0 baja (sigla entera y muy clara), 1 normal, 2 alta (como antes). */
     var wakeSensitivity: Int
         get() = prefs.getInt("wake_sensitivity", 1)
         set(value) = prefs.edit().putInt("wake_sensitivity", value.coerceIn(0, 2)).apply()
 
-    /** Tras responder, seguir escuchando unos segundos sin «Hola BMW» (conversación seguida). */
+    /** Tras responder, seguir escuchando unos segundos sin «Hola Athos» (conversación seguida). */
     var assistantFollowUp: Boolean
         get() = prefs.getBoolean("assistant_follow_up", true)
         set(value) = prefs.edit().putBoolean("assistant_follow_up", value).apply()
+
+    /** Las órdenes (lo que va tras «Hola Athos») con el reconocedor de Google, si la radio lo tiene. */
+    var commandsWithGoogle: Boolean
+        get() = prefs.getBoolean("commands_with_google", true)
+        set(value) = prefs.edit().putBoolean("commands_with_google", value).apply()
+
+    /** Segundos que sigue escuchando sin «Hola Athos» tras responder (antes 12 s fijos: demasiado). */
+    var assistantFollowSeconds: Int
+        get() = prefs.getInt("assistant_follow_seconds", 5)
+        set(value) = prefs.edit().putInt("assistant_follow_seconds", value.coerceIn(2, 20)).apply()
 
     /** Modo copiloto: el asistente habla por su cuenta cada [copilotMinutes] (cada 2 min en demo). */
     var copilotEnabled: Boolean
@@ -107,6 +130,22 @@ class AppSettings(context: Context) {
     var radarVoice: Boolean
         get() = prefs.getBoolean("radar_voice", true)
         set(value) = prefs.edit().putBoolean("radar_voice", value).apply()
+
+    /** Interruptor general de los avisos en ruta (radares, seguridad, combustible, descanso y turismo). */
+    var routeAlerts: Boolean
+        get() = prefs.getBoolean("route_alerts", true)
+        set(value) = prefs.edit().putBoolean("route_alerts", value).apply()
+
+    /** Si se avisa de [c]: interruptor general y el de la categoría (radares = [radarVoice]). */
+    fun alertOn(c: com.cockpitf30.nav.AlertCategory): Boolean = routeAlerts && alertCategory(c)
+
+    fun alertCategory(c: com.cockpitf30.nav.AlertCategory): Boolean =
+        if (c == com.cockpitf30.nav.AlertCategory.RADAR) radarVoice else prefs.getBoolean("alert_" + c.name.lowercase(), true)
+
+    fun setAlertCategory(c: com.cockpitf30.nav.AlertCategory, on: Boolean) {
+        if (c == com.cockpitf30.nav.AlertCategory.RADAR) radarVoice = on
+        else prefs.edit().putBoolean("alert_" + c.name.lowercase(), on).apply()
+    }
 
     var askedContacts: Boolean
         get() = prefs.getBoolean("asked_contacts", false)
@@ -217,6 +256,148 @@ class AppSettings(context: Context) {
     var canAskSpeed: Boolean
         get() = prefs.getBoolean(KEY_CAN_ASK_SPEED, true)
         set(value) = prefs.edit().putBoolean(KEY_CAN_ASK_SPEED, value).apply()
+
+    /** Trayectos terminados (ver TripHistory), en JSON. */
+    var tripHistory: String?
+        get() = prefs.getString("trip_history", null)
+        set(value) = prefs.edit().putString("trip_history", value).apply()
+
+    /**
+     * Cuentakilómetros propio, en metros: la caja CAN no manda el del coche. Lo pone el conductor
+     * una vez en Mantenimiento y la app le suma lo que recorre. null = sin poner.
+     */
+    var odometerM: Long?
+        get() = prefs.getLong("odometer_m", -1L).takeIf { it >= 0 }
+        set(value) = prefs.edit().putLong("odometer_m", value ?: -1L).apply()
+
+    /** Última vez que se hizo [item]: km del cuentakilómetros y fecha. */
+    fun serviceRecord(item: com.cockpitf30.vehicle.ServiceItem): com.cockpitf30.vehicle.ServiceRecord? {
+        val k = "service_" + item.name.lowercase()
+        val km = prefs.getLong(k + "_km", -1L).takeIf { it >= 0 }
+        val at = prefs.getLong(k + "_at", -1L).takeIf { it > 0 }
+        return if (km == null && at == null) null else com.cockpitf30.vehicle.ServiceRecord(km, at)
+    }
+
+    fun setServiceRecord(item: com.cockpitf30.vehicle.ServiceItem, r: com.cockpitf30.vehicle.ServiceRecord?) {
+        val k = "service_" + item.name.lowercase()
+        prefs.edit().putLong(k + "_km", r?.doneAtKm ?: -1L).putLong(k + "_at", r?.doneAtMillis ?: -1L).apply()
+    }
+
+    /** Cada cuántos km se hace [item] (el usuario puede cambiar el de fábrica). */
+    fun serviceEveryKm(item: com.cockpitf30.vehicle.ServiceItem): Int? =
+        item.everyKm?.let { prefs.getInt("service_" + item.name.lowercase() + "_every_km", it) }
+
+    fun setServiceEveryKm(item: com.cockpitf30.vehicle.ServiceItem, km: Int) {
+        prefs.edit().putInt("service_" + item.name.lowercase() + "_every_km", km.coerceIn(1_000, 60_000)).apply()
+    }
+
+    /** Fecha de la próxima ITV (día de la época), o null. */
+    var itvDate: java.time.LocalDate?
+        get() = prefs.getLong("itv_epoch_day", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }?.let { java.time.LocalDate.ofEpochDay(it) }
+        set(value) = prefs.edit().putLong("itv_epoch_day", value?.toEpochDay() ?: Long.MIN_VALUE).apply()
+
+    /** Años entre ITV (2 hasta los 10 años del coche, luego 1). */
+    var itvYears: Int
+        get() = prefs.getInt("itv_years", 1)
+        set(value) = prefs.edit().putInt("itv_years", value.coerceIn(1, 2)).apply()
+
+    /** Sonido de Athos al arrancar (pantalla de inicio). */
+    var startSound: Boolean
+        get() = prefs.getBoolean("start_sound", true)
+        set(value) = prefs.edit().putBoolean("start_sound", value).apply()
+
+    /** Sonido de Athos al pasar a la vista Athos del cuadro del Inicio. */
+    var athosViewSound: Boolean
+        get() = prefs.getBoolean("athos_view_sound", true)
+        set(value) = prefs.edit().putBoolean("athos_view_sound", value).apply()
+
+    /** Ventana de resumen al parar el motor. */
+    var tripSummary: Boolean
+        get() = prefs.getBoolean("trip_summary", true)
+        set(value) = prefs.edit().putBoolean("trip_summary", value).apply()
+
+    /** Inicio del último viaje cuyo resumen ya se enseñó (para no repetirlo ni perderlo). */
+    var lastSummaryStart: Long
+        get() = prefs.getLong("last_summary_start", 0L)
+        set(value) = prefs.edit().putLong("last_summary_start", value).apply()
+
+    /** Flecha de cambio de marcha en el cuadro. */
+    /** Con Maps u otra app delante, seguir escuchando «Hola Athos» (servicio en primer plano con micrófono). */
+    var listenOutsideApp: Boolean
+        get() = prefs.getBoolean("listen_outside_app", true)
+        set(value) = prefs.edit().putBoolean("listen_outside_app", value).apply()
+
+    /** Mini cockpit flotante (velocidad, marcha, asistente…) encima de Maps y de otras apps. */
+    var miniCockpit: Boolean
+        get() = prefs.getBoolean("mini_cockpit", true)
+        set(value) = prefs.edit().putBoolean("mini_cockpit", value).apply()
+
+    /** Posición del mini cockpit en la pantalla (px desde arriba a la izquierda; -1 = sin mover). */
+    var miniCockpitPos: Pair<Int, Int>
+        get() = prefs.getInt("mini_cockpit_x", -1) to prefs.getInt("mini_cockpit_y", -1)
+        set(value) = prefs.edit().putInt("mini_cockpit_x", value.first).putInt("mini_cockpit_y", value.second).apply()
+
+    /** Abrir Maps en pantalla dividida junto al cockpit (si la radio lo permite). */
+    var splitScreenMaps: Boolean
+        get() = prefs.getBoolean("split_screen_maps", false)
+        set(value) = prefs.edit().putBoolean("split_screen_maps", value).apply()
+
+    /** Mini cockpit plegado: solo velocidad y micrófono. */
+    var miniCockpitCompact: Boolean
+        get() = prefs.getBoolean("mini_cockpit_compact", false)
+        set(value) = prefs.edit().putBoolean("mini_cockpit_compact", value).apply()
+
+    var shiftIndicator: Boolean
+        get() = prefs.getBoolean("shift_indicator", true)
+        set(value) = prefs.edit().putBoolean("shift_indicator", value).apply()
+
+    /** Saludo del asistente al arrancar (tiempo, autonomía, radares y mantenimiento). */
+    var briefing: Boolean
+        get() = prefs.getBoolean("briefing", true)
+        set(value) = prefs.edit().putBoolean("briefing", value).apply()
+
+    var lastBriefingAt: Long
+        get() = prefs.getLong("last_briefing_at", 0L)
+        set(value) = prefs.edit().putLong("last_briefing_at", value).apply()
+
+    /** Halo de luz ambiente en los bordes de la pantalla. */
+    var ambientLight: Boolean
+        get() = prefs.getBoolean("ambient_light", true)
+        set(value) = prefs.edit().putBoolean("ambient_light", value).apply()
+
+    // ---- Radio
+    /** Última fuente elegida (FM o INTERNET). */
+    var radioSource: String?
+        get() = prefs.getString("radio_source", null)
+        set(value) = prefs.edit().putString("radio_source", value).apply()
+
+    /** Última frecuencia FM (10 kHz). */
+    var radioFmFreq: Int
+        get() = prefs.getInt("radio_fm_freq", 9800)
+        set(value) = prefs.edit().putInt("radio_fm_freq", value).apply()
+
+    var radioFmFavorites: String?
+        get() = prefs.getString("radio_fm_favorites", null)
+        set(value) = prefs.edit().putString("radio_fm_favorites", value).apply()
+
+    /** Favoritas de Internet (JSON). */
+    var radioFavorites: String?
+        get() = prefs.getString("radio_favorites", null)
+        set(value) = prefs.edit().putString("radio_favorites", value).apply()
+
+    var radioLastStation: String?
+        get() = prefs.getString("radio_last_station", null)
+        set(value) = prefs.edit().putString("radio_last_station", value).apply()
+
+    /** Volumen propio de la radio (0–100), independiente del general. */
+    var radioVolume: Int
+        get() = prefs.getInt("radio_volume", com.cockpitf30.radio.RadioLogic.DEFAULT_VOLUME)
+        set(value) = prefs.edit().putInt("radio_volume", value.coerceIn(0, 100)).apply()
+
+    /** Bajar la radio (y otras apps) mientras el asistente escucha o habla. */
+    var radioDuckAssistant: Boolean
+        get() = prefs.getBoolean("radio_duck_assistant", true)
+        set(value) = prefs.edit().putBoolean("radio_duck_assistant", value).apply()
 
     private companion object {
         const val KEY_CAN_ASK_SPEED = "can_ask_speed"

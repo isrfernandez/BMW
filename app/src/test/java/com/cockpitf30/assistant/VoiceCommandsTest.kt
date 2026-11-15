@@ -10,13 +10,13 @@ class VoiceCommandsTest {
 
     @Test
     fun wakeWordInItsSpokenForms() {
-        assertEquals("", VoiceCommands.afterWakeWord("Hola BMW"))
-        assertEquals("", VoiceCommands.afterWakeWord("hola be eme uve doble"))
-        assertEquals("", VoiceCommands.afterWakeWord("hola beme uve doble"))
-        assertEquals("", VoiceCommands.afterWakeWord("ola me uve doble"))
-        assertEquals("", VoiceCommands.afterWakeWord("hola be eme doble ve"))
-        assertEquals("abre las gasolineras", VoiceCommands.afterWakeWord("hola be eme uve doble abre las gasolineras"))
-        assertEquals("que tiempo hace", VoiceCommands.afterWakeWord("¡Hola, BMW! ¿Qué tiempo hace?"))
+        assertEquals("", VoiceCommands.afterWakeWord("Hola Athos"))
+        assertEquals("", VoiceCommands.afterWakeWord("hola atos"))
+        assertEquals("", VoiceCommands.afterWakeWord("hola a tos"))
+        assertEquals("", VoiceCommands.afterWakeWord("ola atos"))
+        assertEquals("", VoiceCommands.afterWakeWord("oye Athos"))
+        assertEquals("abre las gasolineras", VoiceCommands.afterWakeWord("hola a tos abre las gasolineras"))
+        assertEquals("que tiempo hace", VoiceCommands.afterWakeWord("¡Hola, Athos! ¿Qué tiempo hace?"))
     }
 
     @Test
@@ -28,8 +28,10 @@ class VoiceCommandsTest {
 
     @Test
     fun leftoverBrandIsStrippedFromTheCommand() {
-        assertEquals("abre las gasolineras", VoiceCommands.stripWakeWords("uve doble abre las gasolineras"))
-        assertEquals("", VoiceCommands.stripWakeWords("uve doble"))
+        assertEquals("abre las gasolineras", VoiceCommands.stripWakeWords("atos abre las gasolineras"))
+        assertEquals("abre las gasolineras", VoiceCommands.stripWakeWords("hola a tos abre las gasolineras"))
+        assertEquals("", VoiceCommands.stripWakeWords("athos"))
+        assertEquals("a casa", VoiceCommands.stripWakeWords("a casa"))
         assertEquals("que tiempo hace", VoiceCommands.stripWakeWords("qué tiempo hace"))
     }
 
@@ -89,6 +91,9 @@ class VoiceCommandsTest {
     fun driveModes() {
         assertEquals(Command.Mode(com.cockpitf30.ui.theme.DriveMode.SPORT), VoiceCommands.parse("modo sport"))
         assertEquals(Command.Mode(com.cockpitf30.ui.theme.DriveMode.NIGHT), VoiceCommands.parse("pon el modo noche"))
+        assertEquals(Command.Daylight(com.cockpitf30.ui.theme.DayTheme.ON), VoiceCommands.parse("pon el modo diurno"))
+        assertEquals(Command.Daylight(com.cockpitf30.ui.theme.DayTheme.OFF), VoiceCommands.parse("quita el modo diurno"))
+        assertEquals(Command.Daylight(com.cockpitf30.ui.theme.DayTheme.OFF), VoiceCommands.parse("modo oscuro"))
         assertEquals(Command.Open(Screen.PERFORMANCE), VoiceCommands.parse("abre rendimiento"))
     }
 
@@ -97,7 +102,38 @@ class VoiceCommandsTest {
         assertTrue(VoiceCommands.isStopWord("basta"))
         assertTrue(VoiceCommands.isStopWord("Cállate"))
         assertTrue(!VoiceCommands.isStopWord("para descansar"))
-        assertTrue(VoiceCommands.BARGE_GRAMMAR.contains("\"hola be eme uve doble\""))
+        assertEquals(VoiceCommands.Barge.STOP, VoiceCommands.bargeAction("para"))
+        assertEquals(VoiceCommands.Barge.STOP, VoiceCommands.bargeAction("Detente"))
+        assertEquals(VoiceCommands.Barge.STOP, VoiceCommands.bargeAction("cancela"))
+        assertEquals(VoiceCommands.Barge.PAUSE, VoiceCommands.bargeAction("pausa"))
+        assertEquals(VoiceCommands.Barge.HOLD, VoiceCommands.bargeAction("un momento"))
+        // «a ver», «oye» y «perdona» salen en sus propias frases: ya no cortan.
+        assertNull(VoiceCommands.bargeAction("a ver"))
+        assertNull(VoiceCommands.bargeAction("oye"))
+        assertEquals(VoiceCommands.Barge.RESUME, VoiceCommands.bargeAction("continúa"))
+        assertEquals(Command.Resume, VoiceCommands.parse("sigue"))
+        assertEquals("para", VoiceCommands.bargePhraseAtEnd("[unk] [unk] para"))
+        assertEquals("un momento", VoiceCommands.bargePhraseAtEnd("[unk] un momento"))
+        assertEquals("hola atos", VoiceCommands.bargePhraseAtEnd("hola atos"))
+        assertNull(VoiceCommands.bargePhraseAtEnd("[unk] [unk]"))
+        // Las palabras de relleno absorben su propia voz y no son órdenes.
+        assertTrue(VoiceCommands.BARGE_GRAMMAR.contains("\"kilómetros\""))
+        assertNull(VoiceCommands.bargePhraseAtEnd("gira a la derecha"))
+        assertEquals("para", VoiceCommands.bargePhraseAtEnd("vale para"))
+        assertEquals(Command.Pause, VoiceCommands.parse("pausa"))
+        assertEquals(Command.Cancel, VoiceCommands.parse("para"))
+        assertTrue(VoiceCommands.BARGE_GRAMMAR.contains("\"un momento\""))
+        assertTrue(VoiceCommands.BARGE_GRAMMAR.contains("\"hola atos\""))
         assertTrue(VoiceCommands.BARGE_GRAMMAR.contains("\"basta\""))
+    }
+
+    @Test
+    fun mapsGuidanceQuestions() {
+        for (t in listOf("¿cuál es el siguiente giro?", "¿cuánto falta?", "¿a qué hora llego?", "próxima indicación", "¿por dónde sigo?")) {
+            assertEquals(t, Command.Info(InfoTopic.GUIDANCE), VoiceCommands.parse(t))
+        }
+        // Lo de antes sigue igual.
+        assertEquals(Command.Info(InfoTopic.TIME), VoiceCommands.parse("¿qué hora es?"))
+        assertEquals(Command.Info(InfoTopic.RANGE), VoiceCommands.parse("¿cuánto queda de autonomía?"))
     }
 }

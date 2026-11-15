@@ -31,6 +31,11 @@ data class Trip(
     /** Acumulado del tramo en curso de la gráfica. */
     val bucketSum: Double = 0.0,
     val bucketMs: Long = 0,
+    /** Dónde empezó y dónde va (o acabó), si el GPS lo sabía: para el destino habitual. */
+    val startLat: Double? = null,
+    val startLon: Double? = null,
+    val endLat: Double? = null,
+    val endLon: Double? = null,
 ) {
     val endMillis: Long get() = if (finished) lastMoveMillis else lastMillis
     val durationMillis: Long get() = (endMillis - startMillis).coerceAtLeast(0)
@@ -85,6 +90,8 @@ data class Trip(
         put("sampleMs", sampleMs)
         put("bucketSum", bucketSum)
         put("bucketMs", bucketMs)
+        startLat?.let { put("sla", it) }; startLon?.let { put("slo", it) }
+        endLat?.let { put("ela", it) }; endLon?.let { put("elo", it) }
     }.toString()
 
     companion object {
@@ -107,6 +114,10 @@ data class Trip(
                     sampleMs = o.optLong("sampleMs", TripMath.FIRST_SAMPLE_MS),
                     bucketSum = o.optDouble("bucketSum", 0.0),
                     bucketMs = o.optLong("bucketMs"),
+                    startLat = if (o.has("sla")) o.getDouble("sla") else null,
+                    startLon = if (o.has("slo")) o.getDouble("slo") else null,
+                    endLat = if (o.has("ela")) o.getDouble("ela") else null,
+                    endLon = if (o.has("elo")) o.getDouble("elo") else null,
                 )
             }.getOrNull()
         }
