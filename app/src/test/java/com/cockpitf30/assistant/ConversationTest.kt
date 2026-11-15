@@ -38,7 +38,7 @@ class ConversationTest {
         assertEquals(Command.Navigate("plaza mayor de madrid"), VoiceCommands.parse("llévame a la plaza mayor de madrid"))
         assertEquals(Command.Cancel, VoiceCommands.parse("no"))
         assertEquals(Command.Info(InfoTopic.FUEL_NEAR), VoiceCommands.parse("busca la gasolinera más cercana"))
-        assertEquals(Command.Navigate("restaurante"), VoiceCommands.parse("búscame un restaurante"))
+        assertEquals(Command.Stays(setOf(com.cockpitf30.nav.StayKind.EAT)), VoiceCommands.parse("búscame un restaurante"))
         assertTrue(VoiceCommands.parse("busca la") is Command.Unknown)
     }
 

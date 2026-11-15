@@ -50,6 +50,37 @@ object Wiki {
         return if (title.isEmpty()) null else tag.substring(0, i).lowercase() to title
     }
 
+    private val fame = HashMap<String, Int>()
+
+    /** Popularidad ya sabida de un Wikidata (nº de Wikipedias con artículo), o null. */
+    @Synchronized fun fame(qid: String?): Int? = qid?.let { fame[it] }
+
+    /**
+     * Cuántas Wikipedias tienen artículo de cada sitio (lo «emblemático» que es): el Acueducto de
+     * Segovia sale en más de 80, una ermita de pueblo en 1 o 2. De 50 en 50 (bloqueante, en IO).
+     */
+    fun loadFame(qids: Collection<String>) {
+        val todo = synchronized(this) { qids.filter { it.matches(Regex("Q\\d+")) && it !in fame }.distinct() }
+        todo.chunked(50).forEach { chunk ->
+            val json = runCatching {
+                get("https://www.wikidata.org/w/api.php?action=wbgetentities&props=sitelinks&format=json&ids=" + URLEncoder.encode(chunk.joinToString("|"), "UTF-8"))
+            }.getOrNull() ?: return@forEach
+            val counts = runCatching { parseFame(json) }.getOrNull() ?: return@forEach
+            synchronized(this) { chunk.forEach { fame[it] = counts[it] ?: 0 } }
+        }
+    }
+
+    /** Wikidata → nº de sitelinks que son Wikipedias («…wiki», sin commons ni wikivoyage…). */
+    fun parseFame(json: String): Map<String, Int> {
+        val ents = JSONObject(json).optJSONObject("entities") ?: return emptyMap()
+        val out = HashMap<String, Int>()
+        ents.keys().forEach { id ->
+            val links = ents.optJSONObject(id)?.optJSONObject("sitelinks")
+            out[id] = links?.keys()?.asSequence()?.count { it.endsWith("wiki") && it != "commonswiki" && it != "specieswiki" && it != "metawiki" && it != "wikidatawiki" } ?: 0
+        }
+        return out
+    }
+
     private fun esTitle(qid: String): String? {
         val json = get("https://www.wikidata.org/w/api.php?action=wbgetentities&props=sitelinks&sitefilter=eswiki&format=json&ids=" + URLEncoder.encode(qid, "UTF-8"))
             ?: return null

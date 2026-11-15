@@ -1051,6 +1051,7 @@ object VoiceAssistant {
                 Screen.PERFORMANCE -> joke("Rendimiento", "open.performance")
                 Screen.MAINTENANCE -> Maintenance.spoken(com.cockpitf30.ui.screens.serviceStatuses(settings())) ?: "Mantenimiento: todo al día"
                 Screen.RADIO -> "Abro la radio"
+                Screen.TOURISM -> "Lo más interesante de la zona, dónde comer y dónde dormir"
             }
         }
         is Command.Info -> info(c.topic, now)
@@ -1140,6 +1141,11 @@ object VoiceAssistant {
         Command.Nearby -> com.cockpitf30.nav.RouteAlerts.nearby(scope)
         Command.AboutThat -> com.cockpitf30.nav.RouteAlerts.more() ?: "Todavía no te he hablado de ningún sitio. Pregúntame qué hay por aquí."
         Command.TourInfo -> com.cockpitf30.nav.RouteAlerts.tourInfo(scope) { text -> sayLater(text) }
+        is Command.Stays -> stays(c, now)
+        is Command.GoTo -> {
+            afterSpeaking { navigateTo("%.6f,%.6f".format(java.util.Locale.US, c.lat, c.lon)) }
+            joke("Vamos a ${c.name}", "nav")
+        }
         Command.Quiet -> {
             copilotSnoozeUntil = now + 30 * 60_000L
             joke("Vale, me callo media hora", "cancel")
@@ -1158,6 +1164,51 @@ object VoiceAssistant {
         }
         Command.Honesty -> "Sinceridad al noventa por ciento. El diez restante es por tu bien."
         is Command.Unknown -> Personality.line(if (kotlin.random.Random.nextDouble() < Personality.jokeChance(humor())) "unknown.funny" else "unknown")
+    }
+
+    /**
+     * «Dónde comer», «hoteles», «campings»: los tres más cercanos, el primero en la ventanita y
+     * «¿te llevo?». Si aún no se había descargado, contesta que lo mira y lo dice al llegar.
+     */
+    private fun stays(c: Command.Stays, now: Long): String {
+        val pos = com.cockpitf30.nav.RouteTracker.state.value.position ?: com.cockpitf30.nav.RoutePois.state.value.position
+        val bearing = com.cockpitf30.nav.RouteTracker.state.value.bearing
+        val fl = com.cockpitf30.nav.FoodLodging
+        val before = fl.state.value
+        fun reply(): Pair<String, com.cockpitf30.nav.StayView?> {
+            val st = fl.state.value
+            val near = pos?.let { fl.views(it, bearing, st.stays) } ?: emptyList()
+            var kinds = c.kinds
+            // Sin restaurantes vale un bar, y sin hoteles un camping (y al revés).
+            if (near.none { it.stay.kind in kinds }) {
+                kinds = kinds + kinds.flatMap {
+                    when (it) {
+                        com.cockpitf30.nav.StayKind.EAT -> listOf(com.cockpitf30.nav.StayKind.DRINK)
+                        com.cockpitf30.nav.StayKind.DRINK -> listOf(com.cockpitf30.nav.StayKind.EAT)
+                        com.cockpitf30.nav.StayKind.SLEEP -> listOf(com.cockpitf30.nav.StayKind.CAMP)
+                        com.cockpitf30.nav.StayKind.CAMP -> listOf(com.cockpitf30.nav.StayKind.SLEEP)
+                    }
+                }
+            }
+            val r = fl.answer(kinds, near, st, pos != null)
+            r.second?.let { v ->
+                conversation.ask(Pending.Confirm(Command.GoTo(v.stay.name, v.stay.lat, v.stay.lon)), System.currentTimeMillis())
+                com.cockpitf30.nav.RouteAlerts.show(fl.alert(v).copy(at = System.currentTimeMillis()))
+            }
+            return r
+        }
+        if (pos == null) return reply().first
+        val far = before.center?.let { com.cockpitf30.nav.RouteTracker.distance(it, pos) > 2500 } ?: true
+        if (before.stays.isNotEmpty() && !far) return reply().first
+        fl.maybeFetch(scope, pos, force = true)
+        scope.launch {
+            val done = kotlinx.coroutines.withTimeoutOrNull(60_000) {
+                fl.state.first { it.updatedAt > before.updatedAt || (!it.loading && it.error != null) }
+            }
+            if (done != null) sayLater(reply().first)
+        }
+        return if (before.stays.isNotEmpty()) reply().first.substringBefore(" ¿Te llevo") + " Lo actualizo, un momento."
+        else "Miro qué hay por aquí, un momento."
     }
 
     private fun navigateTo(q: String) {

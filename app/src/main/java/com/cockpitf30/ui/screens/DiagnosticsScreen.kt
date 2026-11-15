@@ -18,6 +18,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -125,25 +127,31 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
-                // FM por la antena: la prueba que hace falta para depurar el sintonizador.
-                val fm by com.cockpitf30.radio.Radio.fmTest.collectAsStateWithLifecycle()
+                // Google Maps baja la FM con la «mezcla de navegación» de la propia radio (no pasa por la app).
+                val carValues by com.cockpitf30.vehicle.source.RadioCarData.values.collectAsStateWithLifecycle()
+                var mix by remember { mutableStateOf<String?>(null) }
+                var reads by remember { mutableStateOf(0) }
+                LaunchedEffect(reads) {
+                    mix = withContext(Dispatchers.IO) {
+                        runCatching {
+                            val car = com.cockpitf30.vehicle.source.VendorCar.connect(context).getOrThrow()
+                            listOf("gps_app", "gps_mix_level", "gps_sound_mode").joinToString(" · ") { k -> "$k = ${car.getString("data.set.$k") ?: "∅"}" }
+                        }.getOrElse { "no se puede leer ($it)" }
+                    }
+                }
+                DiagCard("Mezcla del navegador (FM con Google Maps)") {
+                    Info("Ajustes de la radio: ${mix ?: "leyendo…"}", Cockpit.TextDim)
+                    val gpsSound = carValues.entries.filter { "gps_sound" in it.key || "gps_mix" in it.key }.joinToString(" · ") { "${it.key} = ${it.value}" }
+                    Info("En vivo: ${gpsSound.ifBlank { "state.main.gps_sound no aparece" }}", Cockpit.TextDim)
+                    Info("Con esta pantalla abierta, deja que Google Maps dé una indicación: si «gps_sound» no cambia, la radio no se entera de que habla el navegador y por eso no baja la FM.", Cockpit.TextDim)
+                    ChipRow(listOf("Volver a leer"), -1) { reads++ }
+                }
+            }
+            item {
                 val radio by com.cockpitf30.radio.Radio.state.collectAsStateWithLifecycle()
                 DiagCard("Radio FM (sintonizador)") {
                     Info("Sintonizador: " + when (radio.tunerAvailable) { true -> "accesible"; false -> "no accesible"; null -> "comprobando" } + " · " + radio.tunerInfo, Cockpit.TextDim)
                     radio.error?.let { Info(it, Cockpit.Alert) }
-                    fm?.let { t ->
-                        Info(if (t.running) "Prueba FM en marcha…" else (t.lines.firstOrNull { it.startsWith("Resultado:") } ?: "Prueba FM hecha (${t.lines.size} líneas)"), Cockpit.BlueLight)
-                    }
-                    ChipRow(listOf("Prueba FM", "Compartir prueba FM", "Guardar prueba FM en Descargas"), -1) {
-                        val lines = fm?.takeIf { !it.running }?.lines
-                        when {
-                            it == 0 -> com.cockpitf30.radio.Radio.runFmTest()
-                            lines == null -> com.cockpitf30.radio.Radio.runFmTest()
-                            it == 1 -> shareReport(context, lines.joinToString("\n"), "Athos prueba FM")
-                            else -> saveReport(context, lines.joinToString("\n"), "cockpit-prueba-fm")
-                        }
-                    }
-                    fm?.takeIf { !it.running }?.lines?.take(30)?.forEach { Mono(it) }
                 }
             }
             item {
@@ -376,8 +384,8 @@ private fun radioReport(values: Map<String, String>, changes: List<String>, vehi
     appendLine()
     appendLine("== Sintonizador FM")
     com.cockpitf30.radio.FactoryTuner.lastProbe?.let { appendLine("Comprobación: ${it.reason}") }
-    com.cockpitf30.radio.Radio.fmTest.value?.takeIf { !it.running }?.lines?.forEach(::appendLine)
-        ?: run { appendLine("(sin «Prueba FM»; últimas órdenes:)"); com.cockpitf30.radio.FactoryTuner.trace.value.forEach(::appendLine) }
+    appendLine("(últimas órdenes:)")
+    com.cockpitf30.radio.FactoryTuner.trace.value.forEach(::appendLine)
     appendLine()
     appendLine("== Datos del coche (radio)")
     appendLine(vehicleSummary(vehicle))

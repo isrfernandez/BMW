@@ -301,10 +301,15 @@ class AppSettings(context: Context) {
         get() = prefs.getInt("itv_years", 1)
         set(value) = prefs.edit().putInt("itv_years", value.coerceIn(1, 2)).apply()
 
-    /** Sonido de Athos al arrancar (y al abrir la vista Athos del Inicio). */
+    /** Sonido de Athos al arrancar (pantalla de inicio). */
     var startSound: Boolean
         get() = prefs.getBoolean("start_sound", true)
         set(value) = prefs.edit().putBoolean("start_sound", value).apply()
+
+    /** Sonido de Athos al pasar a la vista Athos del cuadro del Inicio. */
+    var athosViewSound: Boolean
+        get() = prefs.getBoolean("athos_view_sound", true)
+        set(value) = prefs.edit().putBoolean("athos_view_sound", value).apply()
 
     /** Ventana de resumen al parar el motor. */
     var tripSummary: Boolean

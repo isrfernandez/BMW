@@ -157,7 +157,7 @@ object AthosSound {
     private var player: android.media.MediaPlayer? = null
 
     fun play(ctx: android.content.Context) {
-        if (!com.cockpitf30.system.AppSettings(ctx).startSound) return
+        if (!com.cockpitf30.system.AppSettings(ctx).athosViewSound) return
         stop()
         player = runCatching { logoPlayer(ctx) }.getOrNull()?.apply {
             setOnCompletionListener { it.release(); if (player === it) player = null }

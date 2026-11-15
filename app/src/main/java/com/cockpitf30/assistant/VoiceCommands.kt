@@ -70,6 +70,10 @@ sealed interface Command {
     data object AboutThat : Command
     /** «Información turística»: el sitio de interés más cercano, contado con su resumen de Wikipedia. */
     data object TourInfo : Command
+    /** «Dónde comer», «restaurantes», «bares», «alojamiento», «campings»: los más cercanos de ese tipo. */
+    data class Stays(val kinds: Set<com.cockpitf30.nav.StayKind>) : Command
+    /** Ir a un sitio concreto (lo crea la respuesta de [Stays] para «¿te llevo?»). */
+    data class GoTo(val name: String, val lat: Double, val lon: Double) : Command
     /** Una de las gasolineras de las que se acaba de hablar (lo crea [Conversation]). */
     data class Station(val index: Int, val action: StationAction) : Command
 
@@ -225,6 +229,29 @@ object VoiceCommands {
 
     private val QUESTION = setOf("cuanto", "cuanta", "cuantos", "cuantas", "que", "como", "cual", "hay", "dime", "donde", "va", "voy", "tengo", "esta", "estan", "hace")
 
+    /** Comer y dormir: «dónde comer», «busca un restaurante», «hay bares cerca», «hoteles», «campings». */
+    fun stays(t: String, has: (Array<out String>) -> Boolean): Command.Stays? {
+        fun h(vararg w: String) = has(w)
+        // «Activa los avisos de restaurantes» es encender los avisos, no buscar.
+        if (h("aviso", "avisos", "activa", "desactiva")) return null
+        // «Llévame al hotel Sol» es ir a ese sitio; «llévame a un restaurante», buscar.
+        if (Regex("\\b(?:llevame|llevanos|navega|navegar|ruta|como llego|guiame)\\b").containsMatchIn(t) &&
+            !Regex("\\b(?:un|una|unos|unas|algun|alguna|algo|sitio|donde)\\b").containsMatchIn(t)) return null
+        val camp = h("camping", "acampar", "autocaravana", "caravana")
+        val sleep = h("alojamiento", "alojarme", "alojarnos", "hotel", "hostal", "dormir", "pension", "albergue", "casa rural", "pasar la noche", "hospedarnos", "hospedarme")
+        val drink = h("bares", "un bar", "algun bar", "tomar algo", "tomar un cafe", "cafeteria", "un cafe")
+        val eat = h("donde comer", "para comer", "sitio de comer", "comer algo", "restaurante", "donde cenar", "para cenar", "cenar algo", "comida", "un menu", "menu del dia", "tengo hambre", "almorzar")
+        val kinds = buildSet {
+            if (eat) add(com.cockpitf30.nav.StayKind.EAT)
+            if (drink) add(com.cockpitf30.nav.StayKind.DRINK)
+            if (sleep) add(com.cockpitf30.nav.StayKind.SLEEP)
+            if (camp) add(com.cockpitf30.nav.StayKind.CAMP)
+        }
+        if (kinds.isEmpty()) return null
+        // «Restaurantes» incluye bares si no hay restaurantes; «alojamiento» incluye campings.
+        return Command.Stays(kinds)
+    }
+
     fun parse(text: String): Command {
         val t = normalize(text)
         if (t.isEmpty()) return Command.Cancel
@@ -262,7 +289,8 @@ object VoiceCommands {
         if (has("informacion turistica", "info turistica", "guia turistica", "informacion de turismo", "cuentame algo de la zona", "cuentame algo de aqui", "que ver cerca") &&
             !has("activa", "desactiva", "quita", "apaga", "enciende", "aviso", "avisos", "deja de", "para de", "no quiero", "sin ", "vuelve a")) return Command.TourInfo
         // Avisos en ruta: «desactiva los avisos», «quita los avisos turísticos», «activa avisos de radares».
-        val alertWords = has("aviso", "avisos", "puntos de interes", "informacion turistica", "turistic", "turismo")
+        val alertWords = has("aviso", "avisos", "puntos de interes", "informacion turistica", "turistic", "turismo") ||
+            (has("restaurante", "alojamiento", "hotel", "camping") && has("activa", "desactiva", "no me avises"))
         val toggle = has("activa", "desactiva", "quita", "apaga", "enciende", "pon ", "quiero", "sin ", "no quiero", "deja de", "para de", "vuelve a")
         if (alertWords && toggle) {
             val off = has("desactiva", "quita", "apaga", "sin ", "no quiero", "deja de", "para de", "no me avises")
@@ -272,10 +300,12 @@ object VoiceCommands {
                 has("seguridad", "peligro", "paso a nivel", "pasos a nivel") -> com.cockpitf30.nav.AlertCategory.SAFETY
                 has("gasolin", "combustible", "gasoil", "repostar", "autonomia") -> com.cockpitf30.nav.AlertCategory.FUEL
                 has("descanso", "area", "areas", "parar") -> com.cockpitf30.nav.AlertCategory.REST
+                has("restaurante", "comer", "comida", "alojamiento", "hotel", "dormir", "camping", "bares") -> com.cockpitf30.nav.AlertCategory.FOOD
                 else -> null
             }
             return Command.Alerts(cat, !off)
         }
+        stays(t, ::has)?.let { return it }
         if (has("que hay por aqui", "que hay cerca", "que hay por la zona", "que ver por aqui", "que se puede ver", "algo que ver", "sitios de interes", "lugares de interes", "puntos de interes", "que hay interesante")) return Command.Nearby
         if (has("hablame de eso", "hablame de ese", "hablame de esa", "cuentame mas", "que es eso", "que es ese", "que es esa", "mas informacion", "cuentame de eso", "dime mas")) return Command.AboutThat
         if (has("callate", "silencio", "no hables", "deja de hablar")) return Command.Quiet
@@ -360,6 +390,7 @@ object VoiceCommands {
         // Abrir pantallas (con o sin «abre», «muestra», «pon», «ver»…).
         return when {
             has("gasolinera") && has("cercana", "cerca", "proxima") -> Command.Info(InfoTopic.FUEL_NEAR)
+            has("turismo", "turistic", "emblematic") -> Command.Open(Screen.TOURISM)
             has("radar", "radares", "multa", "en ruta", "en el camino", "por el camino", "destino") -> Command.Open(Screen.ROUTE)
             has("rendimiento", "potencia", "fuerzas g", "fuerza g", "altitud", "pendiente", "telemetria") -> Command.Open(Screen.PERFORMANCE)
             has("gasolinera", "repostar", "echar gasoil", "echar gasolina") -> Command.Open(Screen.FUEL)

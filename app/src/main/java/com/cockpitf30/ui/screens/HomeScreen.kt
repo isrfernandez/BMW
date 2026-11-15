@@ -144,6 +144,8 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
             Card("mode", "Modo", "", CardTheme.MODE, { com.cockpitf30.ui.theme.DriveModes.cycle(it) }),
             // Radio: FM por la antena si la unidad tiene sintonizador; si no, por Internet.
             Card("radio", "Radio", "", CardTheme.RADIO, { onOpen(Screen.RADIO) }),
+            // Sitios emblemáticos, dónde comer y dónde dormir, por cercanía y popularidad.
+            Card("tourism", "Turismo", "Ver, comer y dormir", CardTheme.TOURISM, { onOpen(Screen.TOURISM) }),
             Card("trip", "Datos de viaje", "Duración, km y consumo", CardTheme.TRIP, { onOpen(Screen.TRIP) }, Alignment.BottomStart) { TripBody() },
             Card("weather", "Tiempo", "", CardTheme.WEATHER, { onOpen(Screen.WEATHER) }),
             Card("vehicle", "Vehículo", "iDrive original del coche", CardTheme.VEHICLE, { onOpen(Screen.VEHICLE) }),
@@ -552,4 +554,4 @@ internal fun launch(context: Context, intent: Intent) {
     }
 }
 
-enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, SETTINGS, WEATHER, PHONE, FUEL, PERFORMANCE, ROUTE, MAINTENANCE, RADIO }
+enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, SETTINGS, WEATHER, PHONE, FUEL, PERFORMANCE, ROUTE, MAINTENANCE, RADIO, TOURISM }

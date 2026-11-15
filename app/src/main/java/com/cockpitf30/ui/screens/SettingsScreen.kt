@@ -75,7 +75,7 @@ enum class SettingsSection(val title: String, val hint: String) {
     DISPLAY("Pantalla e iluminación", "Modo diurno, tamaño de letra, Night y luz ambiente"),
     ASSISTANT("Asistente de voz", "«Hola Athos», voz y personalidad"),
     DRIVING("Conducción", "Copiloto, briefing, resumen y cambio"),
-    ALERTS("Avisos en ruta", "Radares, peligros, descanso y turismo"),
+    ALERTS("Avisos en ruta", "Radares, peligros, descanso, turismo, comer y dormir"),
     RADIO("Radio", "Fuente, volumen y atenuación"),
     MAPS("Junto a Google Maps", "Mini cockpit, voz e indicaciones"),
     SYSTEM("Sistema", "Inicio, botones del iDrive y batería"),
@@ -321,8 +321,12 @@ private fun DrivingSettings(onOpen: (Screen) -> Unit) {
     }
     SettingGroup("Al arrancar y al parar") {
         var sound by remember { mutableStateOf(settings.startSound) }
-        ToggleRow("Iniciar con sonido", "El sonido de Athos al arrancar y al abrir la vista Athos del Inicio.", sound) {
+        ToggleRow("Iniciar con sonido", "El sonido de Athos en la pantalla de arranque.", sound) {
             sound = it; settings.startSound = it
+        }
+        var viewSound by remember { mutableStateOf(settings.athosViewSound) }
+        ToggleRow("Sonido de la vista Athos", "Suena al pasar a la vista Athos en el centro del cuadro del Inicio.", viewSound) {
+            viewSound = it; settings.athosViewSound = it
         }
         var briefing by remember { mutableStateOf(settings.briefing) }
         ToggleRow("Briefing al arrancar", "Saludo con el tiempo, los radares cercanos y la autonomía, si han pasado más de 45 minutos desde el anterior.", briefing) {
@@ -386,6 +390,7 @@ private fun alertHint(c: AlertCategory): String = when (c) {
     AlertCategory.FUEL -> "La gasolinera más barata a tu alcance cuando queda poca autonomía."
     AlertCategory.REST -> "Áreas de descanso tras hora y media al volante."
     AlertCategory.TOURISM -> "Monumentos, miradores y pueblos con artículo en Wikipedia, con foto."
+    AlertCategory.FOOD -> "Restaurantes a la hora de comer o cenar, y hoteles y campings por la noche o tras tres horas al volante."
 }
 
 @Composable

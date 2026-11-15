@@ -204,7 +204,7 @@ object Radio {
             Log.i(TAG, "FM ${RadioLogic.formatFm(freq)}: fuente=$entered, tune=$ok")
             if (!entered) {
                 val src = FactoryTuner.sourceName(FactoryTuner.currentSource(app))
-                _state.update { it.copy(error = "La radio no pasa a la fuente FM (sigue en $src). Haz «Prueba FM» y mándame el informe") }
+                _state.update { it.copy(error = "La radio no pasa a la fuente FM (sigue en $src): usa una emisora de Internet") }
             } else if (!ok) _state.update { it.copy(error = "El sintonizador no aceptó la frecuencia") }
             checkMcuAnswer()
         }
@@ -217,37 +217,10 @@ object Radio {
         if (!(_state.value.playing && _state.value.source == RadioSource.FM)) return
         val st = withContext(Dispatchers.IO) { runCatching { FactoryTuner.status(app) }.getOrNull() } ?: return
         val info = if (st.mcuAnswered) "Sintonizador respondiendo · fuente ${FactoryTuner.sourceName(st.source)}"
-        else "La MCU no da frecuencia (fuente ${FactoryTuner.sourceName(st.source)}): puede que esta radio no tenga sintonizador. Haz «Prueba FM»"
+        else "La MCU no da frecuencia (fuente ${FactoryTuner.sourceName(st.source)}): puede que esta radio no tenga sintonizador accesible"
         _state.update { it.copy(tunerInfo = info, error = if (st.mcuAnswered) it.error else it.error ?: info) }
     }
 
-    // ------------------------------------------------------------------ prueba técnica
-
-    private val _fmTest = MutableStateFlow<FmTest?>(null)
-    /** Última «Prueba FM» (para la pantalla de radio y el informe de Diagnóstico). */
-    val fmTest: StateFlow<FmTest?> = _fmTest.asStateFlow()
-
-    data class FmTest(val running: Boolean, val lines: List<String>)
-
-    /** Prueba paso a paso del sintonizador (unos 10 s) y deja el resultado en [fmTest]. */
-    fun runFmTest() {
-        if (_fmTest.value?.running == true) return
-        _fmTest.value = FmTest(true, listOf("Probando el sintonizador (unos 10 s)…"))
-        player?.let { it.stop(); it.clearMediaItems() }
-        abandonFocus()
-        focusDucked = false
-        _state.update { it.copy(source = RadioSource.FM, playing = true, error = null) }
-        scope.launch {
-            val freq = _state.value.fmFreq
-            val lines = withContext(Dispatchers.IO) {
-                runCatching { FactoryTuner.runTest(app, freq) }.getOrElse { listOf("Error en la prueba: $it") }
-            }
-            _fmTest.value = FmTest(false, listOf("Athos · prueba FM · ${java.time.LocalDateTime.now()}") + lines)
-            startPolling()
-        }
-    }
-
-    fun closeFmTest() { if (_fmTest.value?.running != true) _fmTest.value = null }
 
     fun fmStep(dir: Int) {
         val f = RadioLogic.stepFm(_state.value.fmFreq, dir)
