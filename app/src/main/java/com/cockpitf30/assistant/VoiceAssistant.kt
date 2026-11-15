@@ -1200,7 +1200,7 @@ object VoiceAssistant {
         if (pos == null) return reply().first
         val far = before.center?.let { com.cockpitf30.nav.RouteTracker.distance(it, pos) > 2500 } ?: true
         if (before.stays.isNotEmpty() && !far) return reply().first
-        fl.maybeFetch(scope, pos, force = true)
+        fl.maybeFetch(null, pos, force = true)
         scope.launch {
             val done = kotlinx.coroutines.withTimeoutOrNull(60_000) {
                 fl.state.first { it.updatedAt > before.updatedAt || (!it.loading && it.error != null) }

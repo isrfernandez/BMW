@@ -29,7 +29,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -98,7 +97,6 @@ fun TourismScreen() {
     val pois by RoutePois.state.collectAsStateWithLifecycle()
     val stays by FoodLodging.state.collectAsStateWithLifecycle()
     val route by RouteTracker.state.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
     var tab by remember { mutableStateOf(TourTab.SEE) }
     var sort by remember { mutableStateOf(TourSort.BEST) }
     var selected by remember { mutableStateOf<TourItem?>(null) }
@@ -108,7 +106,14 @@ fun TourismScreen() {
     val pos = route.position ?: pois.position
 
     // Comer y dormir se descarga al abrir (si no estaba ya), y la popularidad de los sitios.
-    LaunchedEffect(pos != null) { pos?.let { FoodLodging.maybeFetch(scope, it, force = stays.stays.isEmpty()) } }
+    LaunchedEffect(pos != null) {
+        // Al abrir, y luego cada 5 s por si falla (los reintentos se van espaciando solos).
+        pos?.let { FoodLodging.maybeFetch(null, it, force = FoodLodging.state.value.stays.isEmpty()) }
+        while (true) {
+            kotlinx.coroutines.delay(5000)
+            (RouteTracker.state.value.position ?: RoutePois.state.value.position)?.let { FoodLodging.maybeFetch(null, it) }
+        }
+    }
     LaunchedEffect(pois.pois.size) {
         val ids = pois.pois.filter { it.category == AlertCategory.TOURISM && it.kind != "place" }.mapNotNull { it.wikidata }
         if (ids.isNotEmpty()) { withContext(Dispatchers.IO) { Wiki.loadFame(ids) }; fameVersion++ }
@@ -153,15 +158,28 @@ fun TourismScreen() {
                     }
                     Spacer(Modifier.height(12.dp))
                     if (items.isEmpty()) {
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            val failed = tab != TourTab.SEE && !stays.loading && stays.error != null && stays.stays.isEmpty()
                             Text(
                                 when {
                                     pos == null -> "Esperando la posición GPS de la radio."
-                                    (tab == TourTab.SEE && pois.loading) || (tab != TourTab.SEE && (stays.loading || stays.updatedAt == 0L)) -> "Buscando…"
+                                    tab == TourTab.SEE && pois.loading -> "Buscando…"
+                                    failed -> "No he podido descargar dónde comer y dormir."
+                                    tab != TourTab.SEE && (stays.loading || stays.updatedAt == 0L) -> "Buscando…"
                                     else -> "No hay nada de esto por aquí cerca."
                                 },
                                 style = MaterialTheme.typography.bodyLarge, color = Cockpit.TextDim,
                             )
+                            if (tab != TourTab.SEE && pos != null && stays.stays.isEmpty()) {
+                                Spacer(Modifier.height(8.dp))
+                                Text(FoodLodging.note, style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                                if (failed) {
+                                    Spacer(Modifier.height(12.dp))
+                                    FocusTile(onClick = { FoodLodging.retry(pos) }) {
+                                        Text("Reintentar", Modifier.padding(horizontal = 20.dp, vertical = 12.dp), style = MaterialTheme.typography.bodyLarge)
+                                    }
+                                }
+                            }
                         }
                     } else {
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {

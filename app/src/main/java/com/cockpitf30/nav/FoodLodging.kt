@@ -2,11 +2,11 @@ package com.cockpitf30.nav
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -65,7 +65,12 @@ object FoodLodging {
     private const val REFETCH_M = 2500.0
     private const val MIN_GAP_MS = 90_000L
     private const val MAX_AGE_MS = 6 * 3_600_000L
-    private val ENDPOINTS = listOf("https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter")
+    private val ENDPOINTS = listOf(
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    )
 
     /** Distancias y huecos de los avisos. */
     private const val FOOD_ALERT_M = 1500.0
@@ -78,31 +83,65 @@ object FoodLodging {
     private val _state = MutableStateFlow(StayState())
     val state: StateFlow<StayState> = _state.asStateFlow()
     @Volatile private var lastTry = 0L
+    @Volatile private var loadingSince = 0L
+    @Volatile private var failures = 0
+    /**
+     * Propio, no el de quien pregunta: con el de la pantalla, al salir de ella se cancelaba la
+     * descarga a medias y se quedaba «cargando» para siempre (Comer y Dormir en «Buscando…»).
+     */
+    private val own = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** Qué ha pasado en la última descarga (para la pantalla y Diagnóstico). */
+    @Volatile var note: String = "sin descargar"
+        private set
 
-    /** Cada segundo desde [RouteAlerts.tick] (con la categoría encendida) o al preguntar. */
-    fun maybeFetch(scope: CoroutineScope, pos: GeoPoint, force: Boolean = false) {
+    /**
+     * Cada segundo desde [RouteAlerts.tick] (con la categoría encendida), al abrir Turismo o al
+     * preguntar. Si falla, se reintenta solo a los 20 s, 40 s, 80 s… (máx. 5 min).
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun maybeFetch(scope: CoroutineScope?, pos: GeoPoint, force: Boolean = false) {
         val s = _state.value
-        if (s.loading) return
         val now = System.currentTimeMillis()
+        if (s.loading) {
+            if (now - loadingSince < 100_000) return
+            note = "la descarga anterior no acabó; se repite"
+        }
         val far = s.center == null || RouteTracker.distance(s.center, pos) > REFETCH_M
         val stale = now - s.updatedAt > MAX_AGE_MS
         if (!(far || stale || force)) return
-        if (now - lastTry < (if (force) 15_000L else MIN_GAP_MS)) return
+        val gap = when {
+            force -> 10_000L
+            failures > 0 -> minOf(20_000L shl (failures - 1).coerceAtMost(4), 300_000L)
+            else -> MIN_GAP_MS
+        }
+        if (now - lastTry < gap) return
         lastTry = now
+        loadingSince = now
         _state.value = s.copy(loading = true)
-        scope.launch {
-            val r = withContext(Dispatchers.IO) { runCatching { fetch(pos) } }
-            r.onSuccess { list -> _state.value = StayState(list, false, null, System.currentTimeMillis(), pos) }
-                .onFailure { _state.value = _state.value.copy(loading = false, error = it.message ?: it.javaClass.simpleName) }
+        own.launch {
+            val r = runCatching { fetch(pos) }
+            r.onSuccess { list ->
+                failures = 0
+                note = "${list.size} sitios · ${java.time.LocalTime.now().withNano(0)}"
+                _state.value = StayState(list, false, null, System.currentTimeMillis(), pos)
+            }.onFailure {
+                failures++
+                val msg = it.message ?: it.javaClass.simpleName
+                note = "fallo $failures: $msg"
+                _state.value = _state.value.copy(loading = false, error = msg)
+            }
         }
     }
+
+    /** «Reintentar» de la pantalla. */
+    fun retry(pos: GeoPoint) { lastTry = 0; maybeFetch(null, pos, force = true) }
 
     fun views(pos: GeoPoint, bearing: Float, list: List<Stay> = _state.value.stays): List<StayView> =
         list.map { StayView(it, RouteTracker.distance(pos, it.point), RoutePois.relative(RouteTracker.bearingBetween(pos, it.point), bearing)) }
             .sortedBy { it.meters }
 
     fun query(lat: String, lon: String) = """
-        [out:json][timeout:60];
+        [out:json][timeout:40];
         nwr["amenity"~"^(restaurant|bar|cafe|pub|fast_food|biergarten)$"]["name"](around:$FOOD_RADIUS_M,$lat,$lon)->.food;
         nwr["tourism"~"^(hotel|motel|hostel|guest_house|apartment|chalet|alpine_hut|camp_site|caravan_site)$"]["name"](around:$STAY_RADIUS_M,$lat,$lon)->.stay;
         .food out center tags 300;
@@ -111,20 +150,22 @@ object FoodLodging {
 
     private fun fetch(pos: GeoPoint): List<Stay> {
         val q = query("%.5f".format(Locale.US, pos.lat), "%.5f".format(Locale.US, pos.lon))
-        var last: Exception? = null
+        val errors = ArrayList<String>()
         for (endpoint in ENDPOINTS) {
+            val host = URL(endpoint).host
+            note = "preguntando a $host…"
             try {
                 return parse(post(endpoint, "data=" + URLEncoder.encode(q, "UTF-8")))
             } catch (e: Exception) {
-                last = e
+                errors += "$host: ${e.message ?: e.javaClass.simpleName}"
             }
         }
-        throw last ?: IllegalStateException("sin respuesta")
+        throw IllegalStateException(errors.joinToString("; ").ifEmpty { "sin respuesta" })
     }
 
     private fun post(url: String, body: String): String {
         val c = URL(url).openConnection() as HttpURLConnection
-        c.connectTimeout = 15_000; c.readTimeout = 70_000
+        c.connectTimeout = 10_000; c.readTimeout = 45_000
         c.requestMethod = "POST"; c.doOutput = true
         c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
         c.setRequestProperty("User-Agent", "CockpitF30/1.0")
