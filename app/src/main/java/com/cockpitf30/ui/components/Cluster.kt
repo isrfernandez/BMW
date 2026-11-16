@@ -196,7 +196,6 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     val measurer = rememberTextMeasurer(cacheSize = 96)
     val scaleStyle = numeric(28, FontWeight.SemiBold)
     val smallStyle = numeric(17, FontWeight.SemiBold)
-    val maxStyle = numeric(19, FontWeight.Bold).copy(letterSpacing = 2.sp)
     val captionStyle = numeric(17, FontWeight.Medium)
     val homeRes = cachedBitmap(R.drawable.home_car_scene)
     val trianglesRes = cachedBitmap(R.drawable.bg_triangles)
@@ -314,6 +313,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         // Qué cifras de la escala quedan ya cubiertas por el relleno (una máscara de bits): la capa
         // de cifras solo se repinta cuando la aguja cruza una marca, no en cada fotograma.
         val speedEngraved by remember { derivedStateOf { engravedMask(SPEED_FRACTIONS, speed) } }
+        val rpmEngraved by remember { derivedStateOf { engravedMask(RPM_FRACTIONS, rpm) } }
         // 1) Panel central: coche o mapa. Con el coche a la vista no se repinta nunca.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
             tileVersion // se vuelve a dibujar cuando llega una tesela
@@ -341,9 +341,8 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
             val geo = geoCache.get(g, this)
             drawFrameFill(geo, mirrored = false, fraction = speed, look = SpeedMetal)
-            // rpm: franja estrecha (no pisa las cifras) y tono según el régimen.
-            drawRpmGroove(geo, geo.band * RPM_FILL_WIDTH)
-            drawFrameFill(geo, mirrored = true, fraction = rpm, look = rpmLook(rpm), width = geo.band * RPM_FILL_WIDTH, brushed = true)
+            // rpm: mismo formato que la velocidad; el tono del metal cambia con el régimen.
+            drawFrameFill(geo, mirrored = true, fraction = rpm, look = rpmLook(rpm), brushed = true)
         }
         // 4) Destello que recorre las barras: lo único que se pinta en cada fotograma.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
@@ -351,7 +350,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             // Con las dos barras vacías (parado y motor apagado) no se lee la fase: no se repinta nada.
             val s = speed; val r = rpm
             if (s > 0f) drawFrameShimmer(geo, mirrored = false, fraction = s, phase = phase)
-            if (r > 0f) drawFrameShimmer(geo, mirrored = true, fraction = r, phase = (phase + 0.5f) % 1f, width = geo.band * RPM_FILL_WIDTH)
+            if (r > 0f) drawFrameShimmer(geo, mirrored = true, fraction = r, phase = (phase + 0.5f) % 1f)
         }
         // 5) Marcas, bisel cromado, cifras y barras pequeñas: casi fijo.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
@@ -361,14 +360,15 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
 
             // El 0 no se rotula (no cabe colgando bajo la última marca); su marca sí se dibuja.
             val sMask = speedEngraved
-            // La cifra de arriba del todo (250 / 8) quedaba bajada y descolocada: se rotula "MAX".
+            // Arriba del todo (250 / 8) no se rotula nada: quedaba muy justo y nunca se llega ahí.
             SPEED_MARKS.forEachIndexed { i, v ->
-                val top = i == SPEED_MARKS.lastIndex
-                if (i > 0) drawMark(geo, measurer, if (top) "MAX" else "$v", SPEED_FRACTIONS[i], false, if (top) maxStyle else scaleStyle, SpeedLabel, sMask and (1 shl i) != 0, SpeedMetal)
+                if (i > 0 && i < SPEED_MARKS.lastIndex) drawMark(geo, measurer, "$v", SPEED_FRACTIONS[i], false, scaleStyle, SpeedLabel, sMask and (1 shl i) != 0, SpeedMetal)
             }
-            // Las cifras de rpm quedan siempre a la vista: el relleno va por el borde exterior.
-            (1..8).forEach { k ->
-                drawMark(geo, measurer, if (k == 8) "MAX" else "$k", RPM_FRACTIONS[k], true, if (k == 8) maxStyle else scaleStyle, if (k * 1000 >= RPM_RED) RpmRed else RpmLabel, false, RpmMetal)
+            // Como en la velocidad: la cifra que cubre el relleno pasa a oscuro, grabada en el metal.
+            val rMask = rpmEngraved
+            val rLook = rpmLook(rpm)
+            (1..7).forEach { k ->
+                drawMark(geo, measurer, "$k", RPM_FRACTIONS[k], true, scaleStyle, if (k * 1000 >= RPM_RED) RpmRed else RpmLabel, rMask and (1 shl k) != 0, rLook)
             }
             drawCaption(geo, measurer, "km/h", mirrored = false, captionStyle)
             drawCaption(geo, measurer, "1/min x 1000", mirrored = true, captionStyle)
@@ -838,9 +838,6 @@ private fun rpmLook(fraction: Float): MetalLook {
     }
     return list[(fraction.coerceIn(0f, 1f) * RPM_LOOK_STEPS).roundToInt()]
 }
-
-/** Parte de la franja que ocupa el relleno de rpm: el resto queda libre para las cifras. */
-private const val RPM_FILL_WIDTH = 0.36f
 private val SteelMetal: MetalLook get() = when (DriveModes.current) {
     DriveMode.NORMAL -> IceSteel
     DriveMode.SPORT -> Titanium
@@ -897,7 +894,6 @@ private class FramePaths(g: GeoPx, val mirrored: Boolean) {
     /** Trazado del relleno: se reutiliza en cada fotograma. */
     val filled = Path()
     val shimmer = Path()
-    val groove = Path()
 
     /** Franja entre el borde exterior y el interior, de la altura [yTop] a [yBottom]. */
     fun band(g: GeoPx, into: Path, yTop: Float, yBottom: Float, width: Float = g.band): Path {
@@ -1011,21 +1007,6 @@ private fun DrawScope.drawFrameFill(g: GeoPx, mirrored: Boolean, fraction: Float
         radius = bloom, center = tip, blendMode = BlendMode.Plus,
     )
     drawLine(look.tip, o(g.chevronX(level, 0f), level), o(g.chevronX(level, width), level), g.dp(3f), StrokeCap.Round)
-}
-
-/**
- * Canal oscuro por donde sube el relleno de rpm: sin él, el acero de las rpm bajas apenas se
- * distinguía de la franja vacía, que también es de acero claro.
- */
-private fun DrawScope.drawRpmGroove(g: GeoPx, width: Float) {
-    val f = g.frame(true)
-    clipPath(f.band(g, f.groove, g.y0, g.y1, width)) {
-        drawRect(Color(0xFF0A1018).copy(alpha = 0.72f), Offset(0f, g.y0), Size(size.width, g.y1 - g.y0))
-    }
-    val edge = Path().apply {
-        moveTo(g.mirror(g.chevronX(g.y1, width), true), g.y1); lineTo(g.mirror(g.xv + width, true), g.ym); lineTo(g.mirror(g.chevronX(g.y0, width), true), g.y0)
-    }
-    drawPath(edge, Color.Black.copy(alpha = 0.5f), style = Stroke(g.dp(1.5f)))
 }
 
 /** Reflejo que recorre la barra hasta el nivel, una y otra vez. */
