@@ -136,4 +136,21 @@ class VoiceCommandsTest {
         assertEquals(Command.Info(InfoTopic.TIME), VoiceCommands.parse("¿qué hora es?"))
         assertEquals(Command.Info(InfoTopic.RANGE), VoiceCommands.parse("¿cuánto queda de autonomía?"))
     }
+
+    @Test
+    fun closeMapsEndsNavigation() {
+        listOf("cierra el mapa", "cierra google maps", "cierra maps", "quita la navegación", "cancela la ruta", "termina la navegación", "sal de google maps")
+            .forEach { assertEquals(it, Command.CloseMaps, VoiceCommands.parse(it)) }
+        assertEquals(Command.Maps, VoiceCommands.parse("abre el mapa"))
+        assertEquals(Command.Cancel, VoiceCommands.parse("cancela"))
+    }
+
+    @Test
+    fun cancelHeardInItsManyFormsStopsTheAssistant() {
+        listOf("cancela", "cancele", "cancelo", "cansela", "cancelar", "cancélalo", "vale cancela").forEach {
+            val hit = VoiceCommands.bargePhraseAtEnd(it) ?: VoiceCommands.fuzzyStop(it)
+            assertEquals(it, VoiceCommands.Barge.STOP, hit?.let(VoiceCommands::bargeAction))
+        }
+        assertNull(VoiceCommands.fuzzyStop("el castillo de alcalá"))
+    }
 }

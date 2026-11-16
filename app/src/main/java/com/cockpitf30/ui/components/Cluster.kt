@@ -300,6 +300,12 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         // Redondeada a medio grado: la capa del coche no se repinta por décimas.
         val outsideTemp = state.outsideTempC?.let { t -> String.format(java.util.Locale.US, "%.1f", (t * 2).roundToInt() / 2f).replace('.', ',') }
         val fuelLevel = state.fuelLevel
+        // Mantenimiento más urgente (aceite, neumáticos o ITV), para el marcador bajo el coche.
+        // Se recalcula al cambiar la autonomía (más o menos cada pocos km), no en cada fotograma.
+        val service = remember(rangeKm) {
+            runCatching { com.cockpitf30.vehicle.Maintenance.mostUrgent(com.cockpitf30.ui.screens.serviceStatuses(com.cockpitf30.system.AppSettings(ctx))) }.getOrNull()
+                ?.takeIf { it.level != com.cockpitf30.vehicle.ServiceLevel.UNKNOWN }
+        }
         val scene = remember(homeRes, trianglesRes) { CarScene(homeRes, trianglesRes) }
         // El cuadro se pinta en capas independientes: cada una solo se vuelve a dibujar cuando cambia
         // lo suyo. Antes un único lienzo repintaba todo (coche, mapa, marcos, cifras) en cada
@@ -317,7 +323,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             // Posición, zoom y fase solo se leen si el mapa se ve: el mapa se mueve sin recomponer el cuadro.
             val map = if (pg > 0f) smooth.value.let { now -> MapFrame(route, now.position, now.bearing, zoom, phase) }
             else MapFrame(route, route.position, route.bearing, 17f, 0f)
-            drawPanel(geo, scene, rangeKm, outsideTemp, measurer, overlay, pg, map, mapText, focused)
+            drawPanel(geo, scene, rangeKm, outsideTemp, service, measurer, overlay, pg, map, mapText, focused)
         }
         // 1b) Vista Athos: solo pinta (y anima) mientras se ve, entrando por la izquierda.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
@@ -532,7 +538,7 @@ private class Overlay(val value: TextStyle, val unit: TextStyle, val caption: Te
 private class CarScene(val home: ImageBitmap, val triangles: ImageBitmap)
 
 private fun DrawScope.drawPanel(
-    g: GeoPx, scene: CarScene, rangeKm: Int?, outsideTemp: String?, tm: TextMeasurer, st: Overlay,
+    g: GeoPx, scene: CarScene, rangeKm: Int?, outsideTemp: String?, service: com.cockpitf30.vehicle.ServiceStatus?, tm: TextMeasurer, st: Overlay,
     page: Float, map: MapFrame, mapText: MapText, focused: Boolean,
 ) {
     val inset = g.band + g.dp(14f)
@@ -554,7 +560,7 @@ private fun DrawScope.drawPanel(
         // Página del mapa, entrando por la derecha.
         if (page > 0f) translate(left = (1f - page) * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawMap(bounds, map, tm, mapText) } }
         // El coche sale hacia la derecha cuando entra la vista Athos (que pinta su propia capa).
-        if (page < 1f && page > -1f) translate(left = -page * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawCar(g, scene, rangeKm, outsideTemp, tm, st, bounds) } }
+        if (page < 1f && page > -1f) translate(left = -page * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawCar(g, scene, rangeKm, outsideTemp, service, tm, st, bounds) } }
     }
     // Sport y Night tiñen la escena (coche y mapa) del color del modo, manteniendo luces y sombras.
     DriveModes.palette.tint?.let { tint ->
@@ -641,7 +647,8 @@ private fun DrawScope.drawPageDots(g: GeoPx, bottom: Float, page: Float) {
  * maletero abiertos (brillo rojo) y se rotula arriba qué está abierto.
  */
 private fun DrawScope.drawCar(
-    g: GeoPx, scene: CarScene, rangeKm: Int?, outsideTemp: String?, tm: TextMeasurer, st: Overlay, bounds: Rect,
+    g: GeoPx, scene: CarScene, rangeKm: Int?, outsideTemp: String?, service: com.cockpitf30.vehicle.ServiceStatus?,
+    tm: TextMeasurer, st: Overlay, bounds: Rect,
 ) {
     run {
         val top = bounds.top
@@ -672,7 +679,25 @@ private fun DrawScope.drawCar(
         marker(tm, st, "AUTONOMÍA", rangeKm?.toString() ?: "--", " km", null, range, alignRight = false)
         // Y en simetría, a la izquierda del coche, la temperatura exterior.
         marker(tm, st, "EXTERIOR", outsideTemp ?: "--", " °C", null, Offset(2 * bounds.center.x - range.x, range.y), alignRight = true)
+        // Abajo a la derecha, lo más urgente del mantenimiento con el color de su estado.
+        service?.let { sv ->
+            val (value, unit) = serviceValue(sv)
+            val color = when (sv.level) {
+                com.cockpitf30.vehicle.ServiceLevel.DUE -> Color(0xFFFF5A46)
+                com.cockpitf30.vehicle.ServiceLevel.SOON -> Color(0xFFFFC94D)
+                else -> Color(0xFF3DDC97)
+            }
+            marker(tm, st, sv.item.label.uppercase(), value, unit, null, Offset(range.x, bounds.bottom - 64.dp.toPx()), alignRight = false, status = color)
+        }
     }
+}
+
+/** Cifra corta del mantenimiento: km o días que quedan (o «vencido»). */
+private fun serviceValue(s: com.cockpitf30.vehicle.ServiceStatus): Pair<String, String> = when {
+    s.level == com.cockpitf30.vehicle.ServiceLevel.DUE -> (if (s.item == com.cockpitf30.vehicle.ServiceItem.ITV) "CADUCADA" else "VENCIDO") to ""
+    s.kmLeft != null && (s.daysLeft == null || s.kmLeft < s.daysLeft * 40) -> "%,d".format(java.util.Locale("es", "ES"), s.kmLeft).replace(',', '.') to " km"
+    s.daysLeft != null -> s.daysLeft.toString() to if (s.daysLeft == 1) " día" else " días"
+    else -> "--" to ""
 }
 
 /**

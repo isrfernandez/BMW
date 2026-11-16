@@ -36,7 +36,28 @@ object MapsGuidanceState {
     private val _current = MutableStateFlow<MapsGuidance?>(null)
     val current: StateFlow<MapsGuidance?> = _current.asStateFlow()
 
-    internal fun set(g: MapsGuidance?) { _current.value = g }
+    internal fun set(g: MapsGuidance?) { _current.value = g; if (g == null) exitAction = null }
+
+    /** Botón «Salir» de la notificación de navegación de Maps (lo mismo que pulsarlo). */
+    @Volatile internal var exitAction: android.app.PendingIntent? = null
+
+    /**
+     * Cierra Google Maps del todo: sale de la navegación con el botón «Salir» de su notificación
+     * (así no pregunta «¿Quieres salir?»), vuelve a la app y, ya en segundo plano, cierra Maps.
+     * Devuelve si había una navegación que terminar.
+     */
+    fun exitNavigation(context: Context): Boolean {
+        val app = context.applicationContext
+        val exited = exitAction?.let { pi -> runCatching { pi.send(); true }.getOrDefault(false) } ?: false
+        if (exited) set(null)
+        com.cockpitf30.ui.MainActivity.show(app, com.cockpitf30.ui.screens.Screen.HOME)
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            runCatching { app.getSystemService(android.app.ActivityManager::class.java)?.killBackgroundProcesses(GOOGLE_MAPS) }
+        }, 1500)
+        return exited
+    }
+
+    private const val GOOGLE_MAPS = "com.google.android.apps.maps"
 
     /** ¿Tiene la app acceso a las notificaciones? */
     fun hasAccess(context: Context): Boolean {
@@ -78,12 +99,21 @@ class MapsGuidanceListener : NotificationListenerService() {
         val eta = e.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim()
         if (title.isEmpty() && text.isNullOrEmpty()) return
         val arrow = runCatching { iconBitmap(n.getLargeIcon()) }.getOrNull()
+        MapsGuidanceState.exitAction = exitActionOf(n) ?: MapsGuidanceState.exitAction
         MapsGuidanceState.set(MapsGuidance(title.ifEmpty { text.orEmpty() }, text.takeIf { title.isNotEmpty() }, eta?.takeIf { it.isNotEmpty() }, arrow, System.currentTimeMillis()))
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         val n = sbn?.takeIf { it.packageName == GOOGLE_MAPS }?.notification ?: return
         if (isNavigation(n)) MapsGuidanceState.set(null)
+    }
+
+    /** El botón de salir de la navegación: «Salir», «Exit», «Finalizar»… (o el único que haya). */
+    private fun exitActionOf(n: Notification): android.app.PendingIntent? {
+        val actions = n.actions ?: return null
+        val words = listOf("salir", "exit", "finaliz", "terminar", "detener", "cerrar", "stop", "end")
+        return actions.firstOrNull { a -> val t = a.title?.toString()?.lowercase().orEmpty(); words.any { it in t } }?.actionIntent
+            ?: actions.singleOrNull()?.actionIntent
     }
 
     /** La de navegación es la fija («ongoing») o la de categoría navegación. */
