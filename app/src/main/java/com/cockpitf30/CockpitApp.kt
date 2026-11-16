@@ -14,6 +14,7 @@ class CockpitApp : Application() {
         com.cockpitf30.nav.MapTiles.init(this)
         com.cockpitf30.radio.Radio.init(this)
         com.cockpitf30.radio.AssistantDuck.start(this)
+        com.cockpitf30.radio.NavDuck.start(this)
         com.cockpitf30.assistant.VoiceButton.register(this)
         // Radares: aviso hablado al acercarse a uno que queda delante. Va aquí (y no en la pantalla)
         // para que avise también con Maps delante o con la actividad recreada.

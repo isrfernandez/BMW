@@ -412,6 +412,11 @@ private fun RadioSettings(onOpen: (Screen) -> Unit) {
         ToggleRow("Bajar la radio cuando habla el asistente", "También mientras te escucha, para que te entienda.", duck) {
             duck = it; settings.radioDuckAssistant = it
         }
+        var duckNav by remember { mutableStateOf(settings.radioDuckNav) }
+        ToggleRow("Bajar la radio con las indicaciones de Google Maps", "Deja Maps como navegador de la radio y baja la FM mientras habla.", duckNav) {
+            duckNav = it; settings.radioDuckNav = it
+            if (it) Thread({ com.cockpitf30.radio.NavDuck.claim(ctx) }, "navegador-radio").start()
+        }
         ActionRow("Emisoras y favoritas", null, "Abrir Radio ›") { onOpen(Screen.RADIO) }
     }
 }

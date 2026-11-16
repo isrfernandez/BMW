@@ -65,9 +65,9 @@ fun DrawScope.drawStationMap(
     phase: Float,
 ) = clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) {
     val u = density
-    val provider = MapTiles.provider.value
-    // Tema diurno: mapa claro (las etiquetas siguen en placas oscuras, que se leen bien encima).
+    // Tema diurno: OpenStreetMap claro (las etiquetas siguen en placas oscuras, que se leen bien encima).
     val light = com.cockpitf30.ui.theme.Cockpit.Light
+    val provider = MapTiles.providerFor(light)
     drawRect(if (light) MapBaseLight else MapBase, bounds.topLeft, bounds.size)
     val z = minOf(floor(zoom).toInt(), provider.maxZoom)
     val k = u * 2f.pow(zoom - z)
@@ -75,7 +75,7 @@ fun DrawScope.drawStationMap(
     val wx = TileMath.worldX(center.lon, z)
     val wy = TileMath.worldY(center.lat, z)
     val tint = when {
-        light -> if (provider.dark) MapLightFromDark else MapLightFromLight
+        light -> if (provider.dark) MapLightFromDark else MapOsmDay
         else -> if (provider.dark) MapTint else MapTintInverted
     }
     fun screen(p: GeoPoint) = Offset(
@@ -91,11 +91,11 @@ fun DrawScope.drawStationMap(
             val top = bounds.center.y + ((ty * TileMath.TILE - wy) * k).toFloat()
             val dst = IntOffset(floor(left).toInt(), floor(top).toInt())
             val size = IntSize(ceil(left + tile).toInt() - dst.x + 1, ceil(top + tile).toInt() - dst.y + 1)
-            val img = MapTiles.get(z, tx, ty)
+            val img = MapTiles.get(z, tx, ty, provider)
             if (img != null) {
                 drawImage(img, dstOffset = dst, dstSize = size, colorFilter = tint, filterQuality = FilterQuality.Medium)
             } else {
-                MapTiles.peek(z - 1, tx shr 1, ty shr 1)?.let { parent ->
+                MapTiles.peek(z - 1, tx shr 1, ty shr 1, provider)?.let { parent ->
                     val half = parent.width / 2
                     drawImage(
                         parent, srcOffset = IntOffset((tx and 1) * half, (ty and 1) * half), srcSize = IntSize(half, half),

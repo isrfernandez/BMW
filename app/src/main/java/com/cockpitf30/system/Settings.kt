@@ -399,6 +399,11 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean("radio_duck_assistant", true)
         set(value) = prefs.edit().putBoolean("radio_duck_assistant", value).apply()
 
+    /** Bajar la radio con las indicaciones de Google Maps (ver radio.NavDuck). */
+    var radioDuckNav: Boolean
+        get() = prefs.getBoolean("radio_duck_nav", true)
+        set(value) = prefs.edit().putBoolean("radio_duck_nav", value).apply()
+
     private companion object {
         const val KEY_CAN_ASK_SPEED = "can_ask_speed"
         const val KEY_ASSISTANT = "assistant_enabled"
