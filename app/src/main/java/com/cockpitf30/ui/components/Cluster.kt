@@ -314,7 +314,6 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         // Qué cifras de la escala quedan ya cubiertas por el relleno (una máscara de bits): la capa
         // de cifras solo se repinta cuando la aguja cruza una marca, no en cada fotograma.
         val speedEngraved by remember { derivedStateOf { engravedMask(SPEED_FRACTIONS, speed) } }
-        val rpmEngraved by remember { derivedStateOf { engravedMask(RPM_FRACTIONS, rpm) } }
         // 1) Panel central: coche o mapa. Con el coche a la vista no se repinta nunca.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
             tileVersion // se vuelve a dibujar cuando llega una tesela
@@ -323,7 +322,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             // Posición, zoom y fase solo se leen si el mapa se ve: el mapa se mueve sin recomponer el cuadro.
             val map = if (pg > 0f) smooth.value.let { now -> MapFrame(route, now.position, now.bearing, zoom, phase) }
             else MapFrame(route, route.position, route.bearing, 17f, 0f)
-            drawPanel(geo, scene, rangeKm, outsideTemp, service, measurer, overlay, pg, map, mapText, focused)
+            drawPanel(geo, scene, rangeKm, outsideTemp, measurer, overlay, pg, map, mapText, focused)
         }
         // 1b) Vista Athos: solo pinta (y anima) mientras se ve, entrando por la izquierda.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
@@ -342,7 +341,9 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
             val geo = geoCache.get(g, this)
             drawFrameFill(geo, mirrored = false, fraction = speed, look = SpeedMetal)
-            drawFrameFill(geo, mirrored = true, fraction = rpm, look = RpmMetal)
+            // rpm: franja estrecha (no pisa las cifras) y tono según el régimen.
+            drawRpmGroove(geo, geo.band * RPM_FILL_WIDTH)
+            drawFrameFill(geo, mirrored = true, fraction = rpm, look = rpmLook(rpm), width = geo.band * RPM_FILL_WIDTH, brushed = true)
         }
         // 4) Destello que recorre las barras: lo único que se pinta en cada fotograma.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
@@ -350,7 +351,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             // Con las dos barras vacías (parado y motor apagado) no se lee la fase: no se repinta nada.
             val s = speed; val r = rpm
             if (s > 0f) drawFrameShimmer(geo, mirrored = false, fraction = s, phase = phase)
-            if (r > 0f) drawFrameShimmer(geo, mirrored = true, fraction = r, phase = (phase + 0.5f) % 1f)
+            if (r > 0f) drawFrameShimmer(geo, mirrored = true, fraction = r, phase = (phase + 0.5f) % 1f, width = geo.band * RPM_FILL_WIDTH)
         }
         // 5) Marcas, bisel cromado, cifras y barras pequeñas: casi fijo.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
@@ -365,9 +366,9 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
                 val top = i == SPEED_MARKS.lastIndex
                 if (i > 0) drawMark(geo, measurer, if (top) "MAX" else "$v", SPEED_FRACTIONS[i], false, if (top) maxStyle else scaleStyle, SpeedLabel, sMask and (1 shl i) != 0, SpeedMetal)
             }
-            val rMask = rpmEngraved
+            // Las cifras de rpm quedan siempre a la vista: el relleno va por el borde exterior.
             (1..8).forEach { k ->
-                drawMark(geo, measurer, if (k == 8) "MAX" else "$k", RPM_FRACTIONS[k], true, if (k == 8) maxStyle else scaleStyle, if (k * 1000 >= RPM_RED) RpmRed else RpmLabel, rMask and (1 shl k) != 0, RpmMetal)
+                drawMark(geo, measurer, if (k == 8) "MAX" else "$k", RPM_FRACTIONS[k], true, if (k == 8) maxStyle else scaleStyle, if (k * 1000 >= RPM_RED) RpmRed else RpmLabel, false, RpmMetal)
             }
             drawCaption(geo, measurer, "km/h", mirrored = false, captionStyle)
             drawCaption(geo, measurer, "1/min x 1000", mirrored = true, captionStyle)
@@ -388,7 +389,23 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             val shownRpm = if (sw > 0f) maxOf(state.rpm ?: 0, (sw * RPM_MAX).roundToInt() / 50 * 50) else state.rpm
             TabValue(shownSpeed?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false, glow = SpeedGlow, intensity = speedGlow)
             Spacer(Modifier.weight(1.5f))
-            TabValue(gearText ?: "--", shownRpm?.let { "$it rpm" } ?: "-- rpm", Modifier.weight(1f), alignEnd = true, glow = RpmGlow, intensity = rpmGlow, shift = shift)
+            // Junto a la marcha y las rpm, lo más urgente del mantenimiento (solo en la vista del coche
+            // y Athos; con el mapa se apaga como las fichas de abajo).
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Spacer(Modifier.weight(1f))
+                service?.let { sv ->
+                    val (value, unit) = serviceValue(sv)
+                    val color = when (sv.level) {
+                        com.cockpitf30.vehicle.ServiceLevel.DUE -> Color(0xFFFF5A46)
+                        com.cockpitf30.vehicle.ServiceLevel.SOON -> Color(0xFFFFC94D)
+                        else -> Color(0xFF3DDC97)
+                    }
+                    Box(Modifier.graphicsLayer { alpha = (1f - page.value * 1.6f).coerceIn(0f, 1f) }) {
+                        InfoChip(serviceCaption(sv.item), value, unit, accentColor = color, valueColor = if (sv.level == com.cockpitf30.vehicle.ServiceLevel.OK) null else color)
+                    }
+                }
+                TabValue(gearText ?: "--", shownRpm?.let { "$it rpm" } ?: "-- rpm", alignEnd = true, glow = RpmGlow, intensity = rpmGlow, shift = shift)
+            }
         }
         // Datos de apoyo bajo las cifras grandes, solo en la vista del coche (se van con el mapa).
         CarInfoChips(
@@ -396,8 +413,8 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             Modifier.fillMaxWidth().height(g.frameBottom)
                 .graphicsLayer {
                     val p = page.value
+                    // Se quedan quietas al pasar a la vista Athos; con el mapa se apagan.
                     alpha = (1f - p * 1.6f).coerceIn(0f, 1f)
-                    translationY = p * 24.dp.toPx()
                 },
             inset = g.contentInset + 34.dp,
         )
@@ -538,7 +555,7 @@ private class Overlay(val value: TextStyle, val unit: TextStyle, val caption: Te
 private class CarScene(val home: ImageBitmap, val triangles: ImageBitmap)
 
 private fun DrawScope.drawPanel(
-    g: GeoPx, scene: CarScene, rangeKm: Int?, outsideTemp: String?, service: com.cockpitf30.vehicle.ServiceStatus?, tm: TextMeasurer, st: Overlay,
+    g: GeoPx, scene: CarScene, rangeKm: Int?, outsideTemp: String?, tm: TextMeasurer, st: Overlay,
     page: Float, map: MapFrame, mapText: MapText, focused: Boolean,
 ) {
     val inset = g.band + g.dp(14f)
@@ -560,7 +577,7 @@ private fun DrawScope.drawPanel(
         // Página del mapa, entrando por la derecha.
         if (page > 0f) translate(left = (1f - page) * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawMap(bounds, map, tm, mapText) } }
         // El coche sale hacia la derecha cuando entra la vista Athos (que pinta su propia capa).
-        if (page < 1f && page > -1f) translate(left = -page * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawCar(g, scene, rangeKm, outsideTemp, service, tm, st, bounds) } }
+        if (page < 1f && page > -1f) translate(left = -page * pw) { clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawCar(g, scene, rangeKm, outsideTemp, tm, st, bounds) } }
     }
     // Sport y Night tiñen la escena (coche y mapa) del color del modo, manteniendo luces y sombras.
     DriveModes.palette.tint?.let { tint ->
@@ -647,8 +664,7 @@ private fun DrawScope.drawPageDots(g: GeoPx, bottom: Float, page: Float) {
  * maletero abiertos (brillo rojo) y se rotula arriba qué está abierto.
  */
 private fun DrawScope.drawCar(
-    g: GeoPx, scene: CarScene, rangeKm: Int?, outsideTemp: String?, service: com.cockpitf30.vehicle.ServiceStatus?,
-    tm: TextMeasurer, st: Overlay, bounds: Rect,
+    g: GeoPx, scene: CarScene, rangeKm: Int?, outsideTemp: String?, tm: TextMeasurer, st: Overlay, bounds: Rect,
 ) {
     run {
         val top = bounds.top
@@ -679,22 +695,19 @@ private fun DrawScope.drawCar(
         marker(tm, st, "AUTONOMÍA", rangeKm?.toString() ?: "--", " km", null, range, alignRight = false)
         // Y en simetría, a la izquierda del coche, la temperatura exterior.
         marker(tm, st, "EXTERIOR", outsideTemp ?: "--", " °C", null, Offset(2 * bounds.center.x - range.x, range.y), alignRight = true)
-        // Abajo a la derecha, lo más urgente del mantenimiento con el color de su estado.
-        service?.let { sv ->
-            val (value, unit) = serviceValue(sv)
-            val color = when (sv.level) {
-                com.cockpitf30.vehicle.ServiceLevel.DUE -> Color(0xFFFF5A46)
-                com.cockpitf30.vehicle.ServiceLevel.SOON -> Color(0xFFFFC94D)
-                else -> Color(0xFF3DDC97)
-            }
-            marker(tm, st, sv.item.label.uppercase(), value, unit, null, Offset(range.x, bounds.bottom - 64.dp.toPx()), alignRight = false, status = color)
-        }
     }
 }
 
-/** Cifra corta del mantenimiento: km o días que quedan (o «vencido»). */
+/** Rótulo corto para la ficha (cabe en 150 dp). */
+private fun serviceCaption(item: com.cockpitf30.vehicle.ServiceItem): String = when (item) {
+    com.cockpitf30.vehicle.ServiceItem.OIL -> "ACEITE"
+    com.cockpitf30.vehicle.ServiceItem.TYRES -> "RUEDAS"
+    com.cockpitf30.vehicle.ServiceItem.ITV -> "ITV"
+}
+
+/** Cifra corta del mantenimiento: km o días que quedan (o «ya» si toca). */
 private fun serviceValue(s: com.cockpitf30.vehicle.ServiceStatus): Pair<String, String> = when {
-    s.level == com.cockpitf30.vehicle.ServiceLevel.DUE -> (if (s.item == com.cockpitf30.vehicle.ServiceItem.ITV) "CADUCADA" else "VENCIDO") to ""
+    s.level == com.cockpitf30.vehicle.ServiceLevel.DUE -> "YA" to (if (s.item == com.cockpitf30.vehicle.ServiceItem.ITV) " caducada" else " toca")
     s.kmLeft != null && (s.daysLeft == null || s.kmLeft < s.daysLeft * 40) -> "%,d".format(java.util.Locale("es", "ES"), s.kmLeft).replace(',', '.') to " km"
     s.daysLeft != null -> s.daysLeft.toString() to if (s.daysLeft == 1) " día" else " días"
     else -> "--" to ""
@@ -793,6 +806,41 @@ private val SpeedMetal: MetalLook get() = when (DriveModes.current) {
     DriveMode.NIGHT -> AmberMetal
 }
 private val RpmMetal: MetalLook get() = SpeedMetal
+
+/** Acero azulado cepillado: el color de las rpm bajas. */
+private val BrushedSteel = MetalLook(Color(0xFF26313D), Color(0xFF6F8296), Color(0xFFCAD6E2), Color(0xFFF4F8FC), Color(0xFF9DB2C8))
+
+/**
+ * Metal de la barra de rpm según el régimen: acero azulado cepillado en bajas, cobre rosado en
+ * medias y rojo al acercarse al corte. Siempre con el mismo perfil metálico; solo cambia el tono.
+ * Se precalcula en [RPM_LOOK_STEPS] pasos para no crear colores en cada fotograma.
+ */
+private const val RPM_LOOK_STEPS = 32
+private val rpmLooks = HashMap<DriveMode, List<MetalLook>>()
+
+private fun rpmLook(fraction: Float): MetalLook {
+    val mode = DriveModes.current
+    val list = rpmLooks.getOrPut(mode) {
+        val low = when (mode) { DriveMode.NORMAL -> BrushedSteel; DriveMode.SPORT -> Titanium; DriveMode.NIGHT -> Bronze }
+        val mid = when (mode) { DriveMode.NORMAL -> CopperRose; DriveMode.SPORT -> RedMetal; DriveMode.NIGHT -> AmberMetal }
+        List(RPM_LOOK_STEPS + 1) { i ->
+            val f = i.toFloat() / RPM_LOOK_STEPS
+            // Acero hasta ~3.000 rpm, cobre hacia 5.000 y rojo desde ~6.200.
+            val (a, b, t) = when {
+                f <= 0.38f -> Triple(low, low, 0f)
+                f <= 0.62f -> Triple(low, mid, (f - 0.38f) / 0.24f)
+                f <= 0.78f -> Triple(mid, RedMetal, (f - 0.62f) / 0.16f)
+                else -> Triple(RedMetal, RedMetal, 0f)
+            }
+            fun l(x: Color, y: Color) = androidx.compose.ui.graphics.lerp(x, y, t)
+            MetalLook(l(a.dark, b.dark), l(a.mid, b.mid), l(a.bright, b.bright), l(a.tip, b.tip), l(a.light, b.light))
+        }
+    }
+    return list[(fraction.coerceIn(0f, 1f) * RPM_LOOK_STEPS).roundToInt()]
+}
+
+/** Parte de la franja que ocupa el relleno de rpm: el resto queda libre para las cifras. */
+private const val RPM_FILL_WIDTH = 0.36f
 private val SteelMetal: MetalLook get() = when (DriveModes.current) {
     DriveMode.NORMAL -> IceSteel
     DriveMode.SPORT -> Titanium
@@ -849,9 +897,10 @@ private class FramePaths(g: GeoPx, val mirrored: Boolean) {
     /** Trazado del relleno: se reutiliza en cada fotograma. */
     val filled = Path()
     val shimmer = Path()
+    val groove = Path()
 
     /** Franja entre el borde exterior y el interior, de la altura [yTop] a [yBottom]. */
-    fun band(g: GeoPx, into: Path, yTop: Float, yBottom: Float): Path {
+    fun band(g: GeoPx, into: Path, yTop: Float, yBottom: Float, width: Float = g.band): Path {
         into.rewind()
         val crosses = yTop < g.ym && yBottom > g.ym
         var first = true
@@ -859,9 +908,9 @@ private class FramePaths(g: GeoPx, val mirrored: Boolean) {
         add(o(g, g.chevronX(yBottom, 0f), yBottom))
         if (crosses) add(o(g, g.xv, g.ym))
         add(o(g, g.chevronX(yTop, 0f), yTop))
-        add(o(g, g.chevronX(yTop, g.band), yTop))
-        if (crosses) add(o(g, g.xv + g.band, g.ym))
-        add(o(g, g.chevronX(yBottom, g.band), yBottom))
+        add(o(g, g.chevronX(yTop, width), yTop))
+        if (crosses) add(o(g, g.xv + width, g.ym))
+        add(o(g, g.chevronX(yBottom, width), yBottom))
         into.close()
         return into
     }
@@ -910,14 +959,24 @@ private fun DrawScope.drawFrameBase(g: GeoPx, mirrored: Boolean) {
 }
 
 /** Relleno del valor, de abajo arriba, en metal pulido ([look]) con la punta encendida. */
-private fun DrawScope.drawFrameFill(g: GeoPx, mirrored: Boolean, fraction: Float, look: MetalLook) {
+private fun DrawScope.drawFrameFill(g: GeoPx, mirrored: Boolean, fraction: Float, look: MetalLook, width: Float = g.band, brushed: Boolean = false) {
     if (fraction <= 0f) return
     val f = g.frame(mirrored)
     fun o(x: Float, y: Float) = Offset(g.mirror(x, mirrored), y)
     val level = g.y1 - (g.y1 - g.y0) * fraction
     val span = g.y1 - level
-    clipPath(f.band(g, f.filled, level, g.y1)) {
+    clipPath(f.band(g, f.filled, level, g.y1, width)) {
         metal(f, look, 1f)
+        if (brushed) {
+            // Cepillado: rayas finas horizontales de luz y sombra sobre el metal.
+            val step = g.dp(2.2f)
+            var y = level
+            var k = 0
+            while (y < g.y1) {
+                drawLine(if (k % 3 == 0) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.07f), Offset(0f, y), Offset(size.width, y), g.dp(0.8f))
+                y += step; k++
+            }
+        }
         // Calor hacia la punta y algo más de sombra abajo: da volumen a la barra.
         drawRect(
             Brush.verticalGradient(
@@ -942,7 +1001,7 @@ private fun DrawScope.drawFrameFill(g: GeoPx, mirrored: Boolean, fraction: Float
         )
     }
     // Punta: filo blanco cálido y un foco suave.
-    val tip = o(g.chevronX(level, g.band * 0.45f), level)
+    val tip = o(g.chevronX(level, width * 0.45f), level)
     val bloom = g.band * 1.3f
     drawCircle(
         Brush.radialGradient(
@@ -951,16 +1010,31 @@ private fun DrawScope.drawFrameFill(g: GeoPx, mirrored: Boolean, fraction: Float
         ),
         radius = bloom, center = tip, blendMode = BlendMode.Plus,
     )
-    drawLine(look.tip, o(g.chevronX(level, 0f), level), o(g.chevronX(level, g.band), level), g.dp(3f), StrokeCap.Round)
+    drawLine(look.tip, o(g.chevronX(level, 0f), level), o(g.chevronX(level, width), level), g.dp(3f), StrokeCap.Round)
+}
+
+/**
+ * Canal oscuro por donde sube el relleno de rpm: sin él, el acero de las rpm bajas apenas se
+ * distinguía de la franja vacía, que también es de acero claro.
+ */
+private fun DrawScope.drawRpmGroove(g: GeoPx, width: Float) {
+    val f = g.frame(true)
+    clipPath(f.band(g, f.groove, g.y0, g.y1, width)) {
+        drawRect(Color(0xFF0A1018).copy(alpha = 0.72f), Offset(0f, g.y0), Size(size.width, g.y1 - g.y0))
+    }
+    val edge = Path().apply {
+        moveTo(g.mirror(g.chevronX(g.y1, width), true), g.y1); lineTo(g.mirror(g.xv + width, true), g.ym); lineTo(g.mirror(g.chevronX(g.y0, width), true), g.y0)
+    }
+    drawPath(edge, Color.Black.copy(alpha = 0.5f), style = Stroke(g.dp(1.5f)))
 }
 
 /** Reflejo que recorre la barra hasta el nivel, una y otra vez. */
-private fun DrawScope.drawFrameShimmer(g: GeoPx, mirrored: Boolean, fraction: Float, phase: Float) {
+private fun DrawScope.drawFrameShimmer(g: GeoPx, mirrored: Boolean, fraction: Float, phase: Float, width: Float = g.band) {
     if (fraction <= 0f) return
     val f = g.frame(mirrored)
     val level = g.y1 - (g.y1 - g.y0) * fraction
     val span = g.y1 - level
-    clipPath(f.band(g, f.shimmer, level, g.y1)) {
+    clipPath(f.band(g, f.shimmer, level, g.y1, width)) {
         val sy = g.y1 - (span + g.band) * phase
         drawRect(
             Brush.verticalGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.22f), Color.Transparent), startY = sy - g.band, endY = sy + g.band),
@@ -1231,8 +1305,8 @@ private fun CarInfoChips(avgConsumption: Float?, fuelLevel: Float?, modifier: Mo
 private val ChipShape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
 
 @Composable
-private fun InfoChip(caption: String, value: String, unit: String, warn: Boolean = false) {
-    val accent = if (warn) Color(0xFFFFB347) else Cockpit.OnDarkAccent
+private fun InfoChip(caption: String, value: String, unit: String, warn: Boolean = false, accentColor: Color? = null, valueColor: Color? = null) {
+    val accent = accentColor ?: if (warn) Color(0xFFFFB347) else Cockpit.OnDarkAccent
     Column(
         Modifier
             .width(150.dp)
@@ -1250,7 +1324,7 @@ private fun InfoChip(caption: String, value: String, unit: String, warn: Boolean
             Text(caption, style = MaterialTheme.typography.labelMedium.copy(fontSize = 14.sp, letterSpacing = 1.sp), color = Color.White.copy(alpha = 0.7f), maxLines = 1)
         }
         Row(verticalAlignment = Alignment.Bottom) {
-            Text(value, style = numeric(30, FontWeight.SemiBold), color = if (warn) accent else Cockpit.OnDark, maxLines = 1)
+            Text(value, style = numeric(30, FontWeight.SemiBold), color = valueColor ?: if (warn) accent else Cockpit.OnDark, maxLines = 1)
             Spacer(Modifier.width(4.dp))
             Text(unit, style = numeric(15, FontWeight.Medium), color = Cockpit.OnDarkDim, maxLines = 1, modifier = Modifier.padding(bottom = 5.dp))
         }
