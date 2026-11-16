@@ -13,6 +13,8 @@ sealed interface Command {
     data class Navigate(val destination: String) : Command
     data object Music : Command
     data object Maps : Command
+    /** «Cierra el mapa / Google Maps»: sale de la navegación del todo y vuelve a la app. */
+    data object CloseMaps : Command
     /** «Pregunta a Google …»: se le pasa la pregunta (o nada para abrir el asistente de Google). */
     data class AskGoogle(val query: String?) : Command
     data object Help : Command
@@ -177,6 +179,18 @@ object VoiceCommands {
         return BARGE_PHRASES.firstOrNull { t == it || t.endsWith(" $it") }
     }
 
+    private val CANCEL_LIKE = Regex("^[ck]an[cs]e?l")
+
+    /**
+     * «Cancela» dicho mientras habla: el reconocedor libre lo escribe de muchas formas («cancele»,
+     * «cancelo», «cancelar», «cansela», «cancelalo»…) y solo se aceptaba la exacta, así que solo
+     * funcionaba «detente». Si una de las dos últimas palabras lo parece, cuenta como «cancela».
+     */
+    fun fuzzyStop(text: String): String? {
+        val words = normalize(text.replace("[unk]", " ")).split(' ').filter { it.isNotBlank() }.takeLast(2)
+        return if (words.any { CANCEL_LIKE.containsMatchIn(it) }) "cancela" else null
+    }
+
     /** Lo que pide una palabra dicha mientras habla el asistente. */
     enum class Barge { STOP, PAUSE, HOLD, RESUME }
 
@@ -259,6 +273,10 @@ object VoiceCommands {
         fun has(vararg keys: String) = keys.any { k -> if (' ' in k) t.contains(k) else words.any { it.startsWith(k) } }
         val question = words.any { it in QUESTION }
 
+        // «Cierra el mapa», «cierra Google Maps», «quita la navegación», «cancela la ruta»: antes que
+        // «cancela» suelto, que solo corta al asistente.
+        if (has("cierra", "cerrar", "cierralo", "sal de", "salir de", "quita", "quitame", "termina", "terminar", "finaliza", "acaba", "deten la", "para la", "cancela la", "cancela el", "cancelar la") &&
+            has("mapa", "maps", "navegacion", "navegador", "ruta", "gps")) return Command.CloseMaps
         if (t in setOf("pausa", "haz una pausa")) return Command.Pause
         if (t in setOf("continua", "sigue", "sigue hablando", "continua hablando", "sigue por favor", "continua por favor", "por donde ibas", "donde te habias quedado")) return Command.Resume
         if (t in setOf("para", "para ya", "detente", "parate", "stop", "basta", "vale ya")) return Command.Cancel

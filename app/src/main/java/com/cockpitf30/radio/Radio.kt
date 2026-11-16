@@ -85,6 +85,8 @@ object Radio {
     private var assistant = AssistantActivity.IDLE
     /** Otra app (Maps) tiene el foco un momento y nos pide bajar. */
     private var focusDucked = false
+    /** Suena una indicación de navegación (lo ve [NavDuck] aunque no llegue el aviso de foco). */
+    private var navGuidance = false
     private var focusWatchdog: Job? = null
     private var rampJob: Job? = null
 
@@ -120,6 +122,9 @@ object Radio {
                 }
                 .distinctUntilChanged()
                 .collect { a -> assistant = if (settings().radioDuckAssistant) a else AssistantActivity.IDLE; applyVolume() }
+        }
+        scope.launch {
+            NavDuck.guidance.collect { g -> navGuidance = g && settings().radioDuckNav; applyVolume() }
         }
         scope.launch {
             val p = withContext(Dispatchers.IO) { runCatching { FactoryTuner.probe(app) }.getOrNull() }
@@ -490,7 +495,7 @@ object Radio {
      */
     private fun applyVolume(ramp: Boolean = true) {
         val st = _state.value
-        val nav = focusDucked
+        val nav = focusDucked || navGuidance
         val target = RadioLogic.effectiveVolume(st.volume, assistant, nav)
         val reason = RadioLogic.duckReason(assistant, nav)
         _state.update { it.copy(ducked = reason != null, duckReason = reason) }

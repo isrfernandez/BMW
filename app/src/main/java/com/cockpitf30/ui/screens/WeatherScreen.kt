@@ -1,5 +1,7 @@
 package com.cockpitf30.ui.screens
 
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.graphicsLayer
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -114,6 +116,9 @@ fun WeatherScreen() {
     InitialFocus(first)
 
     Box(Modifier.fillMaxSize()) {
+        // Fondo animado con los bordes difuminados: sin esto el color acababa en un rectángulo duro
+        // contra la barra lateral y los bordes de la pantalla.
+        Box(Modifier.fillMaxSize().softEdges()) {
         weather.forecast?.let { f ->
             // Viento real de la hora actual y luz cálida cerca del amanecer o el atardecer.
             val now = LocalDateTime.now()
@@ -126,8 +131,9 @@ fun WeatherScreen() {
                 windKmh = if (testCode != null) 30 else hour?.windKmh ?: 0, windDir = hour?.windDir ?: 270, warm = warm,
             )
             // Velo oscuro a la derecha (selector) y abajo para que todo se lea sobre la animación.
-            Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0.58f to Color.Transparent, 0.7f to Color.Black.copy(alpha = 0.55f))))
+            Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0.66f to Color.Transparent, 0.76f to Color.Black.copy(alpha = 0.55f))))
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.45f))))
+        }
         }
         Column(Modifier.fillMaxSize()) {
             TopBar("Tiempo") {
@@ -183,9 +189,14 @@ fun WeatherScreen() {
                     Spacer(Modifier.height(16.dp))
                     Text("Pulsa un día para verlo por horas", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
                     Spacer(Modifier.height(8.dp))
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        (f?.days ?: emptyList()).forEach { d ->
-                            FocusTile(onClick = { selectedDay = d.date }, modifier = Modifier.width(150.dp).height(200.dp)) {
+                    // Los 7 días siempre enteros: el ancho de cada uno sale del sitio que hay (150 como mucho).
+                    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    val days = f?.days ?: emptyList()
+                    val gap = 12.dp
+                    val tileW = ((maxWidth - gap * 6) / 7).coerceIn(96.dp, 150.dp)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                        days.forEach { d ->
+                            FocusTile(onClick = { selectedDay = d.date }, modifier = Modifier.width(tileW).height(200.dp)) {
                                 Column(
                                     Modifier.fillMaxSize().padding(vertical = 10.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -193,15 +204,16 @@ fun WeatherScreen() {
                                 ) {
                                     Text(dayLabel(d.date), style = MaterialTheme.typography.labelLarge, color = Cockpit.TextDim)
                                     WeatherIcon(wmoCondition(d.code).kind, true, Modifier.size(64.dp))
-                                    Text("${d.minC}° / ${d.maxC}°", style = numeric(24, FontWeight.Medium))
+                                    Text("${d.minC}° / ${d.maxC}°", style = numeric(24, FontWeight.Medium), maxLines = 1)
                                     Text(d.precipProbMax?.let { "$it% lluvia" } ?: wmoCondition(d.code).text, style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim, maxLines = 1)
                                 }
                             }
                         }
                     }
+                    }
                 }
                 // Selección de localidad
-                Column(Modifier.width(620.dp).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.width(440.dp).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("LOCALIDAD", style = MaterialTheme.typography.labelLarge, color = Cockpit.BlueLight)
                     FocusTile(onClick = ::useGps, selected = usingGps, modifier = Modifier.fillMaxWidth().height(72.dp).focusRequester(first)) {
                         Row(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -252,3 +264,13 @@ fun WeatherScreen() {
 
 /** Códigos que recorre el botón de prueba (null = el tiempo real). */
 private val TEST_CODES = listOf(null, 2, 3, 63, 95, 73, 45)
+
+/** Funde los bordes de lo que se dibuja hacia transparente (máscara en los cuatro lados). */
+private fun Modifier.softEdges(edge: Float = 0.07f): Modifier = this
+    .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+    .drawWithContent {
+        drawContent()
+        val fadeX = edge * size.height / size.width
+        drawRect(Brush.horizontalGradient(0f to Color.Transparent, fadeX to Color.Black, 1f - fadeX to Color.Black, 1f to Color.Transparent), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+        drawRect(Brush.verticalGradient(0f to Color.Transparent, edge to Color.Black, 1f - edge to Color.Black, 1f to Color.Transparent), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+    }

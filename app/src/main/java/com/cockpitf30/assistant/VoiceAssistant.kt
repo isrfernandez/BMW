@@ -451,7 +451,7 @@ object VoiceAssistant {
                     val fFinal = freeRec.acceptWaveForm(buf, n)
                     val fRaw = JSONObject(if (fFinal) freeRec.result else freeRec.partialResult).optString(if (fFinal) "text" else "partial")
                     val tail = fRaw.trim().split(' ').filter { it.isNotBlank() }.takeLast(3).joinToString(" ")
-                    val wordHit = VoiceCommands.bargePhraseAtEnd(tail)?.takeIf { VoiceCommands.afterWakeWord(it) == null }
+                    val wordHit = (VoiceCommands.bargePhraseAtEnd(tail) ?: VoiceCommands.fuzzyStop(tail))?.takeIf { VoiceCommands.afterWakeWord(it) == null }
                     // El parcial libre crece sin parar mientras suena la voz: se reinicia de vez en cuando.
                     if (fRaw.length > 120) freeRec.reset()
                     if (gFinal && wakeHit == null) bargeRec.reset()
@@ -844,7 +844,7 @@ object VoiceAssistant {
         saveRecent()
         val ends = command == Command.Cancel || command == Command.Thanks || command == Command.No || command == Command.Quiet ||
             command == Command.TourInfo || command == Command.AboutThat ||
-            command is Command.Navigate || command is Command.Call || command == Command.Maps || command == Command.Music ||
+            command is Command.Navigate || command is Command.Call || command == Command.Maps || command == Command.CloseMaps || command == Command.Music ||
             command is Command.AskGoogle || (command is Command.Station && command.action == StationAction.GO) ||
             command is Command.RadioPlay || command == Command.RadioStop || command is Command.RadioNext || command is Command.RadioVolume
         // Si ha preguntado algo («¿te llevo?»), se espera la respuesta un poco más.
@@ -1078,6 +1078,10 @@ object VoiceAssistant {
         }
         Command.Music -> { afterSpeaking { openMusic(app) }; joke("Abro la música", "music") }
         Command.Maps -> { afterSpeaking { openMaps(app) }; joke("Abro el mapa", "maps") }
+        Command.CloseMaps -> {
+            afterSpeaking { com.cockpitf30.nav.MapsGuidanceState.exitNavigation(app) }
+            if (com.cockpitf30.nav.MapsGuidanceState.current.value != null) "Cierro la navegación" else "Cierro el mapa"
+        }
         is Command.AskGoogle -> if (canOpenGoogleAssistant(c.query)) {
             afterSpeaking { openGoogleAssistant(c.query) }
             joke("Se lo pregunto a Google", "google")

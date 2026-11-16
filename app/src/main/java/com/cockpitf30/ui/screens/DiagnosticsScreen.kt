@@ -19,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -144,7 +145,18 @@ fun DiagnosticsScreen() {
                     val gpsSound = carValues.entries.filter { "gps_sound" in it.key || "gps_mix" in it.key }.joinToString(" · ") { "${it.key} = ${it.value}" }
                     Info("En vivo: ${gpsSound.ifBlank { "state.main.gps_sound no aparece" }}", Cockpit.TextDim)
                     Info("Con esta pantalla abierta, deja que Google Maps dé una indicación: si «gps_sound» no cambia, la radio no se entera de que habla el navegador y por eso no baja la FM.", Cockpit.TextDim)
-                    ChipRow(listOf("Volver a leer"), -1) { reads++ }
+                    val navScope = androidx.compose.runtime.rememberCoroutineScope()
+                    val navLog by com.cockpitf30.radio.NavDuck.log.collectAsStateWithLifecycle()
+                    val guiding by com.cockpitf30.radio.NavDuck.guidance.collectAsStateWithLifecycle()
+                    Info("App: ${com.cockpitf30.radio.NavDuck.claimNote}", Cockpit.TextDim)
+                    Info("Indicación sonando ahora: ${if (guiding) "sí" else "no"} · ${com.cockpitf30.radio.NavDuck.detectNote}", Cockpit.TextDim)
+                    navLog.take(6).forEach { Info(it, Cockpit.TextDim) }
+                    ChipRow(listOf("Volver a leer", "Usar Google Maps como navegador"), -1) {
+                        if (it == 1) navScope.launch {
+                            withContext(Dispatchers.IO) { com.cockpitf30.radio.NavDuck.claim(context, force = true) }
+                            reads++
+                        } else reads++
+                    }
                 }
             }
             item {

@@ -214,15 +214,8 @@ internal fun DrawScope.drawAthos(b: Rect, image: ImageBitmap, feed: AthosFeed, t
         Brush.sweepGradient(listOf(Color.Transparent, AthosBlue.copy(alpha = 0.0f), AthosBlue.copy(alpha = 0.22f)), c),
         sweep - 50f, 50f, true, Offset(c.x - r, c.y - r), Size(2 * r, 2 * r), blendMode = BlendMode.Plus,
     )
-    // Radares cercanos (hasta 3 km) en su dirección relativa.
-    val pulse = 0.5f + 0.5f * sin(t / 180f)
-    SpeedCameras.state.value.near.filter { it.meters < 3000 }.take(8).forEach { v ->
-        val a = Math.toRadians(v.relBearing.toDouble() - 90).toFloat()
-        val d = r * (0.25f + 0.75f * (v.meters / 3000f).toFloat())
-        val p = Offset(c.x + cos(a) * d, c.y + sin(a) * d)
-        drawCircle(Color(0xFFFF4A3A).copy(alpha = 0.35f * pulse), 9f + 6f * pulse, p, blendMode = BlendMode.Plus)
-        drawCircle(Color(0xFFFF4A3A), 3.5f, p)
-    }
+    // Los radares ya no se pintan sobre el triángulo (con la imagen apenas se veían): van en la
+    // cabecera, en una placa oscura (ver más abajo).
     // Indicador de rumbo arriba del anillo.
     val tip = Offset(c.x, c.y - r * 1.17f)
     drawPath(Path().apply { moveTo(tip.x, tip.y + 10f); lineTo(tip.x - 8f, tip.y - 4f); lineTo(tip.x + 8f, tip.y - 4f); close() }, AthosCopper)
@@ -248,6 +241,16 @@ internal fun DrawScope.drawAthos(b: Rect, image: ImageBitmap, feed: AthosFeed, t
         val lay = tm.measure(name, st.mono.copy(color = if (ok) Color.White.copy(alpha = 0.85f) else Dim))
         drawText(lay, topLeft = Offset(sx2, top + 20f))
         sx2 += lay.size.width + 22f
+    }
+    // Radares: bajo los sistemas, en una placa oscura que se lee sobre la imagen.
+    val radarText = cams.ahead?.let { "RADAR DELANTE · ${radarDistance(it.meters)}" + (it.camera.maxspeed?.let { m -> " · $m km/h" } ?: "") }
+        ?: cams.near.size.takeIf { it > 0 }?.let { "$it RADAR${if (it == 1) "" else "ES"} EN ZONA" }
+    radarText?.let { txt ->
+        val lay = tm.measure(txt, st.mono.copy(color = if (cams.ahead != null) Color(0xFFFF8A7A) else Color.White.copy(alpha = 0.85f)))
+        val at = Offset(b.left + pad, top + 48f)
+        drawRoundRect(Color.Black.copy(alpha = 0.6f), Offset(at.x - 8f, at.y - 4f), Size(lay.size.width + 30f, lay.size.height + 8f), androidx.compose.ui.geometry.CornerRadius(6f))
+        drawCircle(Color(0xFFFF4A3A).copy(alpha = if (cams.ahead != null) blink else 0.8f), 4f, Offset(at.x + 2f, at.y + lay.size.height / 2f))
+        drawText(lay, topLeft = Offset(at.x + 14f, at.y))
     }
     textRight(tm, java.time.LocalTime.now().withNano(0).toString(), st.label, Dim, Offset(b.right - pad, top))
     feed.log.firstOrNull()?.let { textRight(tm, it, st.mono, AthosBlue, Offset(b.right - pad, top + 20f)) }
@@ -286,9 +289,6 @@ internal fun DrawScope.drawAthos(b: Rect, image: ImageBitmap, feed: AthosFeed, t
     tag(-30f, r * 1.55f, -r * 0.55f, "FUERZA G", "%.2f g".format(Locale.US, gNow).replace('.', ','), feed.g, AthosBlue)
     tag(165f, -r * 1.5f, r * 0.25f, "ALTITUD", tel.altitudeM?.roundToInt()?.let { "$it m" } ?: "— m", feed.alt, AthosCopper)
     tag(15f, r * 1.5f, r * 0.25f, "CAN · ${spd ?: "—"} km/h", "${feed.canRate.roundToInt()} tramas/s", feed.rpm, AthosCopper)
-    if (cams.near.isNotEmpty()) {
-        centered(tm, "${cams.near.size} RADARES EN ZONA", st.mono, Color(0xFFFF8A7A), Offset(c.x, c.y + r * 1.05f))
-    }
 }
 
 /** Caja del triángulo en athos_view.webp (px de la imagen). */
