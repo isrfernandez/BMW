@@ -340,7 +340,8 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         // 3) Relleno de velocidad y rpm: solo cuando se mueve la aguja.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
             val geo = geoCache.get(g, this)
-            drawFrameFill(geo, mirrored = false, fraction = speed, look = SpeedMetal)
+            // Velocidad igual que las rpm: el metal cambia de tono con los km/h.
+            drawFrameFill(geo, mirrored = false, fraction = speed, look = speedLook(speed), brushed = true)
             // rpm: mismo formato que la velocidad; el tono del metal cambia con el régimen.
             drawFrameFill(geo, mirrored = true, fraction = rpm, look = rpmLook(rpm), brushed = true)
         }
@@ -360,9 +361,10 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
 
             // El 0 no se rotula (no cabe colgando bajo la última marca); su marca sí se dibuja.
             val sMask = speedEngraved
+            val sLook = speedLook(speed)
             // Arriba del todo (250 / 8) no se rotula nada: quedaba muy justo y nunca se llega ahí.
             SPEED_MARKS.forEachIndexed { i, v ->
-                if (i > 0 && i < SPEED_MARKS.lastIndex) drawMark(geo, measurer, "$v", SPEED_FRACTIONS[i], false, scaleStyle, SpeedLabel, sMask and (1 shl i) != 0, SpeedMetal)
+                if (i > 0 && i < SPEED_MARKS.lastIndex) drawMark(geo, measurer, "$v", SPEED_FRACTIONS[i], false, scaleStyle, SpeedLabel, sMask and (1 shl i) != 0, sLook)
             }
             // Como en la velocidad: la cifra que cubre el relleno pasa a oscuro, grabada en el metal.
             val rMask = rpmEngraved
@@ -400,11 +402,16 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
                         com.cockpitf30.vehicle.ServiceLevel.SOON -> Color(0xFFFFC94D)
                         else -> Color(0xFF3DDC97)
                     }
-                    Box(Modifier.graphicsLayer { alpha = (1f - page.value * 1.6f).coerceIn(0f, 1f) }) {
+                    // Solo en la vista del coche: se apaga tanto hacia el mapa como hacia Athos.
+                    Box(Modifier.graphicsLayer { alpha = (1f - abs(page.value) * 1.6f).coerceIn(0f, 1f) }) {
                         InfoChip(serviceCaption(sv.item), value, unit, accentColor = color, valueColor = if (sv.level == com.cockpitf30.vehicle.ServiceLevel.OK) null else color)
                     }
                 }
-                TabValue(gearText ?: "--", shownRpm?.let { "$it rpm" } ?: "-- rpm", alignEnd = true, glow = RpmGlow, intensity = rpmGlow, shift = shift)
+                // Ancho fijo: si no, la ficha de al lado bailaba cada vez que cambiaban las cifras de
+                // rpm o aparecía la flecha de cambio (era lo que movía la vista).
+                Box(Modifier.width(300.dp), contentAlignment = Alignment.CenterEnd) {
+                    TabValue(gearText ?: "--", shownRpm?.let { "$it rpm" } ?: "-- rpm", alignEnd = true, glow = RpmGlow, intensity = rpmGlow, shift = shift)
+                }
             }
         }
         // Datos de apoyo bajo las cifras grandes, solo en la vista del coche (se van con el mapa).
@@ -817,6 +824,21 @@ private val BrushedSteel = MetalLook(Color(0xFF26313D), Color(0xFF6F8296), Color
  */
 private const val RPM_LOOK_STEPS = 32
 private val rpmLooks = HashMap<DriveMode, List<MetalLook>>()
+
+/**
+ * Lo mismo para la velocidad, por km/h: acero hasta unos 80, cobre hacia 115 y rojo desde unos
+ * 135 (por encima del límite de autovía).
+ */
+private fun speedLook(fraction: Float): MetalLook {
+    val kmh = speedFromFraction(fraction.coerceIn(0f, 1f)).toFloat()
+    val f = when {
+        kmh <= 80f -> kmh / 80f * 0.38f
+        kmh <= 115f -> 0.38f + (kmh - 80f) / 35f * 0.24f
+        kmh <= 135f -> 0.62f + (kmh - 115f) / 20f * 0.16f
+        else -> 0.78f + ((kmh - 135f) / 115f).coerceAtMost(1f) * 0.22f
+    }
+    return rpmLook(f)
+}
 
 private fun rpmLook(fraction: Float): MetalLook {
     val mode = DriveModes.current
