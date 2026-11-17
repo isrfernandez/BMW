@@ -145,6 +145,19 @@ object Copilot {
         CopilotLine("idle.posture", "Relaja los hombros y suelta un poco el volante. Se conduce mejor sin tensión."),
         CopilotLine("idle.trip", "¿Quieres que te diga cuánto llevamos de viaje? Di sí.", Command.Info(InfoTopic.TRIP)),
         CopilotLine("idle.name", "Por cierto, todavía no sé cómo te llamas. Dime: me llamo, y tu nombre."),
+        CopilotLine("idle.fact", "¿Te cuento una curiosidad? Di sí.", Command.Chat("fact")),
+        CopilotLine("idle.fact2", "Tengo un dato curioso guardado para ti. ¿Lo quieres? Di sí.", Command.Chat("fact")),
+        CopilotLine("idle.joke2", "Tengo un chiste nuevo. Bueno, nuevo para ti. ¿Te lo cuento?", Command.Joke),
+        CopilotLine("idle.sights", "Si quieres saber qué hay que ver por aquí, dime: qué hay por aquí."),
+        CopilotLine("idle.food", "Cuando te entre hambre, dime: dónde comer, y te busco sitio."),
+        CopilotLine("idle.mirrors", "Un vistazo a los espejos de vez en cuando nunca está de más."),
+        CopilotLine("idle.music", "Si quieres música, dime: pon la radio. Prometo no cantar."),
+        CopilotLine("idle.smooth", "Conducir suave ahorra combustible. El diésel te lo agradece. Y yo también."),
+        CopilotLine("idle.window", "Si se empañan los cristales, el aire acondicionado lo arregla antes que la ventanilla."),
+        CopilotLine("idle.robot", "Estaba pensando en mis cosas. Los robots también pensamos. Sobre todo en radares."),
+        CopilotLine("idle.landscape", "Disfruta del paisaje. Yo me encargo de los números."),
+        CopilotLine("idle.stretch", "Si llevas rato sentado, en la próxima parada estira un poco las piernas."),
+        CopilotLine("idle.humor", "Si mis bromas te parecen pocas, súbeme el humor. Si te parecen muchas, también puedes bajarlo."),
     )
 
     /** Cuándo se dijo cada tema por última vez. */

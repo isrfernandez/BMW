@@ -100,6 +100,7 @@ class Conversation {
                 last is Command.WeatherDay -> Command.WeatherDay((last.offset + 1).coerceAtMost(6))
                 last is Command.Info && last.topic == InfoTopic.WEATHER -> Command.WeatherDay(1)
                 last is Command.Chat && last.key == "bored" -> Command.Joke
+                last is Command.Chat && last.key == "fact" -> Command.Chat("fact")
                 else -> Command.Another
             }
             Command.Price -> return if (stations) Command.Station(stationIndex, StationAction.PRICE) else Command.Info(InfoTopic.FUEL_NEAR)
@@ -181,6 +182,7 @@ class Conversation {
                 "tired" -> "tu cansancio"
                 "howareyou", "fine" -> "qué tal estamos"
                 "whoareyou", "age" -> "quién soy"
+                "fact" -> "curiosidades"
                 else -> null
             }
             is Command.Open -> "la pantalla de ${c.screen.name.lowercase().let(::screenName)}"

@@ -471,6 +471,8 @@ object VoiceCommands {
             h("sentido de la vida") -> "life"
             h("cantame", "canta algo", "canta una", "cantas") -> "sing"
             h("hambre") -> "hungry"
+            h("curiosidad", "dato curioso", "datos curiosos", "sabias que", "algo interesante", "sorprendeme", "algo que no sepa") ||
+                t in setOf("cuentame algo", "dime algo", "cuentame una cosa", "dime una cosa") -> "fact"
             else -> null
         }
     }
