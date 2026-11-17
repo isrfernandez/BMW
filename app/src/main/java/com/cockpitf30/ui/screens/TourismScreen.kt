@@ -102,6 +102,9 @@ fun TourismScreen() {
     var tab by remember { mutableStateOf(TourTab.SEE) }
     var sort by remember { mutableStateOf(TourSort.BEST) }
     var selected by remember { mutableStateOf<TourItem?>(null) }
+    // Modo demo: pasa por Para ver, Comer y Dormir.
+    val demoTab = com.cockpitf30.ui.components.DemoTour.tourTab
+    androidx.compose.runtime.LaunchedEffect(demoTab) { demoTab?.let { tab = TourTab.entries[it.coerceIn(0, TourTab.entries.size - 1)]; selected = null } }
     var fameVersion by remember { mutableIntStateOf(0) }
     val first = remember { FocusRequester() }
     InitialFocus(first)

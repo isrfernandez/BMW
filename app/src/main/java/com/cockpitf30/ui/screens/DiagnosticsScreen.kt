@@ -111,9 +111,11 @@ fun DiagnosticsScreen() {
             }
             item {
                 DiagCard("Modo demo") {
-                    Info("Recorre sola toda la app: cada pantalla, los modos Sport, Night y diurno y las secciones de Ajustes, " +
-                        "con datos de demostración (unos ${com.cockpitf30.ui.components.DemoTour.steps.sumOf { it.seconds } / 60 + 1} minutos). " +
-                        "Abajo se ve qué es cada pantalla; «Detener» o atrás la para. Al acabar todo vuelve a como estaba.", Cockpit.TextDim)
+                    Info("Recorre sola toda la app y la pone a prueba: las vistas del cuadro, el asistente contestando por voz, " +
+                        "gasolineras, resumen del viaje, avisos en ruta, turismo, una salida cronometrada en Rendimiento, los modos " +
+                        "Sport, Night y diurno y un repaso rápido de Ajustes, con datos de demostración (unos " +
+                        "${com.cockpitf30.ui.components.DemoTour.totalSeconds.let { "%d:%02d".format(it / 60, it % 60) }} min). " +
+                        "Arriba se ve qué es cada paso; «Detener» o atrás la para. Nada se guarda: al acabar todo vuelve a como estaba.", Cockpit.TextDim)
                     ChipRow(listOf("Empezar demo"), -1, Modifier.focusRequester(first)) { com.cockpitf30.ui.components.DemoTour.start(context) }
                 }
             }

@@ -249,6 +249,14 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             page.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
         }
     }
+    // Modo demo: enseña cada vista del centro (sin el sonido de la vista Athos).
+    val demoPage = DemoTour.clusterPage
+    LaunchedEffect(demoPage) {
+        val p = demoPage ?: return@LaunchedEffect
+        target = p
+        ClusterIntro.done = true
+        page.animateTo(p.toFloat(), tween(600, easing = FastOutSlowInEasing))
+    }
     val athosFeed = rememberAthosFeed { page.value < 0f }
     val athosText = remember { AthosText() }
     val athosImage = cachedBitmap(R.drawable.athos_view) // sin el rótulo: solo el triángulo

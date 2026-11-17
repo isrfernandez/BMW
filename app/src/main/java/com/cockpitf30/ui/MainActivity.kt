@@ -466,7 +466,8 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
             com.cockpitf30.ui.components.AmbientGlow()
             TripSummaryOverlay()
             AssistantOverlay()
-            com.cockpitf30.ui.components.DemoTourBanner(Modifier.align(androidx.compose.ui.Alignment.BottomCenter).padding(bottom = 18.dp))
+            // Arriba a la izquierda: abajo van los subtítulos del asistente y arriba a la derecha los avisos en ruta.
+            com.cockpitf30.ui.components.DemoTourBanner(Modifier.align(androidx.compose.ui.Alignment.TopStart).padding(start = 150.dp, top = 10.dp))
         }
     }
     }

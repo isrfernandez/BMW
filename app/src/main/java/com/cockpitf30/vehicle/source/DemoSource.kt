@@ -26,9 +26,14 @@ class DemoSource : VehicleDataSource {
             // Conductor simulado con caja manual de 6: no cambia en el punto ideal sino un rato
             // después de que el cuadro le aconseje hacerlo, así en la demo se ve la flecha de cambio.
             val driver = DemoDriver()
+            var current: Float? = null
             while (isActive) {
-                // Ciclo lento (~1 min de 10 a 130 km/h y vuelta): aceleraciones realistas.
-                val speed = (70 + 60 * sin(t / 18)).roundToInt()
+                // Ciclo lento (~1 min de 10 a 130 km/h y vuelta): aceleraciones realistas. El modo
+                // demo puede marcar otra velocidad ([DemoDrive.target], p. ej. una salida desde
+                // parado); los cambios se limitan a lo que acelera o frena un coche, sin saltos.
+                val wanted = DemoDrive.target ?: (70 + 60 * sin(t / 18)).toFloat()
+                current = DemoDrive.approach(current ?: wanted, wanted)
+                val speed = current!!.roundToInt()
                 // Cambia donde lo aconseja el cuadro en el modo de conducción elegido.
                 driver.limits = if (DriveModes.current == DriveMode.SPORT) ShiftAdvisor.SPORT else ShiftAdvisor.ECO
                 val gear = driver.update(System.currentTimeMillis(), speed)
@@ -54,6 +59,17 @@ class DemoSource : VehicleDataSource {
             }
         }
     }
+}
+
+/** Velocidad que pide el modo demo en vez del ciclo normal (null = ciclo normal). */
+object DemoDrive {
+    @Volatile var target: Float? = null
+    /** km/h por muestra (50 ms): 20 km/h/s acelerando (~0,57 G) y 28 frenando (~0,8 G). */
+    private const val UP = 1.0f
+    private const val DOWN = 1.4f
+
+    fun approach(from: Float, to: Float): Float =
+        if (to > from) minOf(to, from + UP) else maxOf(to, from - DOWN)
 }
 
 /**

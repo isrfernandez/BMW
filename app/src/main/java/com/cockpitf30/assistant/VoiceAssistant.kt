@@ -815,7 +815,7 @@ object VoiceAssistant {
 
     // ---------------------------------------------------------------- órdenes y respuestas
 
-    private fun execute(text: String, inFollowUp: Boolean = false) {
+    private fun execute(text: String, inFollowUp: Boolean = false, listen: Boolean = true) {
         listenUntil = 0
         followUp = false
         val now = System.currentTimeMillis()
@@ -849,7 +849,7 @@ object VoiceAssistant {
             command is Command.RadioPlay || command == Command.RadioStop || command is Command.RadioNext || command is Command.RadioVolume
         // Si ha preguntado algo («¿te llevo?»), se espera la respuesta un poco más.
         val asked = conversation.pending != null || reply.trimEnd().endsWith("?")
-        say(reply, listenAfter = if (ends || !settings().assistantFollowUp) 0L else if (asked) maxOf(followMs(), ASKED_MS) else followMs())
+        say(reply, listenAfter = if (!listen || ends || !settings().assistantFollowUp) 0L else if (asked) maxOf(followMs(), ASKED_MS) else followMs())
     }
 
     private fun saveRecent() { runCatching { settings().assistantRecentLines = Personality.recent.save() } }
@@ -946,6 +946,23 @@ object VoiceAssistant {
             conversation.record(null, null, text, System.currentTimeMillis())
             say(text)
             onSaid?.invoke()
+        }
+    }
+
+    /**
+     * Modo demo: contesta como si hubiera oído [text] (sin micrófono), con la misma lógica que una
+     * orden de verdad, pero sin quedarse escuchando después.
+     */
+    fun demoAsk(text: String) {
+        if (!::app.isInitialized) return
+        scope.launch {
+            if (!ttsReady) {
+                initTts()
+                var w = 0L
+                while (!ttsReady && w < TTS_WAIT_MS && _tts.value == TtsStatus.STARTING) { delay(100); w += 100 }
+            }
+            logState("demo: «$text»")
+            execute(text, listen = false)
         }
     }
 

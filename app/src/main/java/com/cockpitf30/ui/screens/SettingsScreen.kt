@@ -3,6 +3,8 @@ package com.cockpitf30.ui.screens
 import android.view.KeyEvent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -115,6 +117,25 @@ fun SettingsScreen(onOpen: (Screen) -> Unit = {}, initialSection: SettingsSectio
                 }
                 // Cada sección empieza arriba del todo.
                 key(section) {
+                    // Modo demo: las filas se resaltan por turnos enseñando el cambio, sin guardarlo.
+                    val demoRows = remember { DemoRows() }
+                    LaunchedEffect(demoSection) {
+                        if (demoSection == null) return@LaunchedEffect
+                        kotlinx.coroutines.delay(450)
+                        val n = demoRows.count
+                        if (n == 0) return@LaunchedEffect
+                        val total = (com.cockpitf30.ui.components.DemoTour.step?.seconds ?: 5) * 1000L - 900L
+                        val per = (total / n).coerceIn(220L, 700L)
+                        try {
+                            for (i in 0 until n) {
+                                com.cockpitf30.ui.components.DemoTour.settingsFlip = i
+                                kotlinx.coroutines.delay(per)
+                            }
+                        } finally {
+                            com.cockpitf30.ui.components.DemoTour.settingsFlip = -1
+                        }
+                    }
+                    androidx.compose.runtime.CompositionLocalProvider(LocalDemoRows provides demoRows.takeIf { demoSection != null }) {
                     Column(
                         Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -129,6 +150,7 @@ fun SettingsScreen(onOpen: (Screen) -> Unit = {}, initialSection: SettingsSectio
                             SettingsSection.MAPS -> MapsSettings()
                             SettingsSection.SYSTEM -> SystemSettings(onOpen)
                         }
+                    }
                     }
                 }
             }
@@ -594,13 +616,36 @@ private fun Hint(text: String) {
 /** Opción de sí/no: toda la fila es el botón y a la derecha lleva un interruptor. */
 @Composable
 private fun ToggleRow(title: String, subtitle: String?, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
-    FocusTile(onClick = { onChange(!checked) }, selected = false, modifier = Modifier.fillMaxWidth().heightIn(min = 68.dp)) {
+    val (demo, demoMod) = demoFlip()
+    FocusTile(onClick = { onChange(!checked) }, selected = demo, modifier = demoMod.fillMaxWidth().heightIn(min = 68.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Labels(title, subtitle, enabled, Modifier.weight(1f))
             Spacer(Modifier.width(20.dp))
-            Switch(checked, enabled)
+            Switch(checked != demo, enabled)
         }
     }
+}
+
+/** Filas de la sección en el orden en que se pintan, para que el modo demo las recorra. */
+private class DemoRows { var count = 0; fun next() = count++ }
+private val LocalDemoRows = androidx.compose.runtime.compositionLocalOf<DemoRows?> { null }
+
+/**
+ * ¿Le toca a esta fila enseñar su cambio en el modo demo? Devuelve también el modificador que la
+ * trae a la vista (las secciones largas se desplazan solas) y la resalta.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun demoFlip(): Pair<Boolean, Modifier> {
+    val rows = LocalDemoRows.current ?: return false to Modifier
+    val index = remember { rows.next() }
+    val on = com.cockpitf30.ui.components.DemoTour.settingsFlip == index
+    val req = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+    LaunchedEffect(on) { if (on) runCatching { req.bringIntoView() } }
+    val glow by animateFloatAsState(if (on) 1f else 0f, label = "demoRow")
+    return on to Modifier
+        .bringIntoViewRequester(req)
+        .background(Cockpit.Blue.copy(alpha = 0.16f * glow), androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
 }
 
 /** Interruptor dibujado: pista azul y bola a la derecha cuando está encendido. */
@@ -621,7 +666,11 @@ private fun Switch(on: Boolean, enabled: Boolean) {
 /** Opción con varias posibilidades: texto arriba y botones debajo, el elegido resaltado. */
 @Composable
 private fun ChoiceRow(title: String, subtitle: String?, options: List<String>, selected: Int, onSelect: (Int) -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val (demo, demoMod) = demoFlip()
+    // En el modo demo se ve elegida la opción siguiente (no se guarda).
+    @Suppress("NAME_SHADOWING")
+    val selected = if (demo && options.isNotEmpty()) (selected + 1).mod(options.size) else selected
+    Column(demoMod.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Labels(title, subtitle, true, Modifier)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             options.forEachIndexed { i, label ->
@@ -641,10 +690,11 @@ private fun ChoiceRow(title: String, subtitle: String?, options: List<String>, s
 /** Opción que hace algo (probar, abrir, borrar): texto a la izquierda y botón a la derecha. */
 @Composable
 private fun ActionRow(title: String, subtitle: String?, button: String, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    val (demo, demoMod) = demoFlip()
+    Row(demoMod.fillMaxWidth().padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Labels(title, subtitle, true, Modifier.weight(1f))
         Spacer(Modifier.width(20.dp))
-        FocusTile(onClick = onClick) {
+        FocusTile(onClick = onClick, selected = demo) {
             Text(button, Modifier.padding(horizontal = 24.dp, vertical = 12.dp), style = MaterialTheme.typography.bodyLarge)
         }
     }
@@ -653,10 +703,11 @@ private fun ActionRow(title: String, subtitle: String?, button: String, onClick:
 /** Valor con − y +. */
 @Composable
 private fun StepperRow(title: String, subtitle: String?, value: String, onMinus: () -> Unit, onPlus: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    val (demo, demoMod) = demoFlip()
+    Row(demoMod.fillMaxWidth().padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Labels(title, subtitle, true, Modifier.weight(1f))
         Spacer(Modifier.width(20.dp))
-        FocusTile(onClick = onMinus) {
+        FocusTile(onClick = onMinus, selected = demo) {
             Text("−", Modifier.padding(horizontal = 24.dp, vertical = 8.dp), style = MaterialTheme.typography.titleLarge)
         }
         Text(value, Modifier.width(110.dp), style = numeric(28, FontWeight.Medium), color = Cockpit.Text, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
