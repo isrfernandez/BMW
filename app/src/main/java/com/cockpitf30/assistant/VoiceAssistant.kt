@@ -1099,7 +1099,7 @@ object VoiceAssistant {
         }
         is Command.RadioNext -> { com.cockpitf30.radio.Radio.next(c.dir); if (c.dir > 0) "Siguiente emisora" else "Emisora anterior" }
         Command.Help -> "Puedo abrir gasolineras, viaje, tiempo, teléfono o apps; decirte la autonomía, el tiempo de hoy o de mañana " +
-            "y la gasolinera más cercana; llevarte a un sitio, llamar a alguien, contarte un chiste o preguntar a Google. " +
+            "y la gasolinera más cercana; llevarte a un sitio, llamar a alguien, contarte un chiste o una curiosidad, o preguntar a Google. " +
             "Después de contestarte sigo escuchando unos segundos, así que puedes seguir: otra, y mañana, llévame. " +
             "Y puedes ajustar mi humor, decir activa el copiloto, qué hay por aquí, información turística, o desactiva los avisos turísticos."
         Command.Cancel -> joke(Personality.line("cancel"), "cancel")
@@ -1118,7 +1118,7 @@ object VoiceAssistant {
                 "tired" -> conversation.ask(Pending.Confirm(Command.Info(InfoTopic.FUEL_NEAR)), now)
                 "bored" -> conversation.ask(Pending.Confirm(Command.Joke), now)
             }
-            Personality.chat(c.key, humor())
+            if (c.key == "fact") Personality.fact() else Personality.chat(c.key, humor())
         }
         is Command.SetName -> {
             Personality.userName = c.name
