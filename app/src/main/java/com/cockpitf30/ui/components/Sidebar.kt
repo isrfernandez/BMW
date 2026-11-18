@@ -185,11 +185,13 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
             val item = byId[id] ?: return@forEach
             key(id) {
                 val isMoving = moving == id
-                val wobble = if (isMoving) {
-                    rememberInfiniteTransition(label = "wobble").animateFloat(
-                        -1.2f, 1.2f, infiniteRepeatable(tween(140), RepeatMode.Reverse), label = "rot",
-                    ).value
-                } else 0f
+                // Temblor del botón que se mueve. Con Animatable y siempre en el mismo sitio: el
+                // rememberInfiniteTransition dentro de un if rompía la composición al coger el botón.
+                val wobble = remember { androidx.compose.animation.core.Animatable(0f) }
+                androidx.compose.runtime.LaunchedEffect(isMoving) {
+                    if (isMoving) wobble.animateTo(1.2f, infiniteRepeatable(tween(140), RepeatMode.Reverse), initialVelocity = 0f)
+                    else wobble.snapTo(0f)
+                }
                 FocusTile(
                     onClick = {
                         when {
@@ -203,7 +205,7 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
                         .then(if (isMoving) Modifier.zIndex(1f) else Modifier)
                         .graphicsLayer {
                             translationY = if (isMoving) dragY else 0f
-                            rotationZ = wobble
+                            rotationZ = if (isMoving) wobble.value * 2f - 1.2f else 0f
                             val sc = if (isMoving) 1.06f else 1f
                             scaleX = sc; scaleY = sc
                         }
