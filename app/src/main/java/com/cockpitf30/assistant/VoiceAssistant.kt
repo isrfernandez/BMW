@@ -140,6 +140,8 @@ object VoiceAssistant {
     private const val BARGE_GRACE_MS = 1_000L
     /** Tiempo que debe mantenerse en el parcial una orden de interrupción para hacerle caso. */
     private const val BARGE_STABLE_MS = 700L
+    /** Lo mismo para una orden de corte inconfundible («cancela», «detente»…), buscada en todo lo transcrito. */
+    private const val STRONG_STABLE_MS = 200L
     /** Confianza mínima de cada palabra de una interrupción (frase completa). */
     private const val BARGE_MIN_CONF = 0.85
     /** Tras una pregunta del copiloto, algo más que tras una respuesta. */
@@ -451,13 +453,17 @@ object VoiceAssistant {
                     val fFinal = freeRec.acceptWaveForm(buf, n)
                     val fRaw = JSONObject(if (fFinal) freeRec.result else freeRec.partialResult).optString(if (fFinal) "text" else "partial")
                     val tail = fRaw.trim().split(' ').filter { it.isNotBlank() }.takeLast(3).joinToString(" ")
-                    val wordHit = (VoiceCommands.bargePhraseAtEnd(tail) ?: VoiceCommands.fuzzyStop(tail))?.takeIf { VoiceCommands.afterWakeWord(it) == null }
+                    // «Cancela», «detente», «silencio»… en cualquier parte de lo transcrito (no solo al final:
+                    // su eco sigue escribiéndose detrás), salvo que sea una palabra que ella misma está diciendo.
+                    val strong = VoiceCommands.stopKinds(fRaw).firstOrNull { !saysItNow(it) }
+                    val wordHit = strong ?: (VoiceCommands.bargePhraseAtEnd(tail) ?: VoiceCommands.fuzzyStop(tail))?.takeIf { VoiceCommands.afterWakeWord(it) == null }
                     // El parcial libre crece sin parar mientras suena la voz: se reinicia de vez en cuando.
                     if (fRaw.length > 120) freeRec.reset()
                     if (gFinal && wakeHit == null) bargeRec.reset()
                     val hit = wakeHit ?: wordHit
                     if (hit != bargeHit) { bargeHit = hit; bargeSince = now }
-                    if (hit != null && (gFinal && wakeHit != null || fFinal && wordHit != null || now - bargeSince >= BARGE_STABLE_MS)) {
+                    val stableMs = if (wakeHit == null && strong != null) STRONG_STABLE_MS else BARGE_STABLE_MS
+                    if (hit != null && (gFinal && wakeHit != null || fFinal && wordHit != null || now - bargeSince >= stableMs)) {
                         bargeHit = null
                         bargeRec.reset(); freeRec.reset()
                         val ratio = voiceOverEcho(echoLevels).second
@@ -660,6 +666,7 @@ object VoiceAssistant {
         when (_state.value.phase) {
             AssistantPhase.WAITING, AssistantPhase.ANSWERING -> {
                 noteCut("tocaste el asistente")
+                if (_state.value.phase == AssistantPhase.ANSWERING) hush("tocaste la tarjeta")
                 stopSpeaking()
                 muted = false
                 resetRecognizer = true
@@ -834,6 +841,7 @@ object VoiceAssistant {
             return
         }
         _state.update { it.copy(heard = text, followUp = false, paused = false) }
+        if (command == Command.Cancel || command == Command.Quiet || command == Command.No) hush("«$text»")
         lastActivityAt = now
         var reply = perform(command, now)
         val repeatable = command is Command.Info || command is Command.WeatherDay
@@ -1001,10 +1009,12 @@ object VoiceAssistant {
      * Una respuesta que llega después (p. ej. el resumen de Wikipedia que se estaba descargando):
      * espera a que acabe lo que está diciendo, sin cortarlo, y no se mete si ya se está con otra orden.
      */
-    private fun sayLater(text: String) = scope.launch {
+    private fun sayLater(text: String, seq: Int = hushSeq) = scope.launch {
+        if (seq != hushSeq) { logState("descartado (me mandaste callar): «${text.take(30)}»"); return@launch }
         var waited = 0L
         while (waited < ANNOUNCE_WAIT_MS && _state.value.phase == AssistantPhase.ANSWERING) { delay(300); waited += 300 }
         val p = _state.value.phase
+        if (seq != hushSeq) { logState("descartado (me mandaste callar): «${text.take(30)}»"); return@launch }
         if (p == AssistantPhase.WAITING || p == AssistantPhase.NO_MODEL || (p == AssistantPhase.LISTENING && followUp && _state.value.heard == null)) {
             conversation.record(null, Command.TourInfo, text, System.currentTimeMillis())
             // Tras una explicación larga no se queda escuchando: «Hola Athos» si quieres algo más.
@@ -1014,10 +1024,11 @@ object VoiceAssistant {
 
     /** Dice [text] cuando acabe la frase [afterId] (si entretanto no ha empezado otra ni se escucha). */
     private fun sayWhenFree(text: String, afterId: String) = scope.launch {
+        val seq = hushSeq
         var waited = 0L
         while (waited < ANNOUNCE_WAIT_MS && replyId == afterId && _state.value.phase == AssistantPhase.ANSWERING) { delay(300); waited += 300 }
         val p = _state.value.phase
-        if (replyId == afterId && resumed && (p == AssistantPhase.WAITING || p == AssistantPhase.NO_MODEL)) say(text)
+        if (seq == hushSeq && replyId == afterId && resumed && (p == AssistantPhase.WAITING || p == AssistantPhase.NO_MODEL)) say(text)
     }
 
     /** Último corte de una frase a medias y por qué (Diagnóstico), para encontrar cortes raros. */
@@ -1129,13 +1140,12 @@ object VoiceAssistant {
         Command.Repeat -> conversation.lastReply ?: Personality.line("repeat.none")
         Command.Recap -> conversation.recap(now) ?: Personality.chat("recap.none", humor())
         Command.Joke -> if (humor() <= 0) Personality.line("joke.nohumor") else Personality.joke()
-        is Command.Chat -> {
-            when (c.key) {
-                // Lo que proponen estas respuestas se puede aceptar con un «sí».
-                "tired" -> conversation.ask(Pending.Confirm(Command.Info(InfoTopic.FUEL_NEAR)), now)
-                "bored" -> conversation.ask(Pending.Confirm(Command.Joke), now)
-            }
-            if (c.key == "fact") Personality.fact() else Personality.chat(c.key, humor())
+        is Command.Chat -> chatReply(c.key, now)
+        is Command.RiddleAnswer -> {
+            val key = when (c.outcome) { RiddleOutcome.RIGHT -> "riddle.right"; RiddleOutcome.WRONG -> "riddle.wrong"; RiddleOutcome.GIVE_UP -> "riddle.giveup" }
+            val r = Personality.chat(key, humor()).replace("{answer}", c.riddle.answer)
+            conversation.ask(Pending.Confirm(Command.Chat("riddle")), now)
+            "$r ${Personality.line("offer.riddle")}"
         }
         is Command.SetName -> {
             Personality.userName = c.name
@@ -1161,7 +1171,7 @@ object VoiceAssistant {
         is Command.Alerts -> alerts(c)
         Command.Nearby -> com.cockpitf30.nav.RouteAlerts.nearby(scope)
         Command.AboutThat -> com.cockpitf30.nav.RouteAlerts.more() ?: "Todavía no te he hablado de ningún sitio. Pregúntame qué hay por aquí."
-        Command.TourInfo -> com.cockpitf30.nav.RouteAlerts.tourInfo(scope) { text -> sayLater(text) }
+        Command.TourInfo -> { val seq = hushSeq; com.cockpitf30.nav.RouteAlerts.tourInfo(scope) { text -> sayLater(text, seq) } }
         is Command.Stays -> stays(c, now)
         is Command.GoTo -> {
             afterSpeaking { navigateTo("%.6f,%.6f".format(java.util.Locale.US, c.lat, c.lon)) }
@@ -1184,7 +1194,43 @@ object VoiceAssistant {
             }
         }
         Command.Honesty -> "Sinceridad al noventa por ciento. El diez restante es por tu bien."
-        is Command.Unknown -> Personality.line(if (kotlin.random.Random.nextDouble() < Personality.jokeChance(humor())) "unknown.funny" else "unknown")
+        is Command.Unknown -> if (VoiceCommands.isRealQuestion(c.text) && c.text.split(' ').size >= 3 && canOpenGoogleAssistant(c.text)) {
+            // Una pregunta que no sabe contestar: se ofrece preguntársela a Google (con un «sí»).
+            conversation.ask(Pending.Confirm(Command.AskGoogle(c.text)), now)
+            Personality.line("unknown.question")
+        } else Personality.line(if (kotlin.random.Random.nextDouble() < Personality.jokeChance(humor())) "unknown.funny" else "unknown")
+    }
+
+    /**
+     * Charla. Algunas respuestas proponen algo (un chiste, el copiloto, callarse) que se acepta con
+     * un «sí»; si la respuesta termina en pregunta, lo que se conteste se comenta en vez de no entenderse.
+     */
+    private fun chatReply(key: String, now: Long): String {
+        val h = humor()
+        fun offer(text: String, offerKey: String, yes: Command): String {
+            conversation.ask(Pending.Confirm(yes), now)
+            return "$text ${Personality.line(offerKey)}"
+        }
+        val reply = when (key) {
+            "fact" -> Personality.fact()
+            "saying" -> Personality.saying()
+            "riddle" -> {
+                val r = Personality.riddle()
+                conversation.ask(Pending.Guess(r), now)
+                return r.question
+            }
+            "tired" -> { conversation.ask(Pending.Confirm(Command.Info(InfoTopic.FUEL_NEAR)), now); Personality.chat(key, h) }
+            "bored" -> { conversation.ask(Pending.Confirm(Command.Joke), now); Personality.chat(key, h) }
+            // «Hoy no estás muy hablador»: se disculpa y propone el copiloto (si no está) o una curiosidad.
+            "talkative" -> if (!settings().copilotEnabled) offer(Personality.chat(key, h), "offer.copilot", Command.Copilot(true))
+                else offer(Personality.chat(key, h), "offer.fact", Command.Chat(if (kotlin.random.Random.nextBoolean()) "fact" else "question"))
+            "chatty" -> offer(Personality.chat(key, h), "offer.quiet", Command.Quiet)
+            "sad", "angry", "stressed", "traffic" -> offer(Personality.chat(key, h), "offer.joke", Command.Joke)
+            "lonely", "happy" -> offer(Personality.chat(key, h), "offer.chat", Command.Chat("question"))
+            else -> Personality.chat(key, h)
+        }
+        if (conversation.pending == null && reply.trimEnd().endsWith("?")) conversation.ask(Pending.Reply, now)
+        return reply
     }
 
     /**
@@ -1222,11 +1268,12 @@ object VoiceAssistant {
         val far = before.center?.let { com.cockpitf30.nav.RouteTracker.distance(it, pos) > 2500 } ?: true
         if (before.stays.isNotEmpty() && !far) return reply().first
         fl.maybeFetch(null, pos, force = true)
+        val seq = hushSeq
         scope.launch {
             val done = kotlinx.coroutines.withTimeoutOrNull(60_000) {
                 fl.state.first { it.updatedAt > before.updatedAt || (!it.loading && it.error != null) }
             }
-            if (done != null) sayLater(reply().first)
+            if (done != null) sayLater(reply().first, seq)
         }
         return if (before.stays.isNotEmpty()) reply().first.substringBefore(" ¿Te llevo") + " Lo actualizo, un momento."
         else "Miro qué hay por aquí, un momento."
@@ -1409,7 +1456,8 @@ object VoiceAssistant {
         lastCopilotAt = now
         val question = line.text.contains('?')
         val text = if (question) line.text else Personality.spice(line.text, humor(), "copilot")
-        conversation.ask(line.yes?.let { Pending.Confirm(it) }, now)
+        // Una pregunta sin propuesta («¿qué tal vas?»): lo que contestes se comenta en vez de no entenderse.
+        conversation.ask(line.yes?.let { Pending.Confirm(it) } ?: Pending.Reply.takeIf { line.text.trimEnd().endsWith("?") }, now)
         conversation.record(null, null, text, now)
         saveRecent()
         say(text, listenAfter = if (question && st.assistantFollowUp) followMs() + COPILOT_EXTRA_MS else 0L)
@@ -1683,6 +1731,15 @@ object VoiceAssistant {
         runCatching { a() }.onFailure { Log.w(TAG, "Tras hablar", it) }
     }
 
+    /**
+     * Sube cada vez que el conductor manda callar («cancela», tocar la tarjeta…): lo que estaba
+     * pendiente de decirse después (la explicación turística que aún se descargaba, el resto de una
+     * frase cortada por un radar) se descarta en vez de empezar a sonar al momento.
+     */
+    @Volatile private var hushSeq = 0
+
+    private fun hush(why: String) { hushSeq++; logState("callado: $why") }
+
     /** Lo último que dijo (para no tomar su eco por una orden). */
     private var lastSaid = ""
 
@@ -1920,6 +1977,7 @@ object VoiceAssistant {
         resetRecognizer = true
         val now = System.currentTimeMillis()
         if (action != VoiceCommands.Barge.STOP && rest != null) { pausedText = rest; pausedAt = now } else pausedText = null
+        if (action == VoiceCommands.Barge.STOP) hush("«$text» mientras hablaba")
         when (action) {
             null -> wake()
             VoiceCommands.Barge.STOP -> _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, paused = false, replyUntil = 0) }
@@ -1955,7 +2013,9 @@ object VoiceAssistant {
         // explicación larga («construida para la defensa…») una «para» de hace 40 letras la cortaba.
         // Sin posición (voz con filtro, o el motor no la da) se mira la frase entera.
         val window = if (pos <= 0) reply else reply.substring(0, (pos + 60).coerceAtMost(reply.length))
-        return " ${VoiceCommands.normalize(window)} ".contains(" $w ")
+        if (" ${VoiceCommands.normalize(window)} ".contains(" $w ")) return true
+        // «Canceló», «vasta», «detenta»…: si en lo que dice sale algo que suena a la misma orden, es su eco.
+        return w in VoiceCommands.stopKinds(window)
     }
 
     /** Lo que falta por decir desde el principio de la frase (o trozo entre comas) en curso; null si nada. */

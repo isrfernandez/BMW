@@ -125,6 +125,15 @@ object Personality {
         return if (random.nextDouble() < INTRO_SHARE) "${line("fact.intro", random)} $f" else f
     }
 
+    /** Un refrán o frase célebre que no se haya dicho aún. */
+    fun saying(random: Random = Random.Default): String = choose(LinesExtra.SAYINGS, random = random)!!
+
+    /** Una adivinanza que no se haya puesto aún (se recuerda por su pregunta). */
+    fun riddle(random: Random = Random.Default): Riddle {
+        val q = recent.choose(LinesExtra.RIDDLES.map { it.question }, random)!!
+        return LinesExtra.RIDDLES.first { it.question == q }
+    }
+
     private const val INTRO_SHARE = 0.3
 
     /**

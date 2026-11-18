@@ -56,6 +56,8 @@ sealed interface Command {
     data object Recap : Command
     /** Charla: [key] de [Lines.CHAT] («hello», «howareyou», «tired»…). */
     data class Chat(val key: String) : Command
+    /** Respuesta a una adivinanza: acertada, fallada o «me rindo». */
+    data class RiddleAnswer(val riddle: Riddle, val outcome: RiddleOutcome) : Command
     /** «Activa / desactiva el copiloto»; null = activar. */
     data class Copilot(val on: Boolean?) : Command
     /** «Pausa»: se calla, pero recuerda dónde iba. */
@@ -136,7 +138,8 @@ object VoiceCommands {
 
     /** Palabras para cortar al asistente mientras habla. */
     /** Cortar y callarse. */
-    private val STOP_WORDS = listOf("para", "para ya", "detente", "cancela", "cancelar", "cancélalo", "cancela ya", "silencio", "calla", "callate", "cállate", "basta", "vale ya", "stop")
+    private val STOP_WORDS = listOf("para", "para ya", "detente", "cancela", "cancelar", "cancélalo", "cancela ya", "silencio", "calla", "callate", "cállate", "basta", "vale ya", "stop",
+        "deja de hablar", "no sigas", "suficiente", "no me interesa")
     /** Pausar para luego seguir («continúa»). */
     private val PAUSE_WORDS = listOf("pausa", "haz una pausa")
     /** Retomar lo que estaba diciendo. */
@@ -189,6 +192,34 @@ object VoiceCommands {
     fun fuzzyStop(text: String): String? {
         val words = normalize(text.replace("[unk]", " ")).split(' ').filter { it.isNotBlank() }.takeLast(2)
         return if (words.any { CANCEL_LIKE.containsMatchIn(it) }) "cancela" else null
+    }
+
+    /**
+     * Órdenes de corte inconfundibles, con las formas en que las escribe el reconocedor libre.
+     * Se buscan en TODO lo que lleva transcrito, no solo al final: mientras dices «cancela» la radio
+     * sigue hablando, el reconocedor sigue escribiendo su eco detrás y la palabra dejaba de estar al
+     * final antes de los 0,7 s que se pedían, así que la explicación turística no había quien la parase.
+     */
+    private val STRONG_STOPS: List<Pair<Regex, String>> = listOf(
+        Regex("\\b[ck]an[cs]e?l\\w*") to "cancela",
+        Regex("\\bde ?t[ei]n ?t[ea]\\b|\\bdeten\\b|\\bdetenga\\w*") to "detente",
+        Regex("\\bsilencio\\b") to "silencio",
+        Regex("\\b[bv]asta\\b") to "basta",
+        Regex("\\b(?:call?ate|cayate|calla(?: te| ya)?|a callar|callese)\\b") to "callate",
+        Regex("\\be?stop\\b") to "stop",
+        Regex("\\bpara ya\\b|\\bparate\\b|\\bpara para\\b") to "para ya",
+        Regex("\\b(?:deja|para|dejar) de hablar\\b") to "deja de hablar",
+        Regex("\\bno sigas\\b") to "no sigas",
+        Regex("\\b(?:ya vale|vale ya)\\b") to "vale ya",
+        Regex("\\b(?:ya es )?suficiente\\b") to "suficiente",
+        Regex("\\bno me interesa\\b") to "no me interesa",
+    )
+
+    /** Todas las órdenes de corte inconfundibles que aparecen en [text] (en su forma canónica). */
+    fun stopKinds(text: String): Set<String> {
+        val t = normalize(text.replace("[unk]", " "))
+        if (t.isEmpty()) return emptySet()
+        return STRONG_STOPS.filter { it.first.containsMatchIn(t) }.mapTo(LinkedHashSet()) { it.second }
     }
 
     /** Lo que pide una palabra dicha mientras habla el asistente. */
@@ -279,7 +310,7 @@ object VoiceCommands {
             has("mapa", "maps", "navegacion", "navegador", "ruta", "gps")) return Command.CloseMaps
         if (t in setOf("pausa", "haz una pausa")) return Command.Pause
         if (t in setOf("continua", "sigue", "sigue hablando", "continua hablando", "sigue por favor", "continua por favor", "por donde ibas", "donde te habias quedado")) return Command.Resume
-        if (t in setOf("para", "para ya", "detente", "parate", "stop", "basta", "vale ya")) return Command.Cancel
+        if (t in setOf("para", "para ya", "detente", "deten", "detente ya", "parate", "stop", "basta", "basta ya", "vale ya", "ya vale", "no sigas", "suficiente", "no me interesa")) return Command.Cancel
         if (t in setOf("nada", "no", "no gracias", "cancelar", "cancela", "olvidalo", "salir", "adios", "hasta luego", "nada mas") || has("cancela", "olvidalo")) return Command.Cancel
         if (has("gracias") && words.size <= 4) return Command.Thanks
         if (t in YES || (words.size <= 3 && t.startsWith("si "))) return Command.Yes
@@ -425,6 +456,8 @@ object VoiceCommands {
             has("mapa", "navegacion", "navegador", "maps", "gps") -> Command.Maps
             has("autonomia", "combustible", "gasoil", "deposito") -> Command.Info(InfoTopic.RANGE)
             has("hora") -> Command.Info(InfoTopic.TIME)
+            // «Hoy estás muy raro», «eres muy gracioso»…: algo sobre él que no tiene respuesta propia.
+            words.size >= 3 && (words.contains("eres") || words.contains("estas")) && !isRealQuestion(t) -> Command.Chat("aboutme")
             else -> Command.Unknown(t)
         }
     }
@@ -454,10 +487,48 @@ object VoiceCommands {
     private val YES = setOf("si", "vale", "venga", "claro", "dale", "por favor", "adelante", "de acuerdo", "ok", "okey", "bueno", "vale vale", "si si", "claro que si", "vamos alla", "por supuesto")
     private val ANOTHER = setOf("otro", "otra", "otra mas", "otro mas", "siguiente", "la siguiente", "el siguiente", "y otra", "y otro", "uno mas", "una mas", "mas", "cuentame otro", "dime otro", "dime otra")
 
+    /** ¿Empieza como una pregunta de verdad («qué es…», «cuándo…», «sabes…»)? */
+    fun isRealQuestion(text: String): Boolean =
+        Regex("^(?:y )?(?:que|como|cual|cuales|cuando|donde|quien|quienes|cuanto|cuanta|cuantos|cuantas|por que|sabes|conoces|me puedes decir)\\b").containsMatchIn(normalize(text))
+
     /** Charla: devuelve la clave de [Lines.CHAT] o null. */
     private fun chatKey(t: String, has: (Array<out String>) -> Boolean): String? {
         fun h(vararg k: String) = has(k)
+        val words = t.split(' ')
         return when {
+            // Que hable más o menos: «hoy no estás muy hablador», «estás muy callado», «dame conversación».
+            h("hablas mucho", "hablas demasiado", "hablas un monton", "que pesado", "que pesada", "eres un pesado", "eres una pesada", "cuanto hablas", "no te callas", "no paras de hablar") -> "chatty"
+            h("hablador", "habladora", "muy callado", "muy callada", "estas callado", "estas callada", "que callado", "que callada", "no dices nada", "no hablas", "no me hablas",
+                "dame conversacion", "dame charla", "dame palique", "charla conmigo", "habla conmigo", "hablemos", "vamos a hablar", "conversa conmigo", "di algo", "poco hablador",
+                "no tienes ganas de hablar", "estas muy serio", "estas muy seria", "que serio estas", "que seria estas", "estas mudo", "te ha comido la lengua") || t == "hablame" -> "talkative"
+            h("adivinanza", "acertijo", "adivina adivinanza") -> "riddle"
+            h("refran", "refranes", "dicho popular", "frase celebre", "una cita", "una frase bonita", "frase motivadora", "frase del dia") -> "saying"
+            h("preguntame algo", "hazme una pregunta", "pregunta algo", "preguntame lo que quieras", "preguntame tu") -> "question"
+            h("que tal tu dia", "como ha ido tu dia", "que tal el dia", "que tal te ha ido", "como te ha ido el dia", "que has hecho hoy") -> "day"
+            h("que haces", "en que piensas", "que estas haciendo", "que andas haciendo") -> "whatdoing"
+            h("tienes sentimientos", "tienes emociones", "eres feliz", "te gusta tu trabajo", "estas contento", "estas contenta", "estas feliz", "sientes algo", "te enfadas") -> "feelings"
+            h("estas vivo", "estas viva", "eres humano", "eres una persona", "eres real", "eres una maquina", "eres un robot", "tienes conciencia", "eres de verdad") -> "alive"
+            h("quien te ha hecho", "quien te hizo", "quien te creo", "quien te ha creado", "quien te programo", "quien te ha programado", "tu creador", "tu jefe", "quien es tu padre") -> "creator"
+            h("donde vives", "donde estas", "de donde eres") -> "where"
+            h("duermes", "cuando descansas", "no te cansas", "tienes sueno") -> "sleep"
+            h("favorit", "que te gusta", "que musica te gusta", "te gusta la musica", "que te gusta hacer") -> "favorite"
+            h("te gusta", "te parece", "opinas") && h("coche", "bmw", "serie tres") -> "car"
+            h("conduzco bien", "que tal conduzco", "como conduzco", "conduzco mal", "soy buen conductor", "soy buena conductora", "conduzco de lujo") -> "driving"
+            h("que opinas de mi", "que piensas de mi", "te caigo bien", "como soy", "te gusto") -> "opinion"
+            h("mi amigo", "mi amiga", "somos amigos", "eres mi colega") -> "friend"
+            h("me siento solo", "me siento sola", "estoy solo", "estoy sola", "voy solo", "voy sola") -> "lonely"
+            h("consejo", "aconsejame") -> "advice"
+            h("animame", "motivame", "dime algo bonito", "algo bonito", "un piropo", "echame un piropo", "dime algo bueno") -> "cheer"
+            h("triste", "de bajon", "mal dia", "dia horrible", "dia malo", "dia de perros", "estoy fatal", "estoy mal", "deprimid", "desanimad", "estoy regular") -> "sad"
+            h("estresad", "agobiad", "nervios", "llego tarde", "voy tarde", "tengo prisa", "voy con prisa") -> "stressed"
+            h("enfadad", "cabread", "mosquead", "estoy harto", "estoy harta", "que rabia", "me tienen frito") -> "angry"
+            h("atasco", "trafico", "caravana", "retencion", "no se mueve nadie") -> "traffic"
+            h("contento", "contenta", "feliz", "alegre", "buen dia", "dia estupendo", "que buen dia", "dia genial", "que bien") -> "happy"
+            h("que malo", "vaya chiste", "no tiene gracia", "malisimo", "que chiste mas malo", "no me hace gracia", "vaya tela", "que malos son") -> "badjoke"
+            words.any { it.startsWith("jaja") || it.startsWith("jeje") } || h("ja ja", "que gracioso", "que graciosa", "que gracia", "muy bueno", "me parto", "me meo", "buenisimo", "que risa") -> "laugh"
+            h("perdona", "perdon", "lo siento", "disculpa", "disculpame") -> "sorry"
+            h("buenas noches") && words.size <= 3 -> "hello"
+
             t in setOf("hola", "buenas", "buenos dias", "buenas tardes", "buenas noches", "hey", "hola hola") -> "hello"
             h("que tal", "como estas", "como te va", "como andas", "como te encuentras") -> "howareyou"
             h("quien eres", "como te llamas", "que eres", "presentate") -> "whoareyou"

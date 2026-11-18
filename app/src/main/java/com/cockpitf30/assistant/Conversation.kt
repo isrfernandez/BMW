@@ -8,6 +8,10 @@ sealed interface Pending {
     data class Confirm(val yes: Command) : Pending
     /** Hay varios contactos con ese nombre: la siguiente frase es el nombre completo o «el segundo». */
     data class ChooseContact(val names: List<String>) : Pending
+    /** Ha preguntado algo de charla («¿y tú qué tal?»): lo que se conteste sin sentido de orden se comenta. */
+    data object Reply : Pending
+    /** Ha puesto una adivinanza: la siguiente frase es la respuesta (o «me rindo»). */
+    data class Guess(val riddle: Riddle) : Pending
 }
 
 /** Una vuelta de la conversación: lo oído, cómo se entendió y lo respondido. */
@@ -89,6 +93,14 @@ class Conversation {
                 ordinal(t)?.let { i -> p.names.getOrNull(i)?.let { return Command.Call(VoiceCommands.normalize(it)) } }
                 if (parsed is Command.Unknown) return Command.Call(t)
             }
+            Pending.Reply -> if (parsed is Command.Unknown && t.isNotBlank()) return Command.Chat("chat.answer")
+            is Pending.Guess -> {
+                val giveUp = parsed == Command.Cancel || parsed == Command.No ||
+                    Regex("\\b(?:me rindo|no se|ni idea|no lo se|dimelo|dime la respuesta|la respuesta|cual es|no caigo|ni flores|paso)\\b").containsMatchIn(t)
+                if (p.riddle.matches(t)) return Command.RiddleAnswer(p.riddle, RiddleOutcome.RIGHT)
+                if (giveUp) return Command.RiddleAnswer(p.riddle, RiddleOutcome.GIVE_UP)
+                if (parsed is Command.Unknown || parsed is Command.Chat || parsed is Command.Yes) return Command.RiddleAnswer(p.riddle, RiddleOutcome.WRONG)
+            }
             null -> Unit
         }
 
@@ -101,6 +113,9 @@ class Conversation {
                 last is Command.Info && last.topic == InfoTopic.WEATHER -> Command.WeatherDay(1)
                 last is Command.Chat && last.key == "bored" -> Command.Joke
                 last is Command.Chat && last.key == "fact" -> Command.Chat("fact")
+                last is Command.Chat && last.key == "riddle" || last is Command.RiddleAnswer -> Command.Chat("riddle")
+                last is Command.Chat && last.key == "saying" -> Command.Chat("saying")
+                last is Command.Chat && last.key == "question" -> Command.Chat("question")
                 else -> Command.Another
             }
             Command.Price -> return if (stations) Command.Station(stationIndex, StationAction.PRICE) else Command.Info(InfoTopic.FUEL_NEAR)

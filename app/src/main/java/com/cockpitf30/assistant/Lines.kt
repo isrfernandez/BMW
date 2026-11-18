@@ -171,7 +171,7 @@ object Lines {
      * Bromas que valen para cualquier respuesta: se mezclan de vez en cuando con las de cada tipo
      * para que no siempre suene lo mismo.
      */
-    val GENERIC: List<String> = listOf(
+    val GENERIC: List<String> = LinesExtra.GENERIC + listOf(
         "Hecho. Sin dramas.", "No me lo agradezcas. Aún.", "Lo he hecho sin pensar. Y eso que pienso mucho.",
         "Otra misión cumplida.", "Ni un error. De momento.", "Esto se me da bien.", "Lo pongo en mi currículum.",
         "Mis circuitos están satisfechos.", "Cien por cien eficiente. Bueno, noventa.",
@@ -187,7 +187,7 @@ object Lines {
     )
 
     /** Respuestas sin broma, para que tampoco lo serio suene siempre igual. */
-    val PLAIN: Map<String, List<String>> = mapOf(
+    val PLAIN: Map<String, List<String>> = LinesExtra.PLAIN + mapOf(
         "ack" to listOf("Vale", "De acuerdo", "Hecho", "Entendido", "Muy bien", "Listo", "Ahora mismo", "Claro", "Marchando", "Enseguida"),
         "cancel" to listOf("Vale", "De acuerdo", "Entendido", "Como quieras", "Cancelado", "Sin problema", "Lo dejamos", "Olvidado"),
         "thanks" to listOf("De nada", "A ti", "Para eso estoy", "No hay de qué", "Cuando quieras", "Un placer", "A mandar", "Siempre a tu servicio"),
@@ -237,7 +237,7 @@ object Lines {
     )
 
     /** Chistes para «cuéntame un chiste». Secos, de coches, de espacio, de robots o de toda la vida. */
-    val JOKES: List<String> = listOf(
+    val JOKES: List<String> = LinesExtra.JOKES + listOf(
         // Coches y carretera
         "¿Qué le dice un semáforo a otro? No me mires, que me estoy cambiando.",
         "¿Por qué el coche no fue al médico? Porque ya tenía su propio chequeo de luces.",
@@ -414,7 +414,7 @@ object Lines {
     )
 
     /** Curiosidades para «cuéntame una curiosidad», «dato curioso». Ciertas y cortas. */
-    val FACTS: List<String> = listOf(
+    val FACTS: List<String> = LinesExtra.FACTS + listOf(
         "El logotipo de BMW no es una hélice: viene de los colores de Baviera, azul y blanco. Lo de la hélice fue un anuncio de los años veinte.",
         "BMW significa Bayerische Motoren Werke: fábrica bávara de motores. Empezó haciendo motores de avión.",
         "La forma de la parrilla de los BMW se llama doble riñón. Lleva casi un siglo en sus coches.",
@@ -478,7 +478,7 @@ object Lines {
     )
 
     /** Respuestas de charla («¿qué tal?», «¿quién eres?»…). Las de «.serio» son para humor bajo. */
-    val CHAT: Map<String, List<String>> = mapOf(
+    val CHAT: Map<String, List<String>> = LinesExtra.CHAT + mapOf(
         "hello" to listOf(
             "{greet}. ¿En qué te ayudo?", "{greet}, {name}. ¿Qué necesitas?", "{greet}. Aquí estoy, como siempre.",
             "{greet}. Tú conduces, yo hablo.", "{greet}. Listo para lo que mandes.",
