@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -138,6 +139,44 @@ object Radio {
                     source = if (!available) RadioSource.INTERNET else preferred ?: RadioSource.FM,
                 )
             }
+            autoPlay(available)
+        }
+    }
+
+    /**
+     * Al arrancar vuelve a poner la última emisora que sonó (FM o Internet), si así está en Ajustes.
+     * Espera a que acabe la pantalla de inicio (tiene sonido) y no pisa otra música que ya suene
+     * (Bluetooth, Spotify…). Internet se reintenta unas veces: al encender la radio los datos
+     * móviles tardan en llegar.
+     */
+    private suspend fun autoPlay(tunerAvailable: Boolean) {
+        val s = settings()
+        if (!s.radioAutoPlay || _state.value.playing) return
+        val last = RadioLogic.autoPlaySource(s.radioLastPlayed, s.radioSource, _state.value.station != null, tunerAvailable) ?: return
+        kotlinx.coroutines.withTimeoutOrNull(15_000) { com.cockpitf30.ui.components.Startup.splashDone.first { it } }
+        delay(500)
+        if (_state.value.playing) return
+        val am = app.getSystemService(AudioManager::class.java)
+        if (am?.isMusicActive == true) {
+            Log.i(TAG, "arranque: ya suena otra música, no pongo la radio")
+            return
+        }
+        Log.i(TAG, "arranque: vuelvo a poner $last")
+        when (last) {
+            RadioSource.FM -> playFm(s.radioFmFreq)
+            RadioSource.INTERNET -> {
+                val station = _state.value.station ?: return
+                for (attempt in 1..5) {
+                    playStream(station)
+                    delay(8_000)
+                    val st = _state.value
+                    // Ya suena, o el conductor ha cambiado/parado la radio mientras tanto.
+                    if (st.playing || st.station?.id != station.id || st.source != RadioSource.INTERNET || st.error == null) return
+                    Log.i(TAG, "arranque: reintento $attempt (${st.error})")
+                    delay(4_000L * attempt)
+                    if (_state.value.playing) return
+                }
+            }
         }
     }
 
@@ -202,6 +241,7 @@ object Radio {
         _state.update { it.copy(source = RadioSource.FM, playing = true, fmFreq = freq, fmRds = null, error = null) }
         settings().radioFmFreq = freq
         settings().radioSource = RadioSource.FM.name
+        settings().radioLastPlayed = RadioSource.FM.name
         scope.launch(Dispatchers.IO) {
             // Ya en FM solo cambia la frecuencia; si no, se entra antes en la fuente Radio.
             val entered = (wasFm && FactoryTuner.currentSource(app) == FactoryTuner.APP_ID_RADIO) || FactoryTuner.enter(app)
@@ -310,6 +350,7 @@ object Radio {
         p.play()
         settings().radioLastStation = RadioLogic.favoritesToJson(listOf(station))
         settings().radioSource = RadioSource.INTERNET.name
+        settings().radioLastPlayed = RadioSource.INTERNET.name
         _state.update { it.copy(source = RadioSource.INTERNET, station = station, playing = true, buffering = true, nowPlaying = null, error = null) }
         scope.launch(Dispatchers.IO) { RadioBrowser.click(station.id) }
         // El servicio mantiene viva la reproducción con la app de fondo (Maps delante).

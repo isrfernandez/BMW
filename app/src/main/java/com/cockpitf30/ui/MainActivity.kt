@@ -242,7 +242,8 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     LaunchedEffect(navActions) {
         navActions.collect {
             if (it == NavAction.LONG_PRESS) {
-                Reorder.longPress.tryEmit(Unit)
+                // Con el foco en la barra lateral se mueve su botón; si no, la tarjeta o app enfocada.
+                if (!com.cockpitf30.ui.components.SidebarMove.longPress()) Reorder.longPress.tryEmit(Unit)
                 return@collect
             }
             // Tras tocar la pantalla Android entra en modo táctil y nada es enfocable:
@@ -261,7 +262,12 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 NavAction.NEXT -> 1 to null
                 else -> -1 to null
             }
-            // En modo mover, la ruleta desplaza la tarjeta en vez del foco.
+            // En modo mover, la ruleta desplaza el botón de la barra lateral o la tarjeta en vez del foco.
+            val sideStep = com.cockpitf30.ui.components.SidebarMove.step
+            if (com.cockpitf30.ui.components.SidebarMove.moving.value != null && sideStep != null) {
+                sideStep(dir)
+                return@collect
+            }
             val step = Reorder.step
             if (Reorder.moving.value != null && step != null) {
                 step(dir)

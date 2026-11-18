@@ -430,6 +430,10 @@ private fun RadioSettings(onOpen: (Screen) -> Unit) {
         ) { Radio.selectSource(RadioSource.entries[it]) }
         StepperRow("Volumen de la radio", "Independiente del volumen general.", "${radio.volume} %",
             onMinus = { Radio.changeVolume(-5) }, onPlus = { Radio.changeVolume(5) })
+        var autoPlay by remember { mutableStateOf(settings.radioAutoPlay) }
+        ToggleRow("Poner la última emisora al arrancar", "Vuelve a sonar la última que escuchaste, FM o Internet, salvo que ya suene otra música.", autoPlay) {
+            autoPlay = it; settings.radioAutoPlay = it
+        }
         var duck by remember { mutableStateOf(settings.radioDuckAssistant) }
         ToggleRow("Bajar la radio cuando habla el asistente", "También mientras te escucha, para que te entienda.", duck) {
             duck = it; settings.radioDuckAssistant = it

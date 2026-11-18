@@ -222,7 +222,7 @@ private fun AppsContent(apps: Map<String, AppInfo>) {
             TriangleBackground(Modifier.width(1500.dp).heightIn(max = 620.dp).clip(RoundedCornerShape(20.dp)).glassPanel(20.dp).padding(28.dp), dim = 0.5f) {
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(group.name, style = MaterialTheme.typography.headlineSmall.copy(fontSize = 34.sp), modifier = Modifier.weight(1f))
+                        Text(group.name, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
                         SortChip("Renombrar", false) { renaming = group.id; openGroup = null }
                         Spacer(Modifier.width(12.dp))
                         SortChip("Cerrar", false) { openGroup = null }
@@ -365,27 +365,46 @@ private fun ArrowButton(symbol: String, onClick: () -> Unit) {
     }
 }
 
-/** Menú de opciones grande, manejable con la ruleta. */
+/**
+ * Menú de opciones manejable con la ruleta. Del tamaño de las filas de Ajustes (antes ocupaba
+ * media pantalla con letra de titular).
+ */
 @Composable
 private fun ActionSheet(title: String, options: List<Pair<String, () -> Unit>>, onDismiss: () -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Column(
-            Modifier.width(720.dp).background(Cockpit.SurfaceHigh, RoundedCornerShape(20.dp)).padding(28.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(title, style = MaterialTheme.typography.headlineSmall.copy(fontSize = 32.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            val firstOption = remember { FocusRequester() }
-            InitialFocus(firstOption)
-            options.forEachIndexed { i, (label, action) ->
-                val mod = Modifier.fillMaxWidth().height(80.dp)
-                FocusTile(onClick = { onDismiss(); action() }, modifier = if (i == 0) mod.focusRequester(firstOption) else mod) {
-                    Text(label, Modifier.align(Alignment.CenterStart).padding(horizontal = 24.dp), style = MaterialTheme.typography.headlineSmall.copy(fontSize = 28.sp))
-                }
+        ActionSheetContent(title, options, onDismiss)
+    }
+}
+
+@Composable
+internal fun ActionSheetContent(title: String, options: List<Pair<String, () -> Unit>>, onDismiss: () -> Unit) {
+    Column(
+        Modifier.width(MENU_WIDTH).heightIn(max = 600.dp).clip(RoundedCornerShape(16.dp)).glassPanel(16.dp)
+            .background(Cockpit.SurfaceHigh.copy(alpha = 0.92f), RoundedCornerShape(16.dp)).padding(18.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+        )
+        val firstOption = remember { FocusRequester() }
+        InitialFocus(firstOption)
+        options.forEachIndexed { i, (label, action) ->
+            val mod = Modifier.fillMaxWidth().height(MENU_ROW)
+            FocusTile(onClick = { onDismiss(); action() }, modifier = if (i == 0) mod.focusRequester(firstOption) else mod) {
+                Text(
+                    label, Modifier.align(Alignment.CenterStart).padding(horizontal = 18.dp),
+                    style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    color = if (i == options.lastIndex) Cockpit.TextDim else Cockpit.Text,
+                )
             }
         }
     }
 }
+
+private val MENU_WIDTH = 480.dp
+private val MENU_ROW = 60.dp
 
 /**
  * Cambio de nombre dibujado dentro de la pantalla, no en un Dialog: un campo de texto dentro de
@@ -407,15 +426,15 @@ private fun RenameOverlay(current: String, onDone: (String) -> Unit, onCancel: (
         contentAlignment = Alignment.Center,
     ) {
         Column(
-            Modifier.width(720.dp).background(Cockpit.SurfaceHigh, RoundedCornerShape(20.dp)).padding(28.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            Modifier.width(MENU_WIDTH).background(Cockpit.SurfaceHigh, RoundedCornerShape(16.dp)).padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Nombre del grupo", style = MaterialTheme.typography.headlineSmall.copy(fontSize = 30.sp))
+            Text("Nombre del grupo", style = MaterialTheme.typography.titleLarge)
             val field = remember { FocusRequester() }
             InitialFocus(field)
             OutlinedTextField(
                 value = text, onValueChange = { text = it }, singleLine = true,
-                textStyle = MaterialTheme.typography.headlineSmall.copy(fontSize = 30.sp),
+                textStyle = MaterialTheme.typography.titleMedium,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { close { onDone(text) } }),
                 colors = OutlinedTextFieldDefaults.colors(
@@ -425,11 +444,11 @@ private fun RenameOverlay(current: String, onDone: (String) -> Unit, onCancel: (
                 modifier = Modifier.fillMaxWidth().focusRequester(field),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FocusTile(onClick = { close { onDone(text) } }, selected = true, modifier = Modifier.weight(1f).height(80.dp)) {
-                    Text("Guardar", Modifier.align(Alignment.Center), style = MaterialTheme.typography.headlineSmall.copy(fontSize = 28.sp))
+                FocusTile(onClick = { close { onDone(text) } }, selected = true, modifier = Modifier.weight(1f).height(MENU_ROW)) {
+                    Text("Guardar", Modifier.align(Alignment.Center), style = MaterialTheme.typography.titleMedium)
                 }
-                FocusTile(onClick = { close(onCancel) }, modifier = Modifier.weight(1f).height(80.dp)) {
-                    Text("Cancelar", Modifier.align(Alignment.Center), style = MaterialTheme.typography.headlineSmall.copy(fontSize = 28.sp))
+                FocusTile(onClick = { close(onCancel) }, modifier = Modifier.weight(1f).height(MENU_ROW)) {
+                    Text("Cancelar", Modifier.align(Alignment.Center), style = MaterialTheme.typography.titleMedium)
                 }
             }
         }
