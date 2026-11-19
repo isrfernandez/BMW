@@ -720,12 +720,12 @@ private fun AthosVideo(g: Geometry, width: Dp, geoCache: GeoCache, page: () -> F
                 androidx.compose.runtime.withFrameMillis { }
                 val lvl = if (speaking) com.cockpitf30.assistant.SpeechPulse.level(System.currentTimeMillis()) else 0f
                 // Sube rápido con cada sílaba y cae algo más despacio, como un destello.
-                val next = if (lvl > shown) shown + (lvl - shown) * 0.6f else shown + (lvl - shown) * 0.18f
+                val next = if (lvl > shown) shown + (lvl - shown) * 0.22f else shown + (lvl - shown) * 0.07f
                 if (kotlin.math.abs(next - shown) < 0.01f && !(next < 0.02f && shown >= 0.02f)) continue
                 shown = next
                 if (shown < 0.02f) { tv.setLayerPaint(null); continue }
                 // Más suave que en 0.9.117-0.9.118 (el usuario lo vio demasiado intenso).
-                val k = 1f + 0.40f * shown
+                val k = 1f + 0.30f * shown
                 cm.set(floatArrayOf(
                     k, 0f, 0f, 0f, 4f * shown,
                     0f, k, 0f, 0f, 12f * shown,

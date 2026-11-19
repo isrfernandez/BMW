@@ -76,6 +76,14 @@ internal class AthosFeed {
         return make().also { texts[key] = seq to it }
     }
 
+    private var voice = 0f
+    /** Nivel de la voz suavizado (sube algo más rápido de lo que baja). */
+    fun smoothVoice(raw: Float): Float {
+        voice += (raw - voice) * (if (raw > voice) 0.22f else 0.07f)
+        if (voice < 0.005f) voice = 0f
+        return voice
+    }
+
     fun sample(now: Long) {
         seq++
         val vs = VehicleRepository.state.value
@@ -171,7 +179,9 @@ internal fun DrawScope.drawAthos(b: Rect, feed: AthosFeed, tm: TextMeasurer, st:
     // 1) Cuando habla el asistente, el cristal «habla»: brilla, lanza ondas y una línea de onda
     //    late bajo él, todo al ritmo de la voz (el vídeo sigue su bucle debajo, sin moverse).
     val speaking = com.cockpitf30.assistant.VoiceAssistant.state.value.phase == com.cockpitf30.assistant.AssistantPhase.ANSWERING
-    val lvl = if (speaking) com.cockpitf30.assistant.SpeechPulse.level(t) else 0f
+    val raw = if (speaking) com.cockpitf30.assistant.SpeechPulse.level(t) else 0f
+    // Suavizado: sube y baja sin saltos de una sílaba a otra (el pulso se veía brusco).
+    val lvl = feed.smoothVoice(raw)
     if (lvl > 0.02f) drawCrystalVoice(Offset(b.center.x, b.top + h * RING_Y), h * 0.80f, lvl, t)
     // Laterales oscurecidos para leer las cifras; el centro (el triángulo) queda limpio.
     drawRect(
@@ -303,24 +313,26 @@ internal fun DrawScope.drawAthos(b: Rect, feed: AthosFeed, tm: TextMeasurer, st:
 }
 
 /** Pasadas del destello (grosor px, opacidad): anchas y tenues por fuera, finas por dentro = difuminado. */
-private val FLASH_PASSES = listOf(22f to 0.06f, 12f to 0.10f, 6f to 0.16f, 2.5f to 0.22f)
+private val FLASH_PASSES = listOf(30f to 0.035f, 18f to 0.06f, 9f to 0.09f, 4f to 0.12f)
 
 private fun DrawScope.drawCrystalVoice(center: Offset, size: Float, lvl: Float, t: Long) {
     // Halo que respira con la voz, y un brillo blanco en el corazón del cristal.
-    val breathe = 1f + 0.5f * sin(t / 70f)
+    // Respiración lenta (antes un parpadeo rápido) y halos amplios y tenues: difuminado.
+    val breathe = 1f + 0.25f * sin(t / 450f)
+    val halo = size * (0.60f + 0.12f * lvl)
     drawCircle(
-        Brush.radialGradient(listOf(AthosBlue.copy(alpha = 0.40f * lvl), AthosBlue.copy(alpha = 0.10f * lvl), Color.Transparent), center, size * (0.55f + 0.15f * lvl)),
-        size * (0.55f + 0.15f * lvl), center, blendMode = BlendMode.Plus,
+        Brush.radialGradient(listOf(AthosBlue.copy(alpha = 0.24f * lvl), AthosBlue.copy(alpha = 0.10f * lvl), AthosBlue.copy(alpha = 0.03f * lvl), Color.Transparent), center, halo),
+        halo, center, blendMode = BlendMode.Plus,
     )
-    val core = size * (0.16f + 0.06f * lvl * breathe)
+    val core = size * (0.20f + 0.05f * lvl * breathe)
     drawCircle(
-        Brush.radialGradient(listOf(Color.White.copy(alpha = 0.30f * lvl), AthosBlue.copy(alpha = 0.12f * lvl), Color.Transparent), center, core),
+        Brush.radialGradient(listOf(Color.White.copy(alpha = 0.18f * lvl), AthosBlue.copy(alpha = 0.08f * lvl), Color.Transparent), center, core),
         core, center, blendMode = BlendMode.Plus,
     )
     // Destello en las sílabas fuertes: un reflejo difuminado que cruza el cristal (filo horizontal
     // y vertical hechos de varias pasadas anchas y tenues, sin línea dura) y un brillo central.
     // Más suave que en 0.9.117 (el usuario lo vio intenso).
-    val flash = ((lvl - 0.40f) / 0.60f).coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
+    val flash = ((lvl - 0.45f) / 0.55f).coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
     if (flash > 0f) {
         val streak = size * (0.55f + 0.7f * flash)
         val len = size * (0.22f + 0.30f * flash)
@@ -336,7 +348,7 @@ private fun DrawScope.drawCrystalVoice(center: Offset, size: Float, lvl: Float, 
         }
         val glow = size * (0.14f + 0.06f * flash)
         drawCircle(
-            Brush.radialGradient(listOf(Color.White.copy(alpha = 0.35f * flash), AthosBlue.copy(alpha = 0.14f * flash), Color.Transparent), center, glow),
+            Brush.radialGradient(listOf(Color.White.copy(alpha = 0.22f * flash), AthosBlue.copy(alpha = 0.09f * flash), Color.Transparent), center, glow),
             glow, center, blendMode = BlendMode.Plus,
         )
     }
@@ -344,7 +356,10 @@ private fun DrawScope.drawCrystalVoice(center: Offset, size: Float, lvl: Float, 
     for (i in 0 until 3) {
         val f = ((t / 1100f) + i / 3f) % 1f
         val rr = size * (0.35f + 0.75f * f)
-        drawCircle(AthosBlue.copy(alpha = (1f - f) * 0.55f * lvl), rr, center, style = Stroke(1.5f + 2f * lvl), blendMode = BlendMode.Plus)
+        // Dos pasadas (ancha y tenue + fina): onda difuminada, sin filo duro.
+        val fade = (1f - f) * (1f - f) * lvl
+        drawCircle(AthosBlue.copy(alpha = 0.10f * fade), rr, center, style = Stroke(10f + 6f * lvl), blendMode = BlendMode.Plus)
+        drawCircle(AthosBlue.copy(alpha = 0.22f * fade), rr, center, style = Stroke(2f + 1.5f * lvl), blendMode = BlendMode.Plus)
     }
     // Línea de «forma de onda» bajo el cristal, como un ecualizador fino.
     val ww = size * 0.9f
@@ -354,11 +369,12 @@ private fun DrawScope.drawCrystalVoice(center: Offset, size: Float, lvl: Float, 
     for (i in 0..n) {
         val x = center.x - ww / 2 + ww * i / n
         val env = sin(Math.PI * i / n).toFloat()
-        val y = wy - env * lvl * size * 0.08f * sin(i * 0.9f + t / 40f) * (0.6f + 0.4f * sin(i * 0.37f - t / 90f))
+        val y = wy - env * lvl * size * 0.08f * sin(i * 0.9f + t / 80f) * (0.6f + 0.4f * sin(i * 0.37f - t / 90f))
         if (i == 0) p.moveTo(x, y) else p.lineTo(x, y)
     }
-    drawPath(p, AthosBlue.copy(alpha = 0.35f), style = Stroke(5f), blendMode = BlendMode.Plus)
-    drawPath(p, Color.White.copy(alpha = 0.8f * lvl + 0.2f), style = Stroke(1.4f))
+    drawPath(p, AthosBlue.copy(alpha = 0.10f), style = Stroke(12f), blendMode = BlendMode.Plus)
+    drawPath(p, AthosBlue.copy(alpha = 0.22f), style = Stroke(5f), blendMode = BlendMode.Plus)
+    drawPath(p, Color.White.copy(alpha = 0.5f * lvl + 0.15f), style = Stroke(1.4f))
 }
 
 private fun DrawScope.spark(ring: AthosFeed.Ring, r: Rect, color: Color) {

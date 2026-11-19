@@ -236,15 +236,16 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
                             scaleX = sc; scaleY = sc
                             shadowElevation = lift * 18.dp.toPx()
                         }
-                        .then(
-                            if (lift > 0.01f) Modifier.drawWithContent {
-                                drawContent()
-                                drawRoundRect(
-                                    item.art.accent.copy(alpha = 0.85f * lift), cornerRadius = androidx.compose.ui.geometry.CornerRadius(14.dp.toPx()),
-                                    style = androidx.compose.ui.graphics.drawscope.Stroke(3.dp.toPx()),
-                                )
-                            } else Modifier,
-                        )
+                        // Siempre el mismo modificador (el borde se pinta solo si toca): si la cadena
+                        // cambiaba al coger el botón, se rehacía la detección del gesto de debajo y el
+                        // arrastre se cancelaba nada más empezar (fallo de 0.9.119).
+                        .drawWithContent {
+                            drawContent()
+                            if (lift > 0.01f) drawRoundRect(
+                                item.art.accent.copy(alpha = 0.85f * lift), cornerRadius = androidx.compose.ui.geometry.CornerRadius(14.dp.toPx()),
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(3.dp.toPx()),
+                            )
+                        }
                         .semantics { contentDescription = item.label }
                         .onFocusChanged {
                             if (it.isFocused) SidebarMove.focused = id

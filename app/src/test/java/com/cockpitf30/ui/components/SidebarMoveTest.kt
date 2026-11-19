@@ -38,5 +38,8 @@ class SidebarMoveTest {
             down(center); advanceEventTime(1000); moveBy(androidx.compose.ui.geometry.Offset(0f, 150f)); moveBy(androidx.compose.ui.geometry.Offset(0f, 150f)); up()
         }
         rule.waitForIdle()
+        // Y de verdad cambia de puesto (en 0.9.119 el arrastre se cancelaba y no se movía nada).
+        val order = com.cockpitf30.system.AppSettings(androidx.test.core.app.ApplicationProvider.getApplicationContext()).sidebarOrder
+        org.junit.Assert.assertTrue("orden: $order", order.indexOf("NAV") > order.indexOf("PERF"))
     }
 }
