@@ -106,6 +106,10 @@ object SidebarMove {
     var focused: String? = null
     var step: ((Int) -> Unit)? = null
     var start: ((String) -> Unit)? = null
+    /** Suelta el botón que se mueve sin guardar el orden (vuelve a como estaba). */
+    var cancel: (() -> Unit)? = null
+    /** Orden actual de la barra (ids). */
+    var order: (() -> List<String>)? = null
 
     /** OK mantenido: true si lo ha cogido la barra (el foco estaba en ella). */
     fun longPress(): Boolean {
@@ -154,11 +158,17 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
     DisposableEffect(Unit) {
         val st: (Int) -> Unit = ::step
         val sm: (String) -> Unit = ::startMove
+        val cn: () -> Unit = ::cancel
+        val od: () -> List<String> = { order }
         SidebarMove.step = st
         SidebarMove.start = sm
+        SidebarMove.cancel = cn
+        SidebarMove.order = od
         onDispose {
             if (SidebarMove.step === st) SidebarMove.step = null
             if (SidebarMove.start === sm) SidebarMove.start = null
+            if (SidebarMove.cancel === cn) SidebarMove.cancel = null
+            if (SidebarMove.order === od) SidebarMove.order = null
             SidebarMove.moving.value = null
         }
     }

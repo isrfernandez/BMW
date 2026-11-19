@@ -285,7 +285,7 @@ object VoiceCommands {
         val camp = h("camping", "acampar", "autocaravana", "caravana")
         val sleep = h("alojamiento", "alojarme", "alojarnos", "hotel", "hostal", "dormir", "pension", "albergue", "casa rural", "pasar la noche", "hospedarnos", "hospedarme")
         val drink = h("bares", "un bar", "algun bar", "tomar algo", "tomar un cafe", "cafeteria", "un cafe")
-        val eat = h("donde comer", "para comer", "sitio de comer", "comer algo", "restaurante", "donde cenar", "para cenar", "cenar algo", "comida", "un menu", "menu del dia", "tengo hambre", "almorzar")
+        val eat = h("donde comer", "donde puedo comer", "donde podemos comer", "donde se come", "para comer", "sitio de comer", "comer algo", "restaurante", "donde cenar", "para cenar", "cenar algo", "comida", "un menu", "menu del dia", "tengo hambre", "almorzar")
         val kinds = buildSet {
             if (eat) add(com.cockpitf30.nav.StayKind.EAT)
             if (drink) add(com.cockpitf30.nav.StayKind.DRINK)

@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cockpitf30.assistant.VoiceAssistant
 import com.cockpitf30.nav.RouteAlerts
+import com.cockpitf30.nav.RouteTracker
 import com.cockpitf30.service.VehicleService
 import com.cockpitf30.system.AppSettings
 import com.cockpitf30.system.SourceMode
@@ -46,6 +47,8 @@ import com.cockpitf30.vehicle.VehicleRepository
 import com.cockpitf30.vehicle.source.DemoDrive
 import com.cockpitf30.vehicle.telemetry.DragTimes
 import com.cockpitf30.vehicle.trip.TripComputer
+import com.cockpitf30.weather.Place
+import com.cockpitf30.weather.WeatherRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -55,9 +58,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Modo demo (botón en Diagnóstico): recorre solo, en unos 3 minutos, todo lo que hace la app y lo
- * pone a prueba: las tres vistas del cuadro, el asistente contestando por voz (sin micrófono), las
- * gasolineras abiertas por voz, el resumen del viaje, un aviso turístico en ruta, Turismo con sus
+ * Modo demo (botón en Diagnóstico): recorre solo, en unos 3 minutos y medio, todo lo que hace la app
+ * y lo pone a prueba, sobre una ruta de ejemplo por Madrid (Atocha–Castellana–Plaza de Castilla, ver
+ * DemoRoute) con el tiempo de Madrid: las tres vistas del cuadro, el asistente contestando por voz
+ * (sin micrófono) y charlando, la barra lateral reordenándose (sin guardar), las gasolineras y dónde
+ * comer por voz, el resumen del viaje, un aviso turístico en ruta, Turismo con sus
  * pestañas, una salida desde parado cronometrada en Rendimiento, los modos de color y un repaso
  * rápido de cada sección de Ajustes (las filas enseñan el cambio sin guardarlo). El rótulo va
  * arriba (abajo salen los subtítulos del asistente) y dice qué se ve y cuánto falta.
@@ -87,19 +92,41 @@ object DemoTour {
     /** Lo que se le «dice» al asistente en la demo (probado en VoiceCommandsTest). */
     const val ASK_RANGE = "¿cuánta autonomía me queda?"
     const val ASK_FUEL = "busca la gasolinera más cercana"
+    const val ASK_CHAT = "cuéntame una curiosidad"
+    const val ASK_EAT = "¿dónde puedo comer por aquí?"
+
+    /** El tiempo de la demo: el del recorrido de ejemplo, en Madrid. */
+    val MADRID = Place("Madrid", "Comunidad de Madrid", "España", 40.4168, -3.7038)
 
     /** Duración máxima que pidió el usuario para toda la demo. */
     const val MAX_SECONDS = 240
 
     val steps: List<Step> = listOf(
-        Step(Screen.HOME, "Inicio · vista Athos", "El centro del cuadro tiene tres vistas: Athos, el coche y el mapa. Se cambian deslizando o con OK.", 6, clusterPage = -1),
+        Step(Screen.HOME, "Inicio · vista Athos", "Demo por Madrid: de Atocha por el Prado y la Castellana hasta Plaza de Castilla. El cuadro tiene tres vistas: Athos, coche y mapa.", 6, clusterPage = -1),
         Step(Screen.HOME, "Asistente Athos", "«Hola Athos, ¿cuánta autonomía me queda?»: contesta por voz y el triángulo late con su voz.", 11, clusterPage = -1) {
             delay(400)
             VoiceAssistant.demoAsk(ASK_RANGE)
         },
-        Step(Screen.HOME, "Inicio · coche", "Barras de velocidad y vueltas que cambian de color, marcha, consejo de cambio, temperatura y autonomía.", 6, clusterPage = 0),
-        Step(Screen.HOME, "Inicio · mapa", "Mapa propio con la ruta, girando con la marcha; se aleja solo al ir más rápido.", 6, clusterPage = 1),
+        Step(Screen.HOME, "Charla con Athos", "«Cuéntame una curiosidad»: también cuenta chistes, adivinanzas y refranes, y no repite hasta agotarlos.", 10, clusterPage = -1) {
+            delay(400)
+            VoiceAssistant.demoAsk(ASK_CHAT)
+        },
+        Step(Screen.HOME, "Inicio · coche", "Barras metálicas de velocidad y vueltas: acero, cobre y rojo según subes. Marcha, consejo de cambio y la ficha de mantenimiento o ITV.", 7, clusterPage = 0),
+        Step(Screen.HOME, "Inicio · mapa", "Mapa propio con la ruta por la Castellana, girando con la marcha; se aleja solo al ir más rápido.", 6, clusterPage = 1),
         Step(Screen.HOME, "Inicio · tarjetas", "Tiempo, radio, viaje, gasolineras, rendimiento, turismo… Cada tarjeta abre su pantalla.", 5, clusterPage = 1),
+        Step(Screen.HOME, "Barra lateral", "Mantén pulsado un botón y arrástralo (o OK mantenido y ruleta) para cambiar el orden. La demo no lo guarda.", 7, clusterPage = 1) {
+            delay(800)
+            val id = SidebarMove.order?.invoke()?.lastOrNull() ?: return@Step
+            SidebarMove.start?.invoke(id)
+            try {
+                repeat(2) { delay(900); SidebarMove.step?.invoke(-1) }
+                delay(1500)
+                repeat(2) { delay(600); SidebarMove.step?.invoke(1) }
+                delay(800)
+            } finally {
+                SidebarMove.cancel?.invoke()
+            }
+        },
         Step(Screen.HOME, "Gasolineras por voz", "«Hola Athos, busca la gasolinera más cercana»: abre los precios del Ministerio y te dice la mejor.", 10) {
             delay(300)
             VoiceAssistant.demoAsk(ASK_FUEL)
@@ -107,25 +134,37 @@ object DemoTour {
             delay(2500)
             navigator?.invoke(Screen.FUEL)
         },
+        Step(Screen.HOME, "Comer y dormir", "«¿Dónde puedo comer por aquí?»: busca restaurantes cerca, te dice el mejor y pregunta «¿te llevo?».", 11, clusterPage = 1) {
+            delay(400)
+            VoiceAssistant.demoAsk(ASK_EAT)
+            delay(5000)
+            caption("En ruta avisa solo: restaurantes a la hora de comer o cenar, y hoteles o campings de noche.")
+        },
         Step(Screen.TRIP, "Viaje", "Ordenador de a bordo: viaje actual y anteriores, consumo, distancia y tiempo.", 8) {
             delay(3000)
             caption("Al parar el motor sale el resumen del trayecto con la nota de eficiencia y la semana.")
             TripComputer.showSummary()
             try { awaitCancellation() } finally { TripComputer.dismissSummary() }
         },
-        Step(Screen.WEATHER, "Tiempo", "Tiempo de aquí, por horas y los próximos 7 días, y el de la ruta.", 6),
+        Step(Screen.WEATHER, "Tiempo", "Tiempo de Madrid ahora, por horas y los próximos 7 días, y el de la ruta.", 6),
         Step(Screen.ROUTE, "Ruta", "Lo que hay por delante: radares, peligros, áreas de descanso y turismo a 10, 25 y 50 km.", 8) {
             delay(1500)
-            caption("Al pasar cerca de algo que merece la pena, aviso con foto y explicación por voz.")
+            caption("Al pasar cerca de algo que merece la pena (el Prado, Cibeles…), aviso con foto y explicación por voz.")
             RouteAlerts.test(this@DemoTour.scope)
         },
-        Step(Screen.TOURISM, "Turismo", "Qué ver, dónde comer y dónde dormir cerca, por recomendados, cercanía o popularidad.", 9) {
+        Step(Screen.TOURISM, "Turismo", "Qué ver en Madrid, ordenado por recomendados, cercanía o popularidad, con foto, horario y web.", 12) {
+            val texts = listOf(
+                "Para ver: museos, monumentos y parques cerca de la ruta, con su resumen de Wikipedia.",
+                "Comer: restaurantes, bares y cafeterías con horario, teléfono y tipo de cocina.",
+                "Dormir: hoteles, hostales y campings; con «¿te llevo?» abre la ruta en Google Maps.",
+            )
             for (tab in 0..2) {
                 tourTab = tab
-                delay(3000)
+                caption(texts[tab])
+                delay(4000)
             }
         },
-        Step(Screen.RADIO, "Radio", "FM de la radio y emisoras por Internet, con favoritas; baja sola cuando habla Maps o Athos.", 5),
+        Step(Screen.RADIO, "Radio", "FM e Internet con favoritas. Al arrancar vuelve sola la última emisora; baja cuando hablan Maps o Athos.", 6),
         Step(Screen.PHONE, "Teléfono", "Agenda y llamadas; también por voz: «Hola Athos, llama a…».", 5),
         Step(Screen.MAINTENANCE, "Mantenimiento", "Aceite, frenos, ITV y demás avisos con los kilómetros que faltan.", 5),
         Step(Screen.APPS, "Apps", "Todas las apps de la radio, en grupos y en el orden que quieras.", 5),
@@ -212,6 +251,9 @@ object DemoTour {
             VehicleService.restart(app)
         }
         DragTimes.demo = true
+        RouteTracker.setDemoOverride(true)
+        WeatherRepository.demoPlace = MADRID
+        scope.launch { runCatching { WeatherRepository.refresh(app) } }
         job = scope.launch {
             try {
                 var left = totalSeconds * 1000L
@@ -262,6 +304,11 @@ object DemoTour {
         RouteAlerts.hide()
         DragTimes.demo = false
         DragTimes.reload()
+        RouteTracker.setDemoOverride(false)
+        if (WeatherRepository.demoPlace != null) {
+            WeatherRepository.demoPlace = null
+            scope.launch { runCatching { WeatherRepository.refresh(app) } }
+        }
         if (s != null) restoreSource(app, s.source)
         navigator?.invoke(Screen.HOME)
     }

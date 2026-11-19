@@ -203,7 +203,7 @@ object RouteAlerts {
     }
 
     private fun stationsAhead(pos: GeoPoint, bearing: Float, live: Boolean): List<StationView> {
-        val list = if (live) FuelRepository.state.value.stations else FuelRepository.demoStations(com.cockpitf30.ui.screens.DEMO_CENTER)
+        val list = if (live) FuelRepository.state.value.stations else FuelRepository.demoList(FuelRepository.state.value.stations, com.cockpitf30.ui.screens.DEMO_CENTER)
         return FuelStations.nearest(list, pos, limit = 40).map {
             StationView(it.station, it.meters, RoutePois.relative(RouteTracker.bearingBetween(pos, it.station.point), bearing))
         }
@@ -332,7 +332,7 @@ object RouteAlerts {
     fun test(scope: CoroutineScope) {
         scope.launch(Dispatchers.IO) {
             val v = RoutePois.state.value.near.firstOrNull { it.poi.category == AlertCategory.TOURISM && it.poi.kind != "place" }
-                ?: PoiView(Poi("test.acueducto", 40.9481, -4.1184, AlertCategory.TOURISM, "aqueduct", "Acueducto de Segovia", "es:Acueducto de Segovia"), 1500.0, 30f)
+                ?: PoiView(Poi("test.prado", 40.41380, -3.69210, AlertCategory.TOURISM, "museum", "Museo del Prado", "es:Museo del Prado"), 600.0, 30f)
             val a = build(v, null, Wiki.load(v.poi)).copy(id = "test." + System.currentTimeMillis())
             send(a, System.currentTimeMillis())
         }

@@ -35,6 +35,8 @@ class DemoTourTest {
     fun demoQuestionsAreUnderstood() {
         assertEquals(Command.Info(InfoTopic.RANGE), VoiceCommands.parse(DemoTour.ASK_RANGE))
         assertEquals(Command.Info(InfoTopic.FUEL_NEAR), VoiceCommands.parse(DemoTour.ASK_FUEL))
+        assertEquals(Command.Chat("fact"), VoiceCommands.parse(DemoTour.ASK_CHAT))
+        assertTrue(VoiceCommands.parse(DemoTour.ASK_EAT) is Command.Stays)
     }
 
     @Test

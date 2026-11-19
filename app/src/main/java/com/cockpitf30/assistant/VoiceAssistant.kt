@@ -1353,7 +1353,7 @@ object VoiceAssistant {
                 if (pos == null) {
                     "No sé dónde estamos todavía; te abro las gasolineras"
                 } else {
-                    val list = if (!route.live) FuelRepository.demoStations(DEMO_CENTER) else FuelRepository.state.value.stations
+                    val list = if (!route.live) FuelRepository.demoList(FuelRepository.state.value.stations, DEMO_CENTER) else FuelRepository.state.value.stations
                     nearStations = FuelStations.nearest(list, pos, limit = 5)
                     if (nearStations.isEmpty()) "No tengo gasolineras cerca"
                     else station(Command.Station(0, StationAction.DESCRIBE), now)
