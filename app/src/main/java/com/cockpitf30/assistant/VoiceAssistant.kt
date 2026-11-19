@@ -287,9 +287,10 @@ object VoiceAssistant {
             !VoiceModel.isReady(app) -> install()
             audioJob?.isActive == true || google != null -> Unit
             phase == AssistantPhase.LOADING -> Unit
-            // Cargar el modelo de Vosk pesa: espera a que pase la imagen de inicio (arranque más ágil).
+            // Cargar el modelo de Vosk pesa (CPU y recolector de basura): espera a que pasen la
+            // presentación y el barrido de agujas, que si no dan tirones (y el vídeo de Athos).
             !com.cockpitf30.ui.components.Startup.splashDone.value -> if (deferJob?.isActive != true) {
-                deferJob = scope.launch { com.cockpitf30.ui.components.Startup.splashDone.first { it }; delay(1_500); refresh() }
+                deferJob = scope.launch { com.cockpitf30.ui.components.Startup.splashDone.first { it }; delay(4_500); refresh() }
             }
             else -> startAudio()
         }

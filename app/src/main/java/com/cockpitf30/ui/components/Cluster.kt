@@ -397,10 +397,14 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
                 .padding(start = g.contentInset, end = g.contentInset),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Durante el barrido las cifras suben y bajan con las barras.
-            val sw = sweep.value
-            val shownSpeed = if (sw > 0f) maxOf(state.speedKmh ?: 0, speedFromFraction(sw)) else state.speedKmh
-            val shownRpm = if (sw > 0f) maxOf(state.rpm ?: 0, (sw * RPM_MAX).roundToInt() / 50 * 50) else state.rpm
+            // Durante el barrido las cifras suben y bajan con las barras. Solo se recompone cuando
+            // cambia la cifra (antes, en cada fotograma del barrido).
+            val shownSpeed by remember(state.speedKmh) {
+                derivedStateOf { val sw = sweep.value; if (sw > 0f) maxOf(state.speedKmh ?: 0, speedFromFraction(sw)) else state.speedKmh }
+            }
+            val shownRpm by remember(state.rpm) {
+                derivedStateOf { val sw = sweep.value; if (sw > 0f) maxOf(state.rpm ?: 0, (sw * RPM_MAX).roundToInt() / 50 * 50) else state.rpm }
+            }
             TabValue(shownSpeed?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false, glow = SpeedGlow, intensity = speedGlow)
             Spacer(Modifier.weight(1.5f))
             // Junto a la marcha y las rpm, lo más urgente del mantenimiento (solo en la vista del coche
@@ -651,11 +655,11 @@ private fun panelShape(g: GeoPx): Triple<Path, Rect, Float> {
 }
 
 /**
- * Vídeo de la vista Athos (res/raw/athos_core.mp4: el cristal y sus órbitas, sin el rótulo) en el
- * rectángulo del panel, recortado a su forma y desplazado con la página igual que las lecturas que
- * se pintan encima. Se prepara al entrar en el Inicio (primer fotograma listo, sin negro al
- * deslizar) pero solo corre mientras se ve, con la app delante y ya fuera la pantalla de arranque
- * (para no decodificar dos vídeos a la vez).
+ * Vídeo de la vista Athos: el mismo de la presentación ([SharedLoop], mismo decodificador), con
+ * la franja del cristal y sus órbitas ([CRYSTAL_REGION], el rótulo queda fuera) cubriendo el panel,
+ * recortado a su forma y desplazado con la página igual que las lecturas que se pintan encima.
+ * Al irse la presentación el vídeo pasa aquí sin pararse; después solo corre mientras se ve y con
+ * la app delante.
  */
 @Composable
 private fun AthosVideo(g: Geometry, width: Dp, geoCache: GeoCache, page: () -> Float) {
@@ -681,8 +685,9 @@ private fun AthosVideo(g: Geometry, width: Dp, geoCache: GeoCache, page: () -> F
                 .background(Color.Black),
         ) {
             LoopVideo(
-                R.raw.athos_core, aspect = 1920f / 480f, playing = visible && splashDone && resumed,
-                modifier = Modifier.fillMaxSize(), focus = CRYSTAL_FOCUS, anchor = androidx.compose.ui.geometry.Offset(0.5f, RING_Y),
+                R.raw.athos_intro, aspect = 1920f / 720f, attached = splashDone, playing = visible && splashDone && resumed,
+                modifier = Modifier.fillMaxSize(), region = CRYSTAL_REGION, focus = CRYSTAL_FOCUS,
+                anchor = androidx.compose.ui.geometry.Offset(0.5f, RING_Y),
             )
         }
     }

@@ -108,13 +108,18 @@ internal fun rememberAthosFeed(visible: () -> Boolean): AthosFeed {
     LaunchedEffect(feed) {
         var lastSample = 0L
         var lastLog = 0L
+        var lastTick = 0L
         while (true) {
             if (!visible()) { delay(250); continue }
+            // Al ritmo de la pantalla (no con delay, que cae entre fotogramas y da saltos): se
+            // repinta uno de cada dos fotogramas, unas 30 veces por segundo.
+            androidx.compose.runtime.withFrameMillis { }
             val now = System.currentTimeMillis()
+            if (now - lastTick < 28) continue
+            lastTick = now
             if (now - lastSample >= 250) { feed.sample(now); lastSample = now }
             if (now - lastLog >= 1_700) { feed.addLog(); lastLog = now }
             feed.clock.longValue = now
-            delay(33)
         }
     }
     return feed
@@ -132,8 +137,10 @@ internal class AthosText(
 /** Altura del centro del anillo (y del triángulo) en el panel, como fracción del alto. */
 internal const val RING_Y = 0.52f
 
-/** Centro del cristal en athos_core.mp4 (fracciones del vídeo): se coloca en el centro del anillo. */
-internal val CRYSTAL_FOCUS = Offset(0.505f, 0.52f)
+/** Franja de athos_intro.mp4 con el cristal y sus órbitas, sin el rótulo (fracciones del vídeo). */
+internal val CRYSTAL_REGION = androidx.compose.ui.geometry.Rect(0f, 12f / 720f, 1f, 492f / 720f)
+/** Centro del cristal en athos_intro.mp4 (fracciones del vídeo): se coloca en el centro del anillo. */
+internal val CRYSTAL_FOCUS = Offset(0.505f, 0.3633f)
 
 private val AthosBlue = Color(0xFF59B8FF)
 private val AthosCopper = Color(0xFFFFA25C)

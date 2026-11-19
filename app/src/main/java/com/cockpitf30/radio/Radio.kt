@@ -154,7 +154,8 @@ object Radio {
         if (!s.radioAutoPlay || _state.value.playing) return
         val last = RadioLogic.autoPlaySource(s.radioLastPlayed, s.radioSource, _state.value.station != null, tunerAvailable) ?: return
         kotlinx.coroutines.withTimeoutOrNull(15_000) { com.cockpitf30.ui.components.Startup.splashDone.first { it } }
-        delay(500)
+        // Después del barrido de agujas: arrancar la emisora a la vez daba tirones en la vista Athos.
+        delay(3_500)
         if (_state.value.playing) return
         val am = app.getSystemService(AudioManager::class.java)
         if (am?.isMusicActive == true) {

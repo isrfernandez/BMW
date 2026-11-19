@@ -40,18 +40,22 @@ class AthosVideoTest {
         rule.setContent {
             root = LocalView.current
             Box(Modifier.size(1510.dp, 434.dp)) {
-                LoopVideo(R.raw.athos_core, 1920f / 480f, playing = false, Modifier.fillMaxSize(), focus = CRYSTAL_FOCUS, anchor = Offset(0.5f, RING_Y))
+                LoopVideo(R.raw.athos_intro, 1920f / 720f, playing = false, Modifier.fillMaxSize(), region = CRYSTAL_REGION, focus = CRYSTAL_FOCUS, anchor = Offset(0.5f, RING_Y))
             }
         }
         rule.waitForIdle()
         val tv = textureViews(root!!.rootView).single()
-        // Cubre el alto (434) manteniendo 4:1 → 1736 de ancho; el cristal (x 0,505) al centro (755).
-        assertEquals(434, tv.height)
+        // La franja del cristal (480 de 720 líneas, 4:1) cubre el alto (434): vídeo de 1736×651,
+        // el rótulo queda por debajo del panel; el cristal (x 0,505) al centro (755).
+        assertEquals(651, tv.height)
         assertEquals(1736, tv.width)
         val loc = IntArray(2).also { tv.getLocationInWindow(it) }
         val crystalX = loc[0] + tv.width * CRYSTAL_FOCUS.x
         assertTrue("cristal en x=$crystalX", kotlin.math.abs(crystalX - 755f) < 3f)
         assertTrue(loc[0] <= 0 && loc[0] + tv.width >= 1510)
+        // La franja empieza 12 líneas abajo: el vídeo sube unos 11 px y el rótulo (línea 492+) no entra.
+        assertTrue("y=${loc[1]}", loc[1] in -13..-9)
+        assertTrue(loc[1] + tv.height * 492f / 720f >= 434f - 1f)
     }
 
     @Test fun clusterAndSplashCompose() {
