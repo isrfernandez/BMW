@@ -70,13 +70,24 @@ internal object SharedLoop {
 
     fun join(owner: Any) { owners += owner; main.removeCallbacks(releaseIdle) }
 
-    fun leave(owner: Any, tv: TextureView?) {
+    fun leave(owner: Any, view: android.view.View?) {
         owners -= owner; wants -= owner
-        player?.let { p -> tv?.let { p.clearVideoTextureView(it) }; p.playWhenReady = wants.values.any { it } }
+        player?.let { p ->
+            when (view) {
+                is TextureView -> p.clearVideoTextureView(view)
+                is android.view.SurfaceView -> p.clearVideoSurfaceView(view)
+            }
+            p.playWhenReady = wants.values.any { it }
+        }
         if (owners.isEmpty()) main.postDelayed(releaseIdle, IDLE_RELEASE_MS)
     }
 
-    fun attach(tv: TextureView) { player?.setVideoTextureView(tv) }
+    fun attach(view: android.view.View) {
+        when (view) {
+            is TextureView -> player?.setVideoTextureView(view)
+            is android.view.SurfaceView -> player?.setVideoSurfaceView(view)
+        }
+    }
 
     fun play(owner: Any, want: Boolean) {
         wants[owner] = want
@@ -95,6 +106,10 @@ internal object SharedLoop {
  * (fundido de las últimas 12 imágenes sobre las primeras, sin fotogramas repetidos) y va en H.264
  * Main sin fotogramas B, con una imagen clave cada segundo. ExoPlayer con REPEAT_MODE_ONE ya tiene
  * el principio cargado cuando llega al final, así que vuelve al fotograma 0 sin hueco.
+ *
+ * [surface] = true: en un SurfaceView (solo pantalla completa, sin recortes ni fundidos sobre él):
+ * sus fotogramas van directos a la pantalla y no esperan al hilo principal, así que no dan
+ * tirones aunque la app esté cargando detrás (la presentación).
  *
  * [attached]: esta pantalla quiere la superficie (la última que la pide se la queda).
  * [playing]: quiere que corra. Parado no decodifica nada y conserva el fotograma.
@@ -115,12 +130,13 @@ fun LoopVideo(
     anchor: Offset = Offset(0.5f, 0.5f),
     onFirstFrame: () -> Unit = {},
     onView: (TextureView) -> Unit = {},
+    surface: Boolean = false,
 ) {
     val ctx = LocalContext.current
     val owner = remember { Any() }
     val firstFrame = rememberUpdatedState(onFirstFrame)
     val isAttached = rememberUpdatedState(attached)
-    val holder = remember { arrayOfNulls<TextureView>(1) }
+    val holder = remember { arrayOfNulls<android.view.View>(1) }
     val player = remember(res) { SharedLoop.join(owner); SharedLoop.player(ctx, res) }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -145,7 +161,10 @@ fun LoopVideo(
         val y = clamp(anchor.y * ch - focus.y * vh, ch - region.bottom * vh, -region.top * vh)
         // Más grande que el hueco: se coloca desde la esquina (unbounded) y el sobrante se recorta.
         AndroidView(
-            factory = { c -> TextureView(c).also { holder[0] = it; onView(it); if (attached) SharedLoop.attach(it) } },
+            factory = { c ->
+                val v: android.view.View = if (surface) android.view.SurfaceView(c) else TextureView(c).also(onView)
+                v.also { holder[0] = it; if (attached) SharedLoop.attach(it) }
+            },
             modifier = Modifier.wrapContentSize(Alignment.TopStart, unbounded = true)
                 .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
                 .requiredSize(with(density) { vw.toDp() }, with(density) { vh.toDp() }),

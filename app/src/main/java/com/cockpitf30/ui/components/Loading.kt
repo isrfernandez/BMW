@@ -1,6 +1,7 @@
 package com.cockpitf30.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import kotlinx.coroutines.flow.first
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
@@ -95,23 +96,32 @@ object Startup {
     val ready = kotlinx.coroutines.flow.MutableStateFlow(false)
     /** La pantalla de arranque ya se ha ido (empieza la bienvenida del cuadro y el saludo). */
     val splashDone = kotlinx.coroutines.flow.MutableStateFlow(false)
+    /** El vídeo ya se está pintando en el panel del cuadro (para retirar el negro de la presentación). */
+    val clusterVideo = kotlinx.coroutines.flow.MutableStateFlow(false)
 }
 
 /**
- * Pantalla de arranque: el vídeo de Athos en bucle (cristal vivo, órbitas y rótulo «Athos UI»).
- * El reproductor se prepara en negro y, en cuanto el primer fotograma está pintado (o como mucho
- * [FIRST_FRAME_MAX_MS]), el vídeo echa a andar, aparece desde negro y suena el logo, todo en el
- * mismo fotograma. Se queda [HOLD_MS], espera a la precarga (como mucho [maxMs]) dando vueltas al
- * bucle, funde a negro, avisa con [Startup.splashDone] (barrido de agujas y saludo) y el negro se
- * retira dejando ver la app.
+ * Pantalla de arranque: el vídeo de Athoox en bucle (cristal vivo, órbitas y rótulo).
+ *
+ * El vídeo va en un SurfaceView: sus fotogramas llegan a la pantalla sin pasar por el hilo
+ * principal, que en el arranque está muy ocupado (precarga de imágenes, Inicio, servicios); con un
+ * TextureView daba tirones. Los fundidos son un velo negro encima ([veil]).
+ *
+ * Orden: el reproductor se prepara en negro; con el primer fotograma (o como mucho
+ * [FIRST_FRAME_MAX_MS]) arranca, suena el logo y el velo se retira. Se queda [HOLD_MS], espera a la
+ * precarga (como mucho [maxMs]) dando vueltas al bucle, el velo vuelve a negro y se avisa con
+ * [Startup.splashDone]: el mismo reproductor pasa al panel del cuadro (vista Athoox) y, cuando ya
+ * ha pintado allí ([Startup.clusterVideo], como mucho [HANDOVER_MAX_MS]), el negro se funde
+ * despacio ([REVEAL_MS]) dejando ver el Inicio.
  */
 @Composable
 fun StartupSplash(maxMs: Long = 9_000) {
     // Si la actividad se recrea, el arranque ya pasó: no se repite.
     if (remember { Startup.splashDone.value }) return
     val ctx = androidx.compose.ui.platform.LocalContext.current
-    val shown = remember { androidx.compose.animation.core.Animatable(0f) }
-    var gone by remember { mutableIntStateOf(0) } // 1 = el negro se retira
+    val veil = remember { androidx.compose.animation.core.Animatable(1f) }
+    var gone by remember { mutableIntStateOf(0) } // 1 = terminado
+    var handedOver by remember { androidx.compose.runtime.mutableStateOf(false) }
     var playing by remember { androidx.compose.runtime.mutableStateOf(false) }
     val firstFrame = remember { kotlinx.coroutines.CompletableDeferred<Unit>() }
     LaunchedEffect(Unit) {
@@ -121,31 +131,34 @@ fun StartupSplash(maxMs: Long = 9_000) {
             if (com.cockpitf30.system.AppSettings(ctx).startSound) runCatching { logoPlayer(ctx) }.getOrNull() else null
         }
         kotlinx.coroutines.withTimeoutOrNull(FIRST_FRAME_MAX_MS) { firstFrame.await() }
-        // Mismo fotograma: arranca el vídeo, empieza el fundido desde negro y suena el logo.
+        // Mismo fotograma: arranca el vídeo, empieza a retirarse el velo y suena el logo.
         playing = true
         withFrameNanos { }
         runCatching { sound?.start() }
-        shown.animateTo(1f, androidx.compose.animation.core.tween(FADE_IN_MS, easing = androidx.compose.animation.core.LinearOutSlowInEasing))
+        veil.animateTo(0f, androidx.compose.animation.core.tween(FADE_IN_MS, easing = androidx.compose.animation.core.LinearOutSlowInEasing))
         delay(HOLD_MS)
         // Si la app aún no ha terminado de cargar, el vídeo sigue en bucle (como mucho hasta maxMs).
         while (!Startup.ready.value && System.currentTimeMillis() - started < maxMs) delay(50)
-        shown.animateTo(0f, androidx.compose.animation.core.tween(FADE_OUT_MS, easing = androidx.compose.animation.core.LinearEasing))
+        veil.animateTo(1f, androidx.compose.animation.core.tween(FADE_OUT_MS, easing = androidx.compose.animation.core.LinearEasing))
+        // En negro: el vídeo pasa al cuadro y, cuando ya se ve allí, el negro se funde al Inicio.
+        handedOver = true
         Startup.splashDone.value = true
+        kotlinx.coroutines.withTimeoutOrNull(HANDOVER_MAX_MS) { Startup.clusterVideo.first { v -> v } }
+        veil.animateTo(0f, androidx.compose.animation.core.tween(REVEAL_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing))
         gone = 1
         delay(1_500)
         runCatching { sound?.release() }
     }
-    AnimatedVisibility(gone == 0, enter = androidx.compose.animation.EnterTransition.None, exit = fadeOut(androidx.compose.animation.core.tween(400))) {
-        Box(
-            Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { } },
-            contentAlignment = Alignment.Center,
-        ) {
+    if (gone == 1) return
+    Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { } }) {
+        if (!handedOver) {
             LoopVideo(
-                com.cockpitf30.R.raw.athos_intro, aspect = 1920f / 720f, playing = playing,
-                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = shown.value },
+                com.cockpitf30.R.raw.athos_intro, aspect = 1920f / 720f, playing = playing, surface = true,
+                modifier = Modifier.fillMaxSize(),
                 onFirstFrame = { firstFrame.complete(Unit) },
             )
         }
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = veil.value }.background(Color.Black))
     }
 }
 
@@ -190,6 +203,8 @@ private const val FADE_IN_MS = 900
 private const val HOLD_MS = 3_500L
 private const val FADE_OUT_MS = 500
 private const val FIRST_FRAME_MAX_MS = 2_000L
+private const val HANDOVER_MAX_MS = 800L
+private const val REVEAL_MS = 1_100
 
 /**
  * «COCKPIT F30»: COCKPIT fino y muy espaciado en plata, F30 en cobre pulido, con un filo de luz

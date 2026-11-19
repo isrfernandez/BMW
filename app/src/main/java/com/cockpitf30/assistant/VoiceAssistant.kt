@@ -1712,7 +1712,7 @@ object VoiceAssistant {
         applyVoice()
         say(
             Personality.spice(
-                "Hola. Soy Athos, el asistente del coche. Humor al ${humor()} por ciento.", humor(), null,
+                "Hola. Soy Athoox, el asistente del coche. Humor al ${humor()} por ciento.", humor(), null,
                 "Todo listo para el despegue.", "Prometo no abrir ninguna escotilla.",
             ),
         )
@@ -1762,8 +1762,10 @@ object VoiceAssistant {
         stopSpeaking()
         // Por frases: empieza a sonar antes (no espera a preparar todo el texto, que con poca
         // conexión o la voz TARS tardaba) y una explicación larga no depende de una sola síntesis.
-        val chunks = SpeechChunks.split(text)
-        speechOffsets = SpeechChunks.offsets(text, chunks)
+        val written = SpeechChunks.split(text)
+        speechOffsets = SpeechChunks.offsets(text, written)
+        // «Athoox» se escribe así pero se dice «Átox» (la voz española leería «Ato-ox»).
+        val chunks = written.map { it.replace("Athoox", "Átox") }
         lastChunkId = "$replyId#${chunks.size - 1}"
         speechStartedAt = System.currentTimeMillis()
         speechEstimateMs = text.length * 75L

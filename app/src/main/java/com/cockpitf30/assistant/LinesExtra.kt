@@ -379,7 +379,7 @@ object LinesExtra {
         "alive" to listOf(
             "Vivo, vivo, no. Pero encendido, sí. Que en mi mundo es casi lo mismo.", "Soy un programa con mucho carácter. Que no es poco.",
             "Humano no. Pero tengo más paciencia que muchos humanos en un atasco.", "Soy de silicio y de cables. Y de algún chiste malo.",
-            "Soy tan real como tu cuentakilómetros. Y cuento cosas parecidas.", "Soy Athos, un robot. Pero de los simpáticos.",
+            "Soy tan real como tu cuentakilómetros. Y cuento cosas parecidas.", "Soy Athoox, un robot. Pero de los simpáticos.",
         ),
         "creator" to listOf(
             "Me hizo alguien con mucha paciencia y muchas versiones. Ya vamos por la cero punto nueve y pico.", "Me programó tu conductor favorito. Es decir, puede que tú.",

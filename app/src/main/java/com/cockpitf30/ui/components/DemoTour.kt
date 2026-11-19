@@ -102,12 +102,12 @@ object DemoTour {
     const val MAX_SECONDS = 240
 
     val steps: List<Step> = listOf(
-        Step(Screen.HOME, "Inicio · vista Athos", "Demo por Madrid: de Atocha por el Prado y la Castellana hasta Plaza de Castilla. El cuadro tiene tres vistas: Athos, coche y mapa.", 6, clusterPage = -1),
-        Step(Screen.HOME, "Asistente Athos", "«Hola Athos, ¿cuánta autonomía me queda?»: contesta por voz y el triángulo late con su voz.", 11, clusterPage = -1) {
+        Step(Screen.HOME, "Inicio · vista Athoox", "Demo por Madrid: de Atocha por el Prado y la Castellana hasta Plaza de Castilla. El cuadro tiene tres vistas: Athoox, coche y mapa.", 6, clusterPage = -1),
+        Step(Screen.HOME, "Asistente Athoox", "«Hola Athoox, ¿cuánta autonomía me queda?»: contesta por voz y el triángulo late con su voz.", 11, clusterPage = -1) {
             delay(400)
             VoiceAssistant.demoAsk(ASK_RANGE)
         },
-        Step(Screen.HOME, "Charla con Athos", "«Cuéntame una curiosidad»: también cuenta chistes, adivinanzas y refranes, y no repite hasta agotarlos.", 10, clusterPage = -1) {
+        Step(Screen.HOME, "Charla con Athoox", "«Cuéntame una curiosidad»: también cuenta chistes, adivinanzas y refranes, y no repite hasta agotarlos.", 10, clusterPage = -1) {
             delay(400)
             VoiceAssistant.demoAsk(ASK_CHAT)
         },
@@ -127,7 +127,7 @@ object DemoTour {
                 SidebarMove.cancel?.invoke()
             }
         },
-        Step(Screen.HOME, "Gasolineras por voz", "«Hola Athos, busca la gasolinera más cercana»: abre los precios del Ministerio y te dice la mejor.", 10) {
+        Step(Screen.HOME, "Gasolineras por voz", "«Hola Athoox, busca la gasolinera más cercana»: abre los precios del Ministerio y te dice la mejor.", 10) {
             delay(300)
             VoiceAssistant.demoAsk(ASK_FUEL)
             // Si el asistente no abre la pantalla (p. ej. sin voz instalada), se abre igual.
@@ -164,8 +164,8 @@ object DemoTour {
                 delay(4000)
             }
         },
-        Step(Screen.RADIO, "Radio", "FM e Internet con favoritas. Al arrancar vuelve sola la última emisora; baja cuando hablan Maps o Athos.", 6),
-        Step(Screen.PHONE, "Teléfono", "Agenda y llamadas; también por voz: «Hola Athos, llama a…».", 5),
+        Step(Screen.RADIO, "Radio", "FM e Internet con favoritas. Al arrancar vuelve sola la última emisora; baja cuando hablan Maps o Athoox.", 6),
+        Step(Screen.PHONE, "Teléfono", "Agenda y llamadas; también por voz: «Hola Athoox, llama a…».", 5),
         Step(Screen.MAINTENANCE, "Mantenimiento", "Aceite, frenos, ITV y demás avisos con los kilómetros que faltan.", 5),
         Step(Screen.APPS, "Apps", "Todas las apps de la radio, en grupos y en el orden que quieras.", 5),
         Step(Screen.PERFORMANCE, "Rendimiento · modo Sport", "Paleta roja, potencia y par estimados, G-meter, altitud y cronómetro automático.", 27, mode = DriveMode.SPORT) {

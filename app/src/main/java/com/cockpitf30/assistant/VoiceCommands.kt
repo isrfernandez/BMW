@@ -123,6 +123,8 @@ object VoiceCommands {
      */
     private val NAME_FORMS: Set<String> = setOf(
         "athos", "atos", "hatos", "actos", "altos", "athus", "atus",
+        // «Athoox» (el nombre con equis): suena casi igual; Google puede escribirlo así.
+        "athoox", "athox", "atox", "atoks", "atoxs",
         // Lo que el modelo pequeño cree oír a menudo: «a dos», «datos», «gatos», «patos».
         "ados", "datos", "gatos", "patos",
     )
@@ -133,7 +135,7 @@ object VoiceCommands {
      */
     val WAKE_GRAMMAR: String = listOf(
         "hola athos", "hola atos", "hola a tos", "ola atos", "ola a tos", "oye atos", "oye a tos",
-        "hola actos", "hola altos", "hola a dos", "ola a dos", "hola datos", "hola gatos", "hola patos", "[unk]",
+        "hola actos", "hola altos", "hola a dos", "ola a dos", "hola datos", "hola gatos", "hola patos", "hola atox", "[unk]",
     ).joinToString(",", "[", "]") { "\"$it\"" }
 
     /** Palabras para cortar al asistente mientras habla. */
@@ -260,10 +262,10 @@ object VoiceCommands {
 
     /** ¿Está el nombre entero en la frase? (sensibilidad baja: solo «Athos/Atos», no las confusiones). */
     fun hasFullName(text: String): Boolean = normalize(text).let { t ->
-        listOf("athos", "atos", "a tos").any { t.contains(it) }
+        listOf("athos", "atos", "a tos", "athoox", "athox", "atox", "atoks").any { t.contains(it) }
     }
 
-    private val WAKE_PREFIX = Regex("^((hola|ola|oye|hello) )+((a tos|a dos|athos|atos|hatos|actos|altos|atus|athus|datos|gatos|patos) )?|^(a tos|athos|atos|hatos|atus|athus) ")
+    private val WAKE_PREFIX = Regex("^((hola|ola|oye|hello) )+((a tos|a dos|athoox|athox|atox|atoks|athos|atos|hatos|actos|altos|atus|athus|datos|gatos|patos) )?|^(a tos|athoox|athox|atox|atoks|athos|atos|hatos|atus|athus) ")
 
     /**
      * Quita del principio los restos de «hola Athos»: la activación salta en cuanto se oye, así que

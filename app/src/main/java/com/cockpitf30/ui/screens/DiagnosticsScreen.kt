@@ -353,7 +353,7 @@ private fun buildReport(
     input: List<String>,
 ): String = buildString {
     val dm = context.resources.displayMetrics
-    appendLine("Athos ${installedVersion(context)} · informe de diagnóstico · ${java.time.LocalDateTime.now()}")
+    appendLine("Athoox ${installedVersion(context)} · informe de diagnóstico · ${java.time.LocalDateTime.now()}")
     appendLine("Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT}) · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · ${android.os.Build.DISPLAY}")
     appendLine("Pantalla ${dm.widthPixels}x${dm.heightPixels} ${dm.densityDpi} dpi")
     appendLine()
@@ -416,7 +416,7 @@ private fun radioReport(values: Map<String, String>, changes: List<String>, vehi
     changes.forEach(::appendLine)
 }
 
-internal fun shareReport(context: android.content.Context, text: String, subject: String = "Athos diagnóstico") {
+internal fun shareReport(context: android.content.Context, text: String, subject: String = "Athoox diagnóstico") {
     val send = android.content.Intent(android.content.Intent.ACTION_SEND)
         .setType("text/plain")
         .putExtra(android.content.Intent.EXTRA_SUBJECT, subject)

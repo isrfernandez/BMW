@@ -159,9 +159,11 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     LaunchedEffect(Unit) {
         if (ClusterIntro.swept) return@LaunchedEffect
         Startup.splashDone.first { it }
-        delay(450)
-        launch { fadeIn.animateTo(1f, tween(650, easing = FastOutSlowInEasing)) }
-        delay(200)
+        // La presentación ya funde desde negro todo el Inicio: el cuadro está desde el principio
+        // (antes se fundía él aparte, después, y se notaba como un segundo salto). El barrido
+        // espera a que se haya ido el negro.
+        fadeIn.snapTo(1f)
+        delay(1_500)
         doSweep()
         ClusterIntro.swept = true
     }
@@ -241,7 +243,20 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     }
     LaunchedEffect(Unit) {
         if (ClusterIntro.done) return@LaunchedEffect
-        delay(ClusterIntro.ATHOS_MS)
+        // La vista Athoox cuenta desde que se va la presentación (antes contaba desde que se
+        // montaba el Inicio, debajo, y casi no se veía) y se queda mientras habla el asistente
+        // (el saludo de arranque), con un mínimo y un máximo.
+        Startup.splashDone.first { it }
+        val since = System.currentTimeMillis()
+        delay(ClusterIntro.ATHOS_MIN_MS)
+        var quietSince = 0L
+        while (!ClusterIntro.done && System.currentTimeMillis() - since < ClusterIntro.ATHOS_MAX_MS) {
+            val now = System.currentTimeMillis()
+            val talking = com.cockpitf30.assistant.VoiceAssistant.state.value.phase == com.cockpitf30.assistant.AssistantPhase.ANSWERING
+            if (talking) quietSince = 0L else if (quietSince == 0L) quietSince = now
+            if (quietSince != 0L && now - quietSince >= ClusterIntro.QUIET_MS) break
+            delay(200)
+        }
         if (ClusterIntro.done) return@LaunchedEffect
         target = 0
         page.animateTo(0f, tween(900, easing = FastOutSlowInEasing))
@@ -452,7 +467,10 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
 /** Presentación del Inicio: el coche se ve solo durante los primeros segundos tras arrancar la app. */
 object ClusterIntro {
     /** Vista Athos al arrancar y después el coche, antes de pasar al mapa. */
-    const val ATHOS_MS = 8_000L
+    const val ATHOS_MIN_MS = 10_000L
+    const val ATHOS_MAX_MS = 35_000L
+    /** Callado al menos esto (tras el mínimo) para pasar al coche. */
+    const val QUIET_MS = 1_500L
     const val CAR_MS = 8_000L
     /** Motor parado al menos esto para repetir el barrido al arrancarlo. */
     const val ENGINE_OFF_MS = 5_000L
@@ -721,6 +739,7 @@ private fun AthosVideo(g: Geometry, width: Dp, geoCache: GeoCache, page: () -> F
                 modifier = Modifier.fillMaxSize(), region = CRYSTAL_REGION, focus = CRYSTAL_FOCUS,
                 anchor = androidx.compose.ui.geometry.Offset(0.5f, RING_Y),
                 onView = { texture[0] = it },
+                onFirstFrame = { Startup.clusterVideo.value = true },
             )
         }
     }
