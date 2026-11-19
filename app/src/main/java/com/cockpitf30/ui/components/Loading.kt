@@ -98,11 +98,12 @@ object Startup {
 }
 
 /**
- * Pantalla de arranque: la imagen de Athos (triángulo de cristal y rótulo «Athos UI»).
- * Antes era un vídeo: tardaba en salir (el sonido se oía antes que la imagen) y se entrecortaba
- * mientras la app cargaba detrás. Ahora la imagen se decodifica aparte y, cuando está lista,
- * aparece desde negro a la vez que empieza el sonido del logo. Se queda [HOLD_MS], espera a la precarga (como mucho [maxMs]), funde a negro, avisa con
- * [Startup.splashDone] (barrido de agujas y saludo) y el negro se retira dejando ver la app.
+ * Pantalla de arranque: el vídeo de Athos en bucle (cristal vivo, órbitas y rótulo «Athos UI»).
+ * El reproductor se prepara en negro y, en cuanto el primer fotograma está pintado (o como mucho
+ * [FIRST_FRAME_MAX_MS]), el vídeo echa a andar, aparece desde negro y suena el logo, todo en el
+ * mismo fotograma. Se queda [HOLD_MS], espera a la precarga (como mucho [maxMs]) dando vueltas al
+ * bucle, funde a negro, avisa con [Startup.splashDone] (barrido de agujas y saludo) y el negro se
+ * retira dejando ver la app.
  */
 @Composable
 fun StartupSplash(maxMs: Long = 9_000) {
@@ -111,22 +112,22 @@ fun StartupSplash(maxMs: Long = 9_000) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val shown = remember { androidx.compose.animation.core.Animatable(0f) }
     var gone by remember { mutableIntStateOf(0) } // 1 = el negro se retira
-    var image by remember { androidx.compose.runtime.mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    var playing by remember { androidx.compose.runtime.mutableStateOf(false) }
+    val firstFrame = remember { kotlinx.coroutines.CompletableDeferred<Unit>() }
     LaunchedEffect(Unit) {
         val started = System.currentTimeMillis()
-        // Imagen y sonido se preparan a la vez, fuera del hilo principal.
+        // El sonido se prepara fuera del hilo principal mientras el vídeo pinta su primera imagen.
         val sound = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            image = runCatching {
-                android.graphics.BitmapFactory.decodeResource(ctx.resources, R.drawable.splash_cockpit)?.asImageBitmapCompat()
-            }.getOrNull()
             if (com.cockpitf30.system.AppSettings(ctx).startSound) runCatching { logoPlayer(ctx) }.getOrNull() else null
         }
-        // Mismo fotograma: empieza el fundido desde negro y suena el logo.
+        kotlinx.coroutines.withTimeoutOrNull(FIRST_FRAME_MAX_MS) { firstFrame.await() }
+        // Mismo fotograma: arranca el vídeo, empieza el fundido desde negro y suena el logo.
+        playing = true
         withFrameNanos { }
         runCatching { sound?.start() }
         shown.animateTo(1f, androidx.compose.animation.core.tween(FADE_IN_MS, easing = androidx.compose.animation.core.LinearOutSlowInEasing))
         delay(HOLD_MS)
-        // Si la app aún no ha terminado de cargar, la imagen sigue (como mucho hasta maxMs).
+        // Si la app aún no ha terminado de cargar, el vídeo sigue en bucle (como mucho hasta maxMs).
         while (!Startup.ready.value && System.currentTimeMillis() - started < maxMs) delay(50)
         shown.animateTo(0f, androidx.compose.animation.core.tween(FADE_OUT_MS, easing = androidx.compose.animation.core.LinearEasing))
         Startup.splashDone.value = true
@@ -139,18 +140,14 @@ fun StartupSplash(maxMs: Long = 9_000) {
             Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { } },
             contentAlignment = Alignment.Center,
         ) {
-            image?.let {
-                androidx.compose.foundation.Image(
-                    it, contentDescription = "Athos",
-                    modifier = Modifier.fillMaxSize().graphicsLayer { alpha = shown.value },
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                )
-            }
+            LoopVideo(
+                com.cockpitf30.R.raw.athos_intro, aspect = 1920f / 720f, playing = playing,
+                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = shown.value },
+                onFirstFrame = { firstFrame.complete(Unit) },
+            )
         }
     }
 }
-
-private fun android.graphics.Bitmap.asImageBitmapCompat(): androidx.compose.ui.graphics.ImageBitmap = asImageBitmap()
 
 /** Sonido de Athos para la vista del Inicio: suena una vez y se libera solo (si está activado). */
 object AthosSound {
@@ -184,13 +181,14 @@ internal fun logoPlayer(ctx: android.content.Context): android.media.MediaPlayer
     }
 }
 
-// res/drawable-nodpi/splash_cockpit.webp: la imagen de inicio de Athos a 1920×720 (la franja con
-// el triángulo y el rótulo, con los laterales prolongados y fundidos). res/raw/logo_sound.ogg: el
+// res/raw/athos_intro.mp4: el vídeo de Athos del usuario a 1920×720, 30 fps, 4,57 s en bucle sin
+// salto (H.264 Main sin fotogramas B, sin audio, 1,7 MB). res/raw/logo_sound.ogg: el
 // «cinematic boom» del usuario recortado a 5,65 s; la subida acompaña al fundido de entrada y el
 // golpe (~2,8 s) cae con la imagen ya entera; la app entra mientras se apaga.
 private const val FADE_IN_MS = 900
 private const val HOLD_MS = 3_500L
 private const val FADE_OUT_MS = 500
+private const val FIRST_FRAME_MAX_MS = 2_000L
 
 /**
  * «COCKPIT F30»: COCKPIT fino y muy espaciado en plata, F30 en cobre pulido, con un filo de luz

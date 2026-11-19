@@ -10,7 +10,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
@@ -22,8 +21,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import com.cockpitf30.nav.RouteTracker
 import com.cockpitf30.nav.SpeedCameras
@@ -39,7 +36,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Vista «Athos» del centro del cuadro: la imagen de inicio con las lecturas de la app en marcha
+ * Vista «Athos» del centro del cuadro: el vídeo del cristal en bucle con las lecturas de la app en marcha
  * (velocidad, rpm, fuerzas G, altitud, GPS, caja CAN, radares) y un anillo que gira alrededor del
  * triángulo, como si el sistema lo estuviera vigilando todo. Todo son datos reales o derivados de
  * ellos (la radio no tiene acelerómetro: las G salen de la velocidad y el rumbo).
@@ -133,38 +130,29 @@ internal class AthosText(
 )
 
 /** Altura del centro del anillo (y del triángulo) en el panel, como fracción del alto. */
-private const val RING_Y = 0.52f
+internal const val RING_Y = 0.52f
+
+/** Centro del cristal en athos_core.mp4 (fracciones del vídeo): se coloca en el centro del anillo. */
+internal val CRYSTAL_FOCUS = Offset(0.505f, 0.52f)
 
 private val AthosBlue = Color(0xFF59B8FF)
 private val AthosCopper = Color(0xFFFFA25C)
 private val AthosOk = Color(0xFF3DDC97)
 private val Dim = Color.White.copy(alpha = 0.55f)
 
-/** Pinta la vista Athos en [b] (ya recortada a la forma del panel). */
-internal fun DrawScope.drawAthos(b: Rect, image: ImageBitmap, feed: AthosFeed, tm: TextMeasurer, st: AthosText) {
+/**
+ * Pinta la vista Athos en [b] (ya recortada a la forma del panel) encima del vídeo del cristal
+ * ([AthosVideo], otra capa debajo): aquí solo van las lecturas, el anillo y el efecto de la voz.
+ */
+internal fun DrawScope.drawAthos(b: Rect, feed: AthosFeed, tm: TextMeasurer, st: AthosText) {
     val t = feed.clock.longValue
     val w = b.width; val h = b.height
 
-    // 1) Fondo: la imagen a la escala justa para que el triángulo entero ocupe el 80 % del alto,
-    //    centrado en el panel y a la altura del anillo, con un vaivén muy lento.
-    val k = h * 0.80f / (TRI_Y1 - TRI_Y0) * (1.0f + 0.02f * sin(t / 7000f))
-    val dw = image.width * k; val dh = image.height * k
-    val left = b.center.x - (TRI_X0 + TRI_X1) / 2 * k + sin(t / 11000f) * w * 0.006f
-    val topY = b.top + h * RING_Y - (TRI_Y0 + TRI_Y1) / 2 * k
-    drawRect(Color.Black, b.topLeft, b.size)
-    drawImage(image, IntOffset.Zero, IntSize(image.width, image.height), IntOffset(left.toInt(), topY.toInt()), IntSize(dw.toInt(), dh.toInt()))
-    // Bordes de la imagen fundidos a negro si no llega a los lados del panel.
-    val fade = w * 0.05f
-    drawRect(Brush.horizontalGradient(listOf(Color.Black, Color.Transparent), startX = left, endX = left + fade), Offset(left, b.top), Size(fade, h))
-    drawRect(Brush.horizontalGradient(listOf(Color.Transparent, Color.Black), startX = left + dw - fade, endX = left + dw), Offset(left + dw - fade, b.top), Size(fade, h))
-    // Equivalente como recorte de la imagen (para situar el triángulo al hablar).
-    val sw = w / k; val sh = h / k
-    val sx = (b.left - left) / k; val sy = (b.top - topY) / k
-    // 1b) Cuando habla el asistente, el triángulo «habla»: una onda lo difumina desde su centro,
-    //     brilla y lanza ondas, todo al ritmo de la voz (sin desplazarlo).
+    // 1) Cuando habla el asistente, el cristal «habla»: brilla, lanza ondas y una línea de onda
+    //    late bajo él, todo al ritmo de la voz (el vídeo sigue su bucle debajo, sin moverse).
     val speaking = com.cockpitf30.assistant.VoiceAssistant.state.value.phase == com.cockpitf30.assistant.AssistantPhase.ANSWERING
     val lvl = if (speaking) com.cockpitf30.assistant.SpeechPulse.level(t) else 0f
-    if (lvl > 0.02f) drawTriangleVoice(b, image, sx, sy, sw, sh, lvl, t)
+    if (lvl > 0.02f) drawCrystalVoice(Offset(b.center.x, b.top + h * RING_Y), h * 0.80f, lvl, t)
     // Laterales oscurecidos para leer las cifras; el centro (el triángulo) queda limpio.
     drawRect(
         Brush.horizontalGradient(
@@ -183,19 +171,20 @@ internal fun DrawScope.drawAthos(b: Rect, image: ImageBitmap, feed: AthosFeed, t
     )
     drawLine(AthosBlue.copy(alpha = 0.35f), Offset(b.left, scanY), Offset(b.right, scanY), 1.2f, blendMode = BlendMode.Plus)
 
-    // 3) Anillo alrededor del triángulo: escala que gira, arcos de cobre en sentido contrario,
+    // 3) Anillo alrededor del cristal (más tenue que con la imagen: el vídeo ya trae sus órbitas):
+    //    escala que gira, arcos de cobre en sentido contrario,
     //    barrido de radar con los radares cercanos y el rumbo arriba.
     val c = Offset(b.center.x, b.top + h * RING_Y)
     val r = h * 0.36f
     val route = RouteTracker.state.value
     val spin = (t / 60f) % 360f
     rotate(spin, c) {
-        drawCircle(AthosBlue.copy(alpha = 0.55f), r, c, style = Stroke(1.6f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 9f))))
+        drawCircle(AthosBlue.copy(alpha = 0.30f), r, c, style = Stroke(1.6f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 9f))))
     }
     rotate(-spin * 0.6f, c) {
         for (i in 0 until 3) {
             drawArc(
-                AthosCopper.copy(alpha = 0.7f), i * 120f, 38f, false,
+                AthosCopper.copy(alpha = 0.45f), i * 120f, 38f, false,
                 Offset(c.x - r * 0.9f, c.y - r * 0.9f), Size(r * 1.8f, r * 1.8f), style = Stroke(2.4f, cap = StrokeCap.Round),
             )
         }
@@ -211,7 +200,7 @@ internal fun DrawScope.drawAthos(b: Rect, image: ImageBitmap, feed: AthosFeed, t
     }
     val sweep = (t / 12f) % 360f
     drawArc(
-        Brush.sweepGradient(listOf(Color.Transparent, AthosBlue.copy(alpha = 0.0f), AthosBlue.copy(alpha = 0.22f)), c),
+        Brush.sweepGradient(listOf(Color.Transparent, AthosBlue.copy(alpha = 0.0f), AthosBlue.copy(alpha = 0.12f)), c),
         sweep - 50f, 50f, true, Offset(c.x - r, c.y - r), Size(2 * r, 2 * r), blendMode = BlendMode.Plus,
     )
     // Los radares ya no se pintan sobre el triángulo (con la imagen apenas se veían): van en la
@@ -291,58 +280,25 @@ internal fun DrawScope.drawAthos(b: Rect, image: ImageBitmap, feed: AthosFeed, t
     tag(15f, r * 1.5f, r * 0.25f, "CAN · ${spd ?: "—"} km/h", "${feed.canRate.roundToInt()} tramas/s", feed.rpm, AthosCopper)
 }
 
-/** Caja del triángulo en athos_view.webp (px de la imagen). */
-private const val TRI_X0 = 555f
-private const val TRI_X1 = 1040f
-private const val TRI_Y0 = 135f
-private const val TRI_Y1 = 580f
-
-private fun DrawScope.drawTriangleVoice(b: Rect, image: ImageBitmap, sx: Float, sy: Float, sw: Float, sh: Float, lvl: Float, t: Long) {
-    val kx = b.width / sw; val ky = b.height / sh
-    fun dx(ix: Float) = b.left + (ix - sx) * kx
-    fun dy(iy: Float) = b.top + (iy - sy) * ky
-    val center = Offset(dx((TRI_X0 + TRI_X1) / 2), dy(TRI_Y0 + (TRI_Y1 - TRI_Y0) * 0.5f))
-    val size = (TRI_Y1 - TRI_Y0) * ky
-
-    // Halo que respira con la voz.
+private fun DrawScope.drawCrystalVoice(center: Offset, size: Float, lvl: Float, t: Long) {
+    // Halo que respira con la voz, y un brillo blanco en el corazón del cristal.
+    val breathe = 1f + 0.5f * sin(t / 70f)
     drawCircle(
-        Brush.radialGradient(listOf(AthosBlue.copy(alpha = 0.45f * lvl), AthosBlue.copy(alpha = 0.12f * lvl), Color.Transparent), center, size * (0.55f + 0.15f * lvl)),
+        Brush.radialGradient(listOf(AthosBlue.copy(alpha = 0.40f * lvl), AthosBlue.copy(alpha = 0.10f * lvl), Color.Transparent), center, size * (0.55f + 0.15f * lvl)),
         size * (0.55f + 0.15f * lvl), center, blendMode = BlendMode.Plus,
     )
-    // Onda y difuminado (sin mover el triángulo): copias cada vez más grandes y tenues desde su
-    // centro, como una onda que se abre y lo emborrona, y un leve desenfoque alrededor. La radio
-    // tiene Android 10 (sin RenderEffect), así que el desenfoque se hace con copias superpuestas.
-    val boxSrc = IntOffset(TRI_X0.toInt(), TRI_Y0.toInt())
-    val boxSize = IntSize((TRI_X1 - TRI_X0).toInt(), (TRI_Y1 - TRI_Y0).toInt())
-    val bw = (TRI_X1 - TRI_X0) * kx; val bh = (TRI_Y1 - TRI_Y0) * ky
-    val breathe = 1f + 0.5f * sin(t / 70f)
-    fun copy(scale: Float, alpha: Float, ox: Float = 0f, oy: Float = 0f) {
-        val w2 = bw * scale; val h2 = bh * scale
-        drawImage(
-            image, boxSrc, boxSize,
-            IntOffset((center.x - w2 / 2 + ox).toInt(), (center.y - h2 / 2 + oy).toInt()), IntSize(w2.toInt(), h2.toInt()),
-            alpha = alpha.coerceIn(0f, 1f), blendMode = BlendMode.Plus,
-        )
-    }
-    // Onda: seis copias que crecen hasta un 7 % con la voz.
-    val steps = 6
-    for (i in 1..steps) {
-        val f = i / steps.toFloat()
-        copy(1f + lvl * 0.07f * f * breathe, 0.16f * lvl * (1f - f * 0.8f))
-    }
-    // Difuminado: copias desplazadas 2–5 px en ocho direcciones.
-    val blur = 2f + 3f * lvl
-    for (k in 0 until 8) {
-        val ang = k * Math.PI / 4
-        copy(1f, 0.07f * lvl, (cos(ang) * blur).toFloat(), (sin(ang) * blur).toFloat())
-    }
-    // Ondas que salen del triángulo mientras habla.
+    val core = size * (0.16f + 0.06f * lvl * breathe)
+    drawCircle(
+        Brush.radialGradient(listOf(Color.White.copy(alpha = 0.30f * lvl), AthosBlue.copy(alpha = 0.12f * lvl), Color.Transparent), center, core),
+        core, center, blendMode = BlendMode.Plus,
+    )
+    // Ondas que salen del cristal mientras habla.
     for (i in 0 until 3) {
         val f = ((t / 1100f) + i / 3f) % 1f
         val rr = size * (0.35f + 0.75f * f)
         drawCircle(AthosBlue.copy(alpha = (1f - f) * 0.55f * lvl), rr, center, style = Stroke(1.5f + 2f * lvl), blendMode = BlendMode.Plus)
     }
-    // Línea de «forma de onda» bajo el triángulo, como un ecualizador fino.
+    // Línea de «forma de onda» bajo el cristal, como un ecualizador fino.
     val ww = size * 0.9f
     val wy = center.y + size * 0.56f
     val p = Path()

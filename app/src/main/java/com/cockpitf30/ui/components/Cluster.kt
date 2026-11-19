@@ -56,6 +56,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.runtime.collectAsState
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -259,7 +262,6 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     }
     val athosFeed = rememberAthosFeed { page.value < 0f }
     val athosText = remember { AthosText() }
-    val athosImage = cachedBitmap(R.drawable.athos_view) // sin el rótulo: solo el triángulo
     var focused by remember { mutableStateOf(false) }
 
     val route by RouteTracker.state.collectAsStateWithLifecycle()
@@ -332,12 +334,14 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             else MapFrame(route, route.position, route.bearing, 17f, 0f)
             drawPanel(geo, scene, rangeKm, outsideTemp, measurer, overlay, pg, map, mapText, focused)
         }
+        // 1a) Vídeo del cristal de Athos, recortado al panel y deslizándose con la página.
+        AthosVideo(g, maxWidth, geoCache) { page.value }
         // 1b) Vista Athos: solo pinta (y anima) mientras se ve, entrando por la izquierda.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
             val pg = page.value
             if (pg >= 0f) return@Canvas
             val geo = geoCache.get(g, this)
-            drawAthosPanel(geo, pg, athosImage, athosFeed, measurer, athosText, focused)
+            drawAthosPanel(geo, pg, athosFeed, measurer, athosText, focused)
         }
         // 2) Franjas vacías de acero: fijas.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
@@ -646,12 +650,50 @@ private fun panelShape(g: GeoPx): Triple<Path, Rect, Float> {
     return Triple(roundedPolygon(pts, g.dp(22f)), Rect(g.xv + inset, top, g.w - g.xv - inset, bottom), g.w - 2 * (g.xv + inset))
 }
 
+/**
+ * Vídeo de la vista Athos (res/raw/athos_core.mp4: el cristal y sus órbitas, sin el rótulo) en el
+ * rectángulo del panel, recortado a su forma y desplazado con la página igual que las lecturas que
+ * se pintan encima. Se prepara al entrar en el Inicio (primer fotograma listo, sin negro al
+ * deslizar) pero solo corre mientras se ve, con la app delante y ya fuera la pantalla de arranque
+ * (para no decodificar dos vídeos a la vez).
+ */
+@Composable
+private fun AthosVideo(g: Geometry, width: Dp, geoCache: GeoCache, page: () -> Float) {
+    val splashDone by Startup.splashDone.collectAsState()
+    val visible by remember { derivedStateOf { page() < 0f } }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    val lifeState by lifecycle.currentStateFlow.collectAsState()
+    val resumed = lifeState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+    val left = g.scaleWidth + 6.dp + g.band + 14.dp
+    val top = g.frameTop + PANEL_TOP
+    val panelW = width - left * 2
+    val panelH = g.frameBottom - PANEL_BOTTOM - top
+    Box(
+        Modifier.fillMaxSize().drawWithContent {
+            if (page() >= 0f) return@drawWithContent
+            val (panel, _, _) = panelShape(geoCache.get(g, this))
+            clipPath(panel) { this@drawWithContent.drawContent() }
+        },
+    ) {
+        Box(
+            Modifier.offset(left, top).size(panelW, panelH)
+                .graphicsLayer { translationX = (-1f - page()) * panelW.toPx() }
+                .background(Color.Black),
+        ) {
+            LoopVideo(
+                R.raw.athos_core, aspect = 1920f / 480f, playing = visible && splashDone && resumed,
+                modifier = Modifier.fillMaxSize(), focus = CRYSTAL_FOCUS, anchor = androidx.compose.ui.geometry.Offset(0.5f, RING_Y),
+            )
+        }
+    }
+}
+
 /** Vista Athos dentro del panel: entra por la izquierda (página −1). */
-private fun DrawScope.drawAthosPanel(g: GeoPx, page: Float, image: ImageBitmap, feed: AthosFeed, tm: TextMeasurer, st: AthosText, focused: Boolean) {
+private fun DrawScope.drawAthosPanel(g: GeoPx, page: Float, feed: AthosFeed, tm: TextMeasurer, st: AthosText, focused: Boolean) {
     val (panel, bounds, pw) = panelShape(g)
     clipPath(panel) {
         translate(left = (-1f - page) * pw) {
-            clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawAthos(bounds, image, feed, tm, st) }
+            clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawAthos(bounds, feed, tm, st) }
         }
     }
     val edge = if (focused) Cyan.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.10f)
