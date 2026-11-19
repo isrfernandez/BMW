@@ -15,6 +15,8 @@ sealed interface Command {
     data object Maps : Command
     /** «Cierra el mapa / Google Maps»: sale de la navegación del todo y vuelve a la app. */
     data object CloseMaps : Command
+    /** «Intro», «muestra la intro»: la presentación otra vez (como Ajustes › Ver la intro). */
+    data object Intro : Command
     /** «Pregunta a Google …»: se le pasa la pregunta (o nada para abrir el asistente de Google). */
     data class AskGoogle(val query: String?) : Command
     data object Help : Command
@@ -310,6 +312,8 @@ object VoiceCommands {
         // «cancela» suelto, que solo corta al asistente.
         if (has("cierra", "cerrar", "cierralo", "sal de", "salir de", "quita", "quitame", "termina", "terminar", "finaliza", "acaba", "deten la", "para la", "cancela la", "cancela el", "cancelar la") &&
             has("mapa", "maps", "navegacion", "navegador", "ruta", "gps")) return Command.CloseMaps
+        if (t in setOf("intro", "la intro", "presentacion", "la presentacion") ||
+            (has("intro", "presentacion") && has("muestra", "muestrame", "pon", "ponme", "ver", "ensena", "ensename", "reproduce", "repite", "otra vez", "quiero"))) return Command.Intro
         if (t in setOf("pausa", "haz una pausa")) return Command.Pause
         if (t in setOf("continua", "sigue", "sigue hablando", "continua hablando", "sigue por favor", "continua por favor", "por donde ibas", "donde te habias quedado")) return Command.Resume
         if (t in setOf("para", "para ya", "detente", "deten", "detente ya", "parate", "stop", "basta", "basta ya", "vale ya", "ya vale", "no sigas", "suficiente", "no me interesa")) return Command.Cancel

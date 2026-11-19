@@ -136,7 +136,9 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
     val moving by SidebarMove.moving.collectAsStateWithLifecycle()
     var dragY by remember { mutableFloatStateOf(0f) }
     var dragged by remember { mutableStateOf(false) }
-    var suppressClick by remember { mutableStateOf(false) }
+    // Hasta cuándo ignorar un clic: el que pueda llegar al soltar tras arrastrar. Antes era un
+    // indicador que, si ese clic no llegaba, se comía el siguiente toque (había que pulsar dos veces).
+    var suppressUntil by remember { mutableStateOf(0L) }
     var touchDrag by remember { mutableStateOf(false) }
 
     fun startMove(id: String) {
@@ -220,7 +222,7 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
                 FocusTile(
                     onClick = {
                         when {
-                            suppressClick -> suppressClick = false
+                            android.os.SystemClock.uptimeMillis() < suppressUntil -> Unit
                             isMoving -> finish()
                             moving == null -> item.onClick()
                         }
@@ -230,21 +232,23 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
                         .then(if (isMoving) Modifier.zIndex(1f) else Modifier)
                         .graphicsLayer {
                             translationY = (if (isMoving) dragY else 0f) + slide.value
-                            translationX = lift * 14.dp.toPx()
-                            rotationZ = if (isMoving) (wobble.value * 2f - 1.2f) * 1.8f else 0f
-                            val sc = 1f + 0.13f * lift
+                            // Cabe dentro de la barra (que recorta lo que sale de ella): sin desplazarse
+                            // a la derecha ni sombra exterior, que quedaban cortadas.
+                            rotationZ = if (isMoving) (wobble.value * 2f - 1.2f) * 1.2f else 0f
+                            val sc = 1f + 0.09f * lift
                             scaleX = sc; scaleY = sc
-                            shadowElevation = lift * 18.dp.toPx()
                         }
                         // Siempre el mismo modificador (el borde se pinta solo si toca): si la cadena
                         // cambiaba al coger el botón, se rehacía la detección del gesto de debajo y el
                         // arrastre se cancelaba nada más empezar (fallo de 0.9.119).
                         .drawWithContent {
                             drawContent()
-                            if (lift > 0.01f) drawRoundRect(
-                                item.art.accent.copy(alpha = 0.85f * lift), cornerRadius = androidx.compose.ui.geometry.CornerRadius(14.dp.toPx()),
-                                style = androidx.compose.ui.graphics.drawscope.Stroke(3.dp.toPx()),
-                            )
+                            if (lift > 0.01f) {
+                                // Borde de su color y un brillo hacia dentro (no sale del botón).
+                                val r = androidx.compose.ui.geometry.CornerRadius(14.dp.toPx())
+                                drawRoundRect(item.art.accent.copy(alpha = 0.18f * lift), cornerRadius = r, style = androidx.compose.ui.graphics.drawscope.Stroke(10.dp.toPx()))
+                                drawRoundRect(item.art.accent.copy(alpha = 0.9f * lift), cornerRadius = r, style = androidx.compose.ui.graphics.drawscope.Stroke(2.5.dp.toPx()))
+                            }
                         }
                         .semantics { contentDescription = item.label }
                         .onFocusChanged {
@@ -255,7 +259,7 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
                             // Táctil: pulsación larga y arrastrar arriba/abajo; al soltar se guarda.
                             // Pulsación larga sin arrastrar: su atajo (Home → Diagnóstico).
                             detectDragGesturesAfterLongPress(
-                                onDragStart = { suppressClick = true; dragged = false; touchDrag = true; startMove(id) },
+                                onDragStart = { suppressUntil = Long.MAX_VALUE; dragged = false; touchDrag = true; startMove(id) },
                                 onDrag = { change, amount ->
                                     change.consume()
                                     dragY += amount.y
@@ -264,12 +268,13 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
                                     while (dragY < -stepPx / 2 && order.indexOf(id) > 0) { step(-1); dragY += stepPx }
                                 },
                                 onDragEnd = {
+                                    suppressUntil = android.os.SystemClock.uptimeMillis() + 400
                                     touchDrag = false
                                     dragY = 0f
                                     finish()
                                     if (!dragged) item.onLongClick?.invoke()
                                 },
-                                onDragCancel = { touchDrag = false; dragY = 0f; finish() },
+                                onDragCancel = { suppressUntil = android.os.SystemClock.uptimeMillis() + 400; touchDrag = false; dragY = 0f; finish() },
                             )
                         },
                 ) { focused ->

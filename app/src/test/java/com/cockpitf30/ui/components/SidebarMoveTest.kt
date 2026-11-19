@@ -20,12 +20,14 @@ import org.robolectric.annotation.Config
 class SidebarMoveTest {
     @get:Rule val rule = createComposeRule()
 
+    private var navClicks = 0
+
     @Test fun longPressAndDrag() {
         rule.setContent {
             CockpitTheme {
                 Row(Modifier.fillMaxSize()) {
                     Sidebar(listOf(
-                        SideItem("Home", SideArt.HOME, true) {}, SideItem("Navegación", SideArt.NAV, false) {},
+                        SideItem("Home", SideArt.HOME, true) {}, SideItem("Navegación", SideArt.NAV, false) { navClicks++ },
                         SideItem("Rendimiento", SideArt.PERF, false) {}, SideItem("Música", SideArt.MUSIC, false) {},
                         SideItem("Apps", SideArt.APPS, false) {}, SideItem("Ajustes", SideArt.SETTINGS, false) {},
                     ))
@@ -41,5 +43,10 @@ class SidebarMoveTest {
         // Y de verdad cambia de puesto (en 0.9.119 el arrastre se cancelaba y no se movía nada).
         val order = com.cockpitf30.system.AppSettings(androidx.test.core.app.ApplicationProvider.getApplicationContext()).sidebarOrder
         org.junit.Assert.assertTrue("orden: $order", order.indexOf("NAV") > order.indexOf("PERF"))
+        // Y un toque después abre su pantalla a la primera (en 0.9.120 había que pulsar dos veces).
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(1, java.util.concurrent.TimeUnit.SECONDS)
+        rule.onNodeWithContentDescription("Navegación").performClick()
+        rule.waitForIdle()
+        org.junit.Assert.assertEquals(1, navClicks)
     }
 }

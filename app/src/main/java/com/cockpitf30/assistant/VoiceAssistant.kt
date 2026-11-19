@@ -889,7 +889,7 @@ object VoiceAssistant {
         conversation.record(text, command, reply, now)
         saveRecent()
         val ends = command == Command.Cancel || command == Command.Thanks || command == Command.No || command == Command.Quiet ||
-            command == Command.TourInfo || command == Command.AboutThat ||
+            command == Command.TourInfo || command == Command.AboutThat || command == Command.Intro ||
             command is Command.Navigate || command is Command.Call || command == Command.Maps || command == Command.CloseMaps || command == Command.Music ||
             command is Command.AskGoogle || (command is Command.Station && command.action == StationAction.GO) ||
             command is Command.RadioPlay || command == Command.RadioStop || command is Command.RadioNext || command is Command.RadioVolume
@@ -1144,6 +1144,10 @@ object VoiceAssistant {
         }
         Command.Music -> { afterSpeaking { openMusic(app) }; joke("Abro la música", "music") }
         Command.Maps -> { afterSpeaking { openMaps(app) }; joke("Abro el mapa", "maps") }
+        Command.Intro -> {
+            afterSpeaking { com.cockpitf30.ui.components.Startup.replay.value++ }
+            "Ahí va"
+        }
         Command.CloseMaps -> {
             afterSpeaking { com.cockpitf30.nav.MapsGuidanceState.exitNavigation(app) }
             if (com.cockpitf30.nav.MapsGuidanceState.current.value != null) "Cierro la navegación" else "Cierro el mapa"
