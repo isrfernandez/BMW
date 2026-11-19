@@ -346,9 +346,8 @@ private fun DrivingSettings(onOpen: (Screen) -> Unit) {
         ToggleRow("Iniciar con sonido", "El sonido de Athoox en la pantalla de arranque.", sound) {
             sound = it; settings.startSound = it
         }
-        var viewSound by remember { mutableStateOf(settings.athosViewSound) }
-        ToggleRow("Sonido de la vista Athoox", "Suena al pasar a la vista Athoox en el centro del cuadro del Inicio.", viewSound) {
-            viewSound = it; settings.athosViewSound = it
+        ActionRow("Ver la intro", "La presentación de Athoox otra vez, con su sonido, y vuelta al Inicio como al arrancar.", "Ver ›") {
+            com.cockpitf30.ui.components.Startup.replay.value++
         }
         var briefing by remember { mutableStateOf(settings.briefing) }
         ToggleRow("Briefing al arrancar", "Saludo con el tiempo, los radares cercanos y la autonomía, si han pasado más de 45 minutos desde el anterior.", briefing) {

@@ -236,17 +236,25 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     val scope = rememberCoroutineScope()
     fun choose(to: Int) {
         val t = to.coerceIn(-1, 1)
-        if (t == -1 && target != -1) AthosSound.play(ctx)
         target = t
         ClusterIntro.done = true
         scope.launch { page.animateTo(t.toFloat(), tween(450, easing = FastOutSlowInEasing)) }
     }
-    LaunchedEffect(Unit) {
-        if (ClusterIntro.done) return@LaunchedEffect
+    val replayN by ClusterIntro.replay.collectAsState()
+    LaunchedEffect(replayN) {
+        if (replayN > ClusterIntro.replayHandled) {
+            // «Ver la intro»: otra vez la vista Athoox y después coche y mapa, como al arrancar.
+            ClusterIntro.replayHandled = replayN
+            ClusterIntro.done = false
+            target = -1
+            page.snapTo(-1f)
+        } else {
+            if (ClusterIntro.done) return@LaunchedEffect
+            Startup.splashDone.first { it }
+        }
         // La vista Athoox cuenta desde que se va la presentación (antes contaba desde que se
         // montaba el Inicio, debajo, y casi no se veía) y se queda mientras habla el asistente
         // (el saludo de arranque), con un mínimo y un máximo.
-        Startup.splashDone.first { it }
         val since = System.currentTimeMillis()
         delay(ClusterIntro.ATHOS_MIN_MS)
         var quietSince = 0L
@@ -475,6 +483,9 @@ object ClusterIntro {
     /** Motor parado al menos esto para repetir el barrido al arrancarlo. */
     const val ENGINE_OFF_MS = 5_000L
     @Volatile var done = false
+    /** «Ver la intro»: cada vez que sube, el cuadro vuelve a empezar por la vista Athoox. */
+    val replay = kotlinx.coroutines.flow.MutableStateFlow(0)
+    @Volatile var replayHandled = 0
     /** Ya se hizo el barrido de bienvenida de las agujas. */
     @Volatile var swept = false
 }
@@ -682,6 +693,7 @@ private fun panelShape(g: GeoPx): Triple<Path, Rect, Float> {
 @Composable
 private fun AthosVideo(g: Geometry, width: Dp, geoCache: GeoCache, page: () -> Float) {
     val splashDone by Startup.splashDone.collectAsState()
+    val replaying by Startup.replaying.collectAsState()
     val visible by remember { derivedStateOf { page() < 0f } }
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     val lifeState by lifecycle.currentStateFlow.collectAsState()
@@ -702,19 +714,22 @@ private fun AthosVideo(g: Geometry, width: Dp, geoCache: GeoCache, page: () -> F
         var shown = 0f
         try {
             while (true) {
-                androidx.compose.runtime.withFrameMillis { }
                 val speaking = com.cockpitf30.assistant.VoiceAssistant.state.value.phase == com.cockpitf30.assistant.AssistantPhase.ANSWERING
+                // Callado y ya apagado: se mira 5 veces por segundo, sin pedir fotogramas.
+                if (!speaking && shown < 0.02f) { delay(200); continue }
+                androidx.compose.runtime.withFrameMillis { }
                 val lvl = if (speaking) com.cockpitf30.assistant.SpeechPulse.level(System.currentTimeMillis()) else 0f
                 // Sube rápido con cada sílaba y cae algo más despacio, como un destello.
                 val next = if (lvl > shown) shown + (lvl - shown) * 0.6f else shown + (lvl - shown) * 0.18f
                 if (kotlin.math.abs(next - shown) < 0.01f && !(next < 0.02f && shown >= 0.02f)) continue
                 shown = next
                 if (shown < 0.02f) { tv.setLayerPaint(null); continue }
-                val k = 1f + 0.75f * shown
+                // Más suave que en 0.9.117-0.9.118 (el usuario lo vio demasiado intenso).
+                val k = 1f + 0.40f * shown
                 cm.set(floatArrayOf(
-                    k, 0f, 0f, 0f, 8f * shown,
-                    0f, k, 0f, 0f, 22f * shown,
-                    0f, 0f, k * 1.08f, 0f, 40f * shown,
+                    k, 0f, 0f, 0f, 4f * shown,
+                    0f, k, 0f, 0f, 12f * shown,
+                    0f, 0f, k * 1.05f, 0f, 24f * shown,
                     0f, 0f, 0f, 1f, 0f,
                 ))
                 paint.colorFilter = android.graphics.ColorMatrixColorFilter(cm)
@@ -735,7 +750,7 @@ private fun AthosVideo(g: Geometry, width: Dp, geoCache: GeoCache, page: () -> F
                 .background(Color.Black),
         ) {
             LoopVideo(
-                R.raw.athos_intro, aspect = 1920f / 720f, attached = splashDone, playing = visible && splashDone && resumed,
+                R.raw.athos_intro, aspect = 1920f / 720f, attached = splashDone && !replaying, playing = visible && splashDone && !replaying && resumed,
                 modifier = Modifier.fillMaxSize(), region = CRYSTAL_REGION, focus = CRYSTAL_FOCUS,
                 anchor = androidx.compose.ui.geometry.Offset(0.5f, RING_Y),
                 onView = { texture[0] = it },

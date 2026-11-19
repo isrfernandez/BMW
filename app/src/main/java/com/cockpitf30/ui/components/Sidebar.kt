@@ -137,6 +137,7 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
     var dragY by remember { mutableFloatStateOf(0f) }
     var dragged by remember { mutableStateOf(false) }
     var suppressClick by remember { mutableStateOf(false) }
+    var touchDrag by remember { mutableStateOf(false) }
 
     fun startMove(id: String) {
         beforeMove = order
@@ -202,6 +203,20 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
                     if (isMoving) wobble.animateTo(1.2f, infiniteRepeatable(tween(140), RepeatMode.Reverse), initialVelocity = 0f)
                     else wobble.snapTo(0f)
                 }
+                // Al cambiar de puesto, el botón se desliza desde donde estaba (antes saltaba de golpe
+                // y apenas se notaba el cambio). El que se arrastra con el dedo ya va con el dedo.
+                val index = order.indexOf(id)
+                val slide = remember { androidx.compose.animation.core.Animatable(0f) }
+                var lastIndex by remember { mutableStateOf(index) }
+                androidx.compose.runtime.LaunchedEffect(index) {
+                    val moved = lastIndex - index
+                    lastIndex = index
+                    if (moved == 0 || (isMoving && touchDrag)) return@LaunchedEffect
+                    slide.snapTo(slide.value + moved * stepPx)
+                    slide.animateTo(0f, androidx.compose.animation.core.spring(dampingRatio = 0.72f, stiffness = 260f))
+                }
+                // Marcado mientras se mueve: se agranda, sale un poco hacia la derecha y brilla.
+                val lift by androidx.compose.animation.core.animateFloatAsState(if (isMoving) 1f else 0f, tween(220), label = "lift")
                 FocusTile(
                     onClick = {
                         when {
@@ -214,11 +229,22 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
                     modifier = Modifier.fillMaxWidth().height(TILE_HEIGHT)
                         .then(if (isMoving) Modifier.zIndex(1f) else Modifier)
                         .graphicsLayer {
-                            translationY = if (isMoving) dragY else 0f
-                            rotationZ = if (isMoving) wobble.value * 2f - 1.2f else 0f
-                            val sc = if (isMoving) 1.06f else 1f
+                            translationY = (if (isMoving) dragY else 0f) + slide.value
+                            translationX = lift * 14.dp.toPx()
+                            rotationZ = if (isMoving) (wobble.value * 2f - 1.2f) * 1.8f else 0f
+                            val sc = 1f + 0.13f * lift
                             scaleX = sc; scaleY = sc
+                            shadowElevation = lift * 18.dp.toPx()
                         }
+                        .then(
+                            if (lift > 0.01f) Modifier.drawWithContent {
+                                drawContent()
+                                drawRoundRect(
+                                    item.art.accent.copy(alpha = 0.85f * lift), cornerRadius = androidx.compose.ui.geometry.CornerRadius(14.dp.toPx()),
+                                    style = androidx.compose.ui.graphics.drawscope.Stroke(3.dp.toPx()),
+                                )
+                            } else Modifier,
+                        )
                         .semantics { contentDescription = item.label }
                         .onFocusChanged {
                             if (it.isFocused) SidebarMove.focused = id
@@ -228,7 +254,7 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
                             // Táctil: pulsación larga y arrastrar arriba/abajo; al soltar se guarda.
                             // Pulsación larga sin arrastrar: su atajo (Home → Diagnóstico).
                             detectDragGesturesAfterLongPress(
-                                onDragStart = { suppressClick = true; dragged = false; startMove(id) },
+                                onDragStart = { suppressClick = true; dragged = false; touchDrag = true; startMove(id) },
                                 onDrag = { change, amount ->
                                     change.consume()
                                     dragY += amount.y
@@ -237,11 +263,12 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
                                     while (dragY < -stepPx / 2 && order.indexOf(id) > 0) { step(-1); dragY += stepPx }
                                 },
                                 onDragEnd = {
+                                    touchDrag = false
                                     dragY = 0f
                                     finish()
                                     if (!dragged) item.onLongClick?.invoke()
                                 },
-                                onDragCancel = { dragY = 0f; finish() },
+                                onDragCancel = { touchDrag = false; dragY = 0f; finish() },
                             )
                         },
                 ) { focused ->

@@ -74,6 +74,9 @@ class VoiceCommandsTest {
         assertEquals(Command.Info(InfoTopic.FUEL_NEAR), VoiceCommands.parse("llévame a la gasolinera más cercana"))
         assertEquals(Command.AskGoogle("cuanto mide la torre eiffel"), VoiceCommands.parse("pregunta a Google cuánto mide la torre Eiffel"))
         assertEquals(Command.AskGoogle(null), VoiceCommands.parse("abre Google"))
+        // Antes acababa en restaurantes cercanos («cenar»).
+        assertEquals(Command.AskGoogle("ideas para cenar"), VoiceCommands.parse("pregúntale a Google ideas para cenar"))
+        assertEquals(Command.AskGoogle("donde comer bien en madrid"), VoiceCommands.parse("busca en google dónde comer bien en Madrid"))
         assertEquals(Command.Cancel, VoiceCommands.parse("nada"))
         assertEquals(Command.Help, VoiceCommands.parse("qué puedes hacer"))
         assertEquals(Command.Joke, VoiceCommands.parse("cuéntame un chiste"))

@@ -64,7 +64,20 @@ internal class AthosFeed {
         fun max(): Float = v.maxOrNull()?.takeIf { it > 0f } ?: 1f
     }
 
+    /**
+     * Textos de las lecturas: se formatean una vez por muestra (4 por segundo), no en cada
+     * fotograma (30 por segundo). Formatear cifras y fechas crea basura y, con el tiempo, pausas del
+     * recolector que se notaban como tirones del vídeo.
+     */
+    private var seq = 0
+    private val texts = HashMap<String, Pair<Int, String?>>()
+    fun text(key: String, make: () -> String?): String? {
+        texts[key]?.let { (s, v) -> if (s == seq) return v }
+        return make().also { texts[key] = seq to it }
+    }
+
     fun sample(now: Long) {
+        seq++
         val vs = VehicleRepository.state.value
         val r = RouteTracker.state.value
         val t = Telemetry.state.value
@@ -215,7 +228,7 @@ internal fun DrawScope.drawAthos(b: Rect, feed: AthosFeed, tm: TextMeasurer, st:
     // Indicador de rumbo arriba del anillo.
     val tip = Offset(c.x, c.y - r * 1.17f)
     drawPath(Path().apply { moveTo(tip.x, tip.y + 10f); lineTo(tip.x - 8f, tip.y - 4f); lineTo(tip.x + 8f, tip.y - 4f); close() }, AthosCopper)
-    centered(tm, "${route.bearing.roundToInt()}° ${compass(route.bearing)}", st.hud, AthosCopper, Offset(tip.x, tip.y - 26f))
+    centered(tm, feed.text("heading") { "${route.bearing.roundToInt()}° ${compass(route.bearing)}" }!!, st.hud, AthosCopper, Offset(tip.x, tip.y - 26f))
 
     // 4) Cabecera (los laterales del panel ya llevan las cifras del cuadro): estado de los
     //    sistemas a la izquierda; reloj y la última lectura del registro a la derecha.
@@ -239,8 +252,10 @@ internal fun DrawScope.drawAthos(b: Rect, feed: AthosFeed, tm: TextMeasurer, st:
         sx2 += lay.size.width + 22f
     }
     // Radares: bajo los sistemas, en una placa oscura que se lee sobre la imagen.
-    val radarText = cams.ahead?.let { "RADAR DELANTE · ${radarDistance(it.meters)}" + (it.camera.maxspeed?.let { m -> " · $m km/h" } ?: "") }
-        ?: cams.near.size.takeIf { it > 0 }?.let { "$it RADAR${if (it == 1) "" else "ES"} EN ZONA" }
+    val radarText = feed.text("radar") {
+        cams.ahead?.let { "RADAR DELANTE · ${radarDistance(it.meters)}" + (it.camera.maxspeed?.let { m -> " · $m km/h" } ?: "") }
+            ?: cams.near.size.takeIf { it > 0 }?.let { "$it RADAR${if (it == 1) "" else "ES"} EN ZONA" }
+    }
     radarText?.let { txt ->
         val lay = tm.measure(txt, st.mono.copy(color = if (cams.ahead != null) Color(0xFFFF8A7A) else Color.White.copy(alpha = 0.85f)))
         val at = Offset(b.left + pad, top + 48f)
@@ -248,7 +263,7 @@ internal fun DrawScope.drawAthos(b: Rect, feed: AthosFeed, tm: TextMeasurer, st:
         drawCircle(Color(0xFFFF4A3A).copy(alpha = if (cams.ahead != null) blink else 0.8f), 4f, Offset(at.x + 2f, at.y + lay.size.height / 2f))
         drawText(lay, topLeft = Offset(at.x + 14f, at.y))
     }
-    textRight(tm, java.time.LocalTime.now().withNano(0).toString(), st.label, Dim, Offset(b.right - pad, top))
+    textRight(tm, feed.text("clock") { java.time.LocalTime.now().withNano(0).toString() }!!, st.label, Dim, Offset(b.right - pad, top))
     feed.log.firstOrNull()?.let { textRight(tm, it, st.mono, AthosBlue, Offset(b.right - pad, top + 20f)) }
 
     // 5) Etiquetas alrededor del anillo, unidas a él con una línea: cada una con su gráfica.
@@ -280,12 +295,15 @@ internal fun DrawScope.drawAthos(b: Rect, feed: AthosFeed, tm: TextMeasurer, st:
     }
     val spd = vs.speedKmh ?: route.fix?.speedKmh?.roundToInt()
     val gNow = sqrt(tel.longG * tel.longG + tel.latG * tel.latG)
-    tag(-150f, -r * 1.55f, -r * 0.55f, "GPS ±${route.fix?.accuracyM?.roundToInt() ?: "—"} m",
-        route.position?.let { "%.4f  %.4f".format(Locale.US, it.lat, it.lon) } ?: "SIN POSICIÓN", feed.speed, AthosBlue)
-    tag(-30f, r * 1.55f, -r * 0.55f, "FUERZA G", "%.2f g".format(Locale.US, gNow).replace('.', ','), feed.g, AthosBlue)
-    tag(165f, -r * 1.5f, r * 0.25f, "ALTITUD", tel.altitudeM?.roundToInt()?.let { "$it m" } ?: "— m", feed.alt, AthosCopper)
-    tag(15f, r * 1.5f, r * 0.25f, "CAN · ${spd ?: "—"} km/h", "${feed.canRate.roundToInt()} tramas/s", feed.rpm, AthosCopper)
+    tag(-150f, -r * 1.55f, -r * 0.55f, feed.text("gpsL") { "GPS ±${route.fix?.accuracyM?.roundToInt() ?: "—"} m" }!!,
+        feed.text("gpsV") { route.position?.let { "%.4f  %.4f".format(Locale.US, it.lat, it.lon) } ?: "SIN POSICIÓN" }!!, feed.speed, AthosBlue)
+    tag(-30f, r * 1.55f, -r * 0.55f, "FUERZA G", feed.text("g") { "%.2f g".format(Locale.US, gNow).replace('.', ',') }!!, feed.g, AthosBlue)
+    tag(165f, -r * 1.5f, r * 0.25f, "ALTITUD", feed.text("alt") { tel.altitudeM?.roundToInt()?.let { "$it m" } ?: "— m" }!!, feed.alt, AthosCopper)
+    tag(15f, r * 1.5f, r * 0.25f, feed.text("canL") { "CAN · ${spd ?: "—"} km/h" }!!, feed.text("canV") { "${feed.canRate.roundToInt()} tramas/s" }!!, feed.rpm, AthosCopper)
 }
+
+/** Pasadas del destello (grosor px, opacidad): anchas y tenues por fuera, finas por dentro = difuminado. */
+private val FLASH_PASSES = listOf(22f to 0.06f, 12f to 0.10f, 6f to 0.16f, 2.5f to 0.22f)
 
 private fun DrawScope.drawCrystalVoice(center: Offset, size: Float, lvl: Float, t: Long) {
     // Halo que respira con la voz, y un brillo blanco en el corazón del cristal.
@@ -299,23 +317,27 @@ private fun DrawScope.drawCrystalVoice(center: Offset, size: Float, lvl: Float, 
         Brush.radialGradient(listOf(Color.White.copy(alpha = 0.30f * lvl), AthosBlue.copy(alpha = 0.12f * lvl), Color.Transparent), center, core),
         core, center, blendMode = BlendMode.Plus,
     )
-    // Destello en las sílabas fuertes: estrella de cuatro puntas y un filo de luz horizontal,
-    // como un reflejo que cruza el cristal (el vídeo, debajo, también se ilumina con la voz).
-    val flash = ((lvl - 0.35f) / 0.65f).coerceIn(0f, 1f)
+    // Destello en las sílabas fuertes: un reflejo difuminado que cruza el cristal (filo horizontal
+    // y vertical hechos de varias pasadas anchas y tenues, sin línea dura) y un brillo central.
+    // Más suave que en 0.9.117 (el usuario lo vio intenso).
+    val flash = ((lvl - 0.40f) / 0.60f).coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
     if (flash > 0f) {
-        val len = size * (0.25f + 0.45f * flash)
-        val streak = size * (0.6f + 0.9f * flash)
-        drawLine(
-            Brush.horizontalGradient(listOf(Color.Transparent, AthosBlue.copy(alpha = 0.55f * flash), Color.White.copy(alpha = 0.9f * flash), AthosBlue.copy(alpha = 0.55f * flash), Color.Transparent), startX = center.x - streak, endX = center.x + streak),
-            Offset(center.x - streak, center.y), Offset(center.x + streak, center.y), 2.5f + 3f * flash, blendMode = BlendMode.Plus,
-        )
-        drawLine(
-            Brush.verticalGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.8f * flash), Color.Transparent), startY = center.y - len, endY = center.y + len),
-            Offset(center.x, center.y - len), Offset(center.x, center.y + len), 2f + 2f * flash, blendMode = BlendMode.Plus,
-        )
+        val streak = size * (0.55f + 0.7f * flash)
+        val len = size * (0.22f + 0.30f * flash)
+        for ((width, alpha) in FLASH_PASSES) {
+            drawLine(
+                Brush.horizontalGradient(listOf(Color.Transparent, AthosBlue.copy(alpha = alpha * 0.8f * flash), Color.White.copy(alpha = alpha * flash), AthosBlue.copy(alpha = alpha * 0.8f * flash), Color.Transparent), startX = center.x - streak, endX = center.x + streak),
+                Offset(center.x - streak, center.y), Offset(center.x + streak, center.y), width * (0.8f + 0.4f * flash), cap = StrokeCap.Round, blendMode = BlendMode.Plus,
+            )
+            drawLine(
+                Brush.verticalGradient(listOf(Color.Transparent, Color.White.copy(alpha = alpha * 0.7f * flash), Color.Transparent), startY = center.y - len, endY = center.y + len),
+                Offset(center.x, center.y - len), Offset(center.x, center.y + len), width * 0.7f, cap = StrokeCap.Round, blendMode = BlendMode.Plus,
+            )
+        }
+        val glow = size * (0.14f + 0.06f * flash)
         drawCircle(
-            Brush.radialGradient(listOf(Color.White.copy(alpha = 0.75f * flash), AthosBlue.copy(alpha = 0.25f * flash), Color.Transparent), center, size * 0.12f),
-            size * 0.12f, center, blendMode = BlendMode.Plus,
+            Brush.radialGradient(listOf(Color.White.copy(alpha = 0.35f * flash), AthosBlue.copy(alpha = 0.14f * flash), Color.Transparent), center, glow),
+            glow, center, blendMode = BlendMode.Plus,
         )
     }
     // Ondas que salen del cristal mientras habla.

@@ -138,6 +138,13 @@ object VoiceAssistant {
     private const val END_SILENCE_UNSURE_MS = 2_500L
     /** Al empezar a hablar no se atiende a interrupciones (aún se oye el final de lo que dijo el conductor). */
     private const val BARGE_GRACE_MS = 1_000L
+    /** Voz por encima de la suya: cuánto más fuerte que sus sílabas fuertes y cuántos bloques seguidos. */
+    private const val VOICE_OVER_RATIO = 1.9f
+    private const val VOICE_OVER_BLOCKS = 3
+    private const val VOICE_OVER_MIN_BLOCKS = 20
+    private const val VOICE_OVER_GRACE_MS = 2_000L
+    /** Lo que escucha tras callarse por una voz encima; si nadie dice nada, sigue. */
+    private const val VOICE_OVER_LISTEN_MS = 4_500L
     /** Tiempo que debe mantenerse en el parcial una orden de interrupción para hacerle caso. */
     private const val BARGE_STABLE_MS = 700L
     /** Lo mismo para una orden de corte inconfundible («cancela», «detente»…), buscada en todo lo transcrito. */
@@ -385,6 +392,7 @@ object VoiceAssistant {
         /** Niveles del micrófono de los últimos segundos hablando (para separar tu voz de su eco). */
         val echoLevels = ArrayList<Float>()
         var bargeSince = 0L
+        var overCount = 0
         // Lo dicho hasta ahora en la orden: Vosk corta en cada pausa corta, y se espera a que el
         // conductor termine de verdad (END_SILENCE_MS sin hablar) antes de entenderla.
         val utterance = StringBuilder()
@@ -470,6 +478,18 @@ object VoiceAssistant {
                         val ratio = voiceOverEcho(echoLevels).second
                         _state.update { it.copy(lastText = "(hablando) $hit") }
                         withContext(Dispatchers.Main) { safely("interrupción") { logState("oído mientras habla: «$hit» (micro ${"%.1f".format(ratio)}× su eco; libre: «${fRaw.takeLast(40)}»)"); onBargeIn(hit) } }
+                    } else if (hit == null && echoLevels.size >= VOICE_OVER_MIN_BLOCKS && now - mutedSince > VOICE_OVER_GRACE_MS) {
+                        // Con su voz sonando, el micro apenas entiende las palabras (el eco las tapa):
+                        // si se oye a alguien claramente por encima de ella un rato, se calla y escucha
+                        // limpio. «Cancela», «para», «detente» se entienden entonces; si nadie dice
+                        // nada, sigue donde iba.
+                        val ratio = voiceOverEcho(echoLevels).second
+                        overCount = if (ratio >= VOICE_OVER_RATIO) overCount + 1 else 0
+                        if (overCount >= VOICE_OVER_BLOCKS) {
+                            overCount = 0
+                            bargeRec.reset(); freeRec.reset()
+                            withContext(Dispatchers.Main) { safely("voz encima") { onVoiceOver(ratio) } }
+                        }
                     }
                     continue
                 }
@@ -631,6 +651,12 @@ object VoiceAssistant {
 
     private fun onListenTimeout() {
         if (_state.value.phase != AssistantPhase.LISTENING) return
+        if (autoResume) {
+            autoResume = false
+            val rest = pausedText?.takeIf { System.currentTimeMillis() - pausedAt < 60_000L }
+            pausedText = null
+            if (rest != null) { logState("nadie dijo nada: sigo"); say(rest); return }
+        }
         if (followUp) {
             // Fin de la conversación seguida: sin «No te he oído», que no se ha preguntado nada.
             followUp = false
@@ -763,7 +789,14 @@ object VoiceAssistant {
                     val cmd = VoiceCommands.afterWakeWord(text)?.ifBlank { null } ?: text
                     execute(cmd, followUp)
                 }
-                followUp -> Unit
+                // Conversación seguida y Google falla sin haber oído nada (ocupado, error de
+                // cliente…: pasa al abrirlo dos veces seguidas en la radio): antes se cortaba la
+                // charla al segundo turno; ahora sigue escuchando con Vosk el tiempo que quedaba.
+                followUp && !started && error != null && error != SpeechRecognizer.ERROR_NO_MATCH && error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
+                    logState("seguida: Google error $error, sigo con Vosk")
+                    listenFollowUp(timeoutMs.coerceAtLeast(4_000L), paused = false)
+                }
+                followUp -> logState("seguida: fin (${error?.let { "Google $it" } ?: "sin nada"})")
                 error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || error == null ->
                     _state.update { it.copy(reply = "No te he oído", replyAt = System.currentTimeMillis(), replyUntil = System.currentTimeMillis() + 3_000) }
                 else -> {
@@ -824,6 +857,8 @@ object VoiceAssistant {
     // ---------------------------------------------------------------- órdenes y respuestas
 
     private fun execute(text: String, inFollowUp: Boolean = false, listen: Boolean = true) {
+        val wasAuto = autoResume
+        autoResume = false
         listenUntil = 0
         followUp = false
         val now = System.currentTimeMillis()
@@ -838,6 +873,8 @@ object VoiceAssistant {
         if (echo) Log.i(TAG, "Eco de su propia voz, se ignora: «$text»")
         if (echo || inFollowUp && !waitingAnswer && ((command is Command.Unknown && words < 3) || command == Command.Yes || command == Command.Another)) {
             // Sin «Hola Athos» y sin sentido: será la radio o alguien hablando. No se contesta.
+            // Si se había callado por esa voz, sigue donde iba.
+            if (wasAuto) pausedText?.let { rest -> pausedText = null; logState("no era una orden: sigo"); say(rest); return }
             _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, paused = false) }
             return
         }
@@ -1987,6 +2024,24 @@ object VoiceAssistant {
             VoiceCommands.Barge.PAUSE -> listenFollowUp(PAUSE_MS, paused = rest != null)
             else -> listenFollowUp(maxOf(HOLD_MS, followMs()), paused = false)
         }
+    }
+
+    /** Se calló porque alguien hablaba encima: si no se dice nada, retoma la frase. */
+    private var autoResume = false
+
+    private fun onVoiceOver(ratio: Float) {
+        if (_state.value.phase != AssistantPhase.ANSWERING || !muted) return
+        val rest = remainingText(_state.value.reply.orEmpty(), spokenPos)
+        logState("voz encima de la suya (${"%.1f".format(ratio)}×): me callo y escucho")
+        noteCut("hablaste encima")
+        unmuteJob?.cancel()
+        listenAfterReply = 0
+        stopSpeaking()
+        muted = false
+        resetRecognizer = true
+        pausedText = rest; pausedAt = System.currentTimeMillis()
+        autoResume = rest != null
+        listenFollowUp(VOICE_OVER_LISTEN_MS, paused = rest != null)
     }
 
     /** Hasta cuándo dejar a la vista una respuesta ya dicha: 3 s más, y al menos lo que se tarda en leerla. */

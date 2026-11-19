@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableStateOf
@@ -89,6 +90,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         hideSystemBars()
+        com.cockpitf30.system.FrameStats.install(this)
         IDriveInput.learned = AppSettings(this).knobKeys
         com.cockpitf30.ui.theme.DriveModes.load(this)
         com.cockpitf30.ui.components.DemoTour.recover(this)
@@ -113,6 +115,9 @@ class MainActivity : ComponentActivity() {
                 Box(Modifier.fillMaxSize()) {
                     CockpitRoot(navActions)
                     com.cockpitf30.ui.components.StartupSplash()
+                    // «Ver la intro» (Ajustes): la presentación otra vez, con su sonido.
+                    val replay by com.cockpitf30.ui.components.Startup.replay.collectAsState()
+                    if (replay > 0) androidx.compose.runtime.key(replay) { com.cockpitf30.ui.components.StartupSplash(replay = true) }
                 }
             }
         }

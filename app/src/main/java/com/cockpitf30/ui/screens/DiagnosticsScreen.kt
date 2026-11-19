@@ -269,6 +269,12 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                DiagCard("Fluidez") {
+                    // Se refresca con el reloj de la pantalla (now).
+                    now.let { com.cockpitf30.system.FrameStats.summary().forEach { Info(it) } }
+                }
+            }
+            item {
                 // Para ajustar la interfaz a radios con otra densidad o tamaño de letra.
                 val dm = context.resources.displayMetrics
                 val cfg = context.resources.configuration

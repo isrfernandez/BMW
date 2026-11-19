@@ -314,6 +314,12 @@ object VoiceCommands {
         if (t in setOf("continua", "sigue", "sigue hablando", "continua hablando", "sigue por favor", "continua por favor", "por donde ibas", "donde te habias quedado")) return Command.Resume
         if (t in setOf("para", "para ya", "detente", "deten", "detente ya", "parate", "stop", "basta", "basta ya", "vale ya", "ya vale", "no sigas", "suficiente", "no me interesa")) return Command.Cancel
         if (t in setOf("nada", "no", "no gracias", "cancelar", "cancela", "olvidalo", "salir", "adios", "hasta luego", "nada mas") || has("cancela", "olvidalo")) return Command.Cancel
+        // «Pregúntale a Google…», «busca en Google…»: antes que todo lo demás («ideas para cenar»
+        // acababa en restaurantes cercanos). Google Maps / el mapa no cuentan.
+        if (has("google") && !has("maps", "mapa")) {
+            val q = t.substringAfter("google").trim()
+            return Command.AskGoogle(q.ifEmpty { null })
+        }
         if (has("gracias") && words.size <= 4) return Command.Thanks
         if (t in YES || (words.size <= 3 && t.startsWith("si "))) return Command.Yes
         if (t in ANOTHER) return Command.Another
@@ -378,10 +384,7 @@ object VoiceCommands {
         }
         if (has("sinceridad", "honestidad")) return Command.Honesty
 
-        if (has("google") && !has("maps", "mapa")) {
-            val q = t.substringAfter("google").trim()
-            return Command.AskGoogle(q.ifEmpty { null })
-        }
+
 
         // «Llama a Manuel», «llamar a mamá», «telefonea a Pedro móvil».
         Regex("^(?:(?:puedes|podrias) )?(?:llama|llamar|telefonea|marca)(?: a| al| a la)? (.+)").find(t)?.let { m ->

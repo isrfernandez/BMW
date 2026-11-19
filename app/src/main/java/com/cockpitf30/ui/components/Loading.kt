@@ -98,6 +98,10 @@ object Startup {
     val splashDone = kotlinx.coroutines.flow.MutableStateFlow(false)
     /** El vídeo ya se está pintando en el panel del cuadro (para retirar el negro de la presentación). */
     val clusterVideo = kotlinx.coroutines.flow.MutableStateFlow(false)
+    /** «Ver la intro» (Ajustes): cada vez que sube se vuelve a poner la presentación. */
+    val replay = kotlinx.coroutines.flow.MutableStateFlow(0)
+    /** Se está viendo otra vez la presentación: el cuadro le cede el vídeo. */
+    val replaying = kotlinx.coroutines.flow.MutableStateFlow(false)
 }
 
 /**
@@ -115,9 +119,9 @@ object Startup {
  * despacio ([REVEAL_MS]) dejando ver el Inicio.
  */
 @Composable
-fun StartupSplash(maxMs: Long = 9_000) {
-    // Si la actividad se recrea, el arranque ya pasó: no se repite.
-    if (remember { Startup.splashDone.value }) return
+fun StartupSplash(maxMs: Long = 9_000, replay: Boolean = false) {
+    // Si la actividad se recrea, el arranque ya pasó: no se repite (salvo «Ver la intro»).
+    if (!replay && remember { Startup.splashDone.value }) return
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val veil = remember { androidx.compose.animation.core.Animatable(1f) }
     var gone by remember { mutableIntStateOf(0) } // 1 = terminado
@@ -126,15 +130,23 @@ fun StartupSplash(maxMs: Long = 9_000) {
     val firstFrame = remember { kotlinx.coroutines.CompletableDeferred<Unit>() }
     LaunchedEffect(Unit) {
         val started = System.currentTimeMillis()
-        // El sonido se prepara fuera del hilo principal mientras el vídeo pinta su primera imagen.
-        val sound = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            if (com.cockpitf30.system.AppSettings(ctx).startSound) runCatching { logoPlayer(ctx) }.getOrNull() else null
+        if (replay) { Startup.replaying.value = true; Startup.clusterVideo.value = false }
+        // El sonido se prepara fuera del hilo principal y suena en cuanto está listo, sin esperar
+        // al vídeo (en 0.9.114–0.9.118 esperaba a su primer fotograma y en la radio dejó de oírse).
+        val enabled = com.cockpitf30.system.AppSettings(ctx).startSound
+        val sound = if (!enabled) null else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { logoPlayer(ctx) }.onFailure { com.cockpitf30.assistant.VoiceAssistant.note("sonido de inicio: no se pudo preparar (${it.javaClass.simpleName}: ${it.message})") }.getOrNull()
         }
+        sound?.setOnErrorListener { _, what, extra -> com.cockpitf30.assistant.VoiceAssistant.note("sonido de inicio: error $what/$extra"); true }
+        runCatching { sound?.start() }.onFailure { com.cockpitf30.assistant.VoiceAssistant.note("sonido de inicio: no arranca (${it.message})") }
+        com.cockpitf30.assistant.VoiceAssistant.note(
+            if (!enabled) "sonido de inicio: desactivado en Ajustes"
+            else if (sound?.isPlaying == true) "sonido de inicio: sonando (volumen multimedia ${mediaVolume(ctx)})" else "sonido de inicio: no suena",
+        )
         kotlinx.coroutines.withTimeoutOrNull(FIRST_FRAME_MAX_MS) { firstFrame.await() }
-        // Mismo fotograma: arranca el vídeo, empieza a retirarse el velo y suena el logo.
+        // Arranca el vídeo y se retira el velo (el sonido ya va: su subida acompaña el fundido).
         playing = true
         withFrameNanos { }
-        runCatching { sound?.start() }
         veil.animateTo(0f, androidx.compose.animation.core.tween(FADE_IN_MS, easing = androidx.compose.animation.core.LinearOutSlowInEasing))
         delay(HOLD_MS)
         // Si la app aún no ha terminado de cargar, el vídeo sigue en bucle (como mucho hasta maxMs).
@@ -142,11 +154,16 @@ fun StartupSplash(maxMs: Long = 9_000) {
         veil.animateTo(1f, androidx.compose.animation.core.tween(FADE_OUT_MS, easing = androidx.compose.animation.core.LinearEasing))
         // En negro: el vídeo pasa al cuadro y, cuando ya se ve allí, el negro se funde al Inicio.
         handedOver = true
-        Startup.splashDone.value = true
+        if (replay) {
+            // «Ver la intro»: vuelve al Inicio con la vista Athoox, como al arrancar.
+            DemoTour.navigator?.invoke(com.cockpitf30.ui.screens.Screen.HOME)
+            ClusterIntro.replay.value++
+            Startup.replaying.value = false
+        } else Startup.splashDone.value = true
         kotlinx.coroutines.withTimeoutOrNull(HANDOVER_MAX_MS) { Startup.clusterVideo.first { v -> v } }
         veil.animateTo(0f, androidx.compose.animation.core.tween(REVEAL_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing))
         gone = 1
-        delay(1_500)
+        delay(4_000)
         runCatching { sound?.release() }
     }
     if (gone == 1) return
@@ -162,21 +179,10 @@ fun StartupSplash(maxMs: Long = 9_000) {
     }
 }
 
-/** Sonido de Athos para la vista del Inicio: suena una vez y se libera solo (si está activado). */
-object AthosSound {
-    private var player: android.media.MediaPlayer? = null
-
-    fun play(ctx: android.content.Context) {
-        if (!com.cockpitf30.system.AppSettings(ctx).athosViewSound) return
-        stop()
-        player = runCatching { logoPlayer(ctx) }.getOrNull()?.apply {
-            setOnCompletionListener { it.release(); if (player === it) player = null }
-            start()
-        }
-    }
-
-    fun stop() { player?.let { runCatching { it.release() } }; player = null }
-}
+private fun mediaVolume(ctx: android.content.Context): String = runCatching {
+    val am = ctx.getSystemService(android.media.AudioManager::class.java)
+    "${am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)}/${am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)}"
+}.getOrDefault("?")
 
 /** Sonido del logo como multimedia sin pedir el foco de audio: suena encima de la radio sin pararla. */
 internal fun logoPlayer(ctx: android.content.Context): android.media.MediaPlayer {
