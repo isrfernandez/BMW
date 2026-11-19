@@ -114,6 +114,7 @@ fun LoopVideo(
     focus: Offset = Offset(0.5f, 0.5f),
     anchor: Offset = Offset(0.5f, 0.5f),
     onFirstFrame: () -> Unit = {},
+    onView: (TextureView) -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val owner = remember { Any() }
@@ -144,7 +145,7 @@ fun LoopVideo(
         val y = clamp(anchor.y * ch - focus.y * vh, ch - region.bottom * vh, -region.top * vh)
         // Más grande que el hueco: se coloca desde la esquina (unbounded) y el sobrante se recorta.
         AndroidView(
-            factory = { c -> TextureView(c).also { holder[0] = it; if (attached) SharedLoop.attach(it) } },
+            factory = { c -> TextureView(c).also { holder[0] = it; onView(it); if (attached) SharedLoop.attach(it) } },
             modifier = Modifier.wrapContentSize(Alignment.TopStart, unbounded = true)
                 .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
                 .requiredSize(with(density) { vw.toDp() }, with(density) { vh.toDp() }),

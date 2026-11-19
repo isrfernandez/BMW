@@ -299,6 +299,25 @@ private fun DrawScope.drawCrystalVoice(center: Offset, size: Float, lvl: Float, 
         Brush.radialGradient(listOf(Color.White.copy(alpha = 0.30f * lvl), AthosBlue.copy(alpha = 0.12f * lvl), Color.Transparent), center, core),
         core, center, blendMode = BlendMode.Plus,
     )
+    // Destello en las sílabas fuertes: estrella de cuatro puntas y un filo de luz horizontal,
+    // como un reflejo que cruza el cristal (el vídeo, debajo, también se ilumina con la voz).
+    val flash = ((lvl - 0.35f) / 0.65f).coerceIn(0f, 1f)
+    if (flash > 0f) {
+        val len = size * (0.25f + 0.45f * flash)
+        val streak = size * (0.6f + 0.9f * flash)
+        drawLine(
+            Brush.horizontalGradient(listOf(Color.Transparent, AthosBlue.copy(alpha = 0.55f * flash), Color.White.copy(alpha = 0.9f * flash), AthosBlue.copy(alpha = 0.55f * flash), Color.Transparent), startX = center.x - streak, endX = center.x + streak),
+            Offset(center.x - streak, center.y), Offset(center.x + streak, center.y), 2.5f + 3f * flash, blendMode = BlendMode.Plus,
+        )
+        drawLine(
+            Brush.verticalGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.8f * flash), Color.Transparent), startY = center.y - len, endY = center.y + len),
+            Offset(center.x, center.y - len), Offset(center.x, center.y + len), 2f + 2f * flash, blendMode = BlendMode.Plus,
+        )
+        drawCircle(
+            Brush.radialGradient(listOf(Color.White.copy(alpha = 0.75f * flash), AthosBlue.copy(alpha = 0.25f * flash), Color.Transparent), center, size * 0.12f),
+            size * 0.12f, center, blendMode = BlendMode.Plus,
+        )
+    }
     // Ondas que salen del cristal mientras habla.
     for (i in 0 until 3) {
         val f = ((t / 1100f) + i / 3f) % 1f

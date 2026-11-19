@@ -181,7 +181,8 @@ internal fun logoPlayer(ctx: android.content.Context): android.media.MediaPlayer
     }
 }
 
-// res/raw/athos_intro.mp4: el vídeo de Athos del usuario a 1920×720, 30 fps, 4,57 s en bucle sin
+// res/raw/athos_intro.mp4: la segunda versión del vídeo del usuario (1920×720 a 60 fps), pasada a 30 fps (el
+// decodificador de la radio no llega a 60 a esta resolución), 4,6 s en bucle sin
 // salto (H.264 Main sin fotogramas B, sin audio, 1,7 MB). res/raw/logo_sound.ogg: el
 // «cinematic boom» del usuario recortado a 5,65 s; la subida acompaña al fundido de entrada y el
 // golpe (~2,8 s) cae con la imagen ya entera; la app entra mientras se apaga.

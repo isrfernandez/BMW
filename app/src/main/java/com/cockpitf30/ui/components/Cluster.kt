@@ -672,6 +672,38 @@ private fun AthosVideo(g: Geometry, width: Dp, geoCache: GeoCache, page: () -> F
     val top = g.frameTop + PANEL_TOP
     val panelW = width - left * 2
     val panelH = g.frameBottom - PANEL_BOTTOM - top
+    // Cuando habla el asistente, el propio cristal se ilumina con la voz: el vídeo se pinta con un
+    // filtro de color (más brillo y un punto de azul) que sigue el nivel de la voz, fotograma a
+    // fotograma. Callado o fuera de la vista, sin filtro (coste cero).
+    val texture = remember { arrayOfNulls<android.view.TextureView>(1) }
+    LaunchedEffect(visible, resumed) {
+        val tv = texture[0]
+        if (!visible || !resumed || tv == null) { tv?.setLayerPaint(null); return@LaunchedEffect }
+        val paint = android.graphics.Paint()
+        val cm = android.graphics.ColorMatrix()
+        var shown = 0f
+        try {
+            while (true) {
+                androidx.compose.runtime.withFrameMillis { }
+                val speaking = com.cockpitf30.assistant.VoiceAssistant.state.value.phase == com.cockpitf30.assistant.AssistantPhase.ANSWERING
+                val lvl = if (speaking) com.cockpitf30.assistant.SpeechPulse.level(System.currentTimeMillis()) else 0f
+                // Sube rápido con cada sílaba y cae algo más despacio, como un destello.
+                val next = if (lvl > shown) shown + (lvl - shown) * 0.6f else shown + (lvl - shown) * 0.18f
+                if (kotlin.math.abs(next - shown) < 0.01f && !(next < 0.02f && shown >= 0.02f)) continue
+                shown = next
+                if (shown < 0.02f) { tv.setLayerPaint(null); continue }
+                val k = 1f + 0.75f * shown
+                cm.set(floatArrayOf(
+                    k, 0f, 0f, 0f, 8f * shown,
+                    0f, k, 0f, 0f, 22f * shown,
+                    0f, 0f, k * 1.08f, 0f, 40f * shown,
+                    0f, 0f, 0f, 1f, 0f,
+                ))
+                paint.colorFilter = android.graphics.ColorMatrixColorFilter(cm)
+                tv.setLayerPaint(paint)
+            }
+        } finally { tv.setLayerPaint(null) }
+    }
     Box(
         Modifier.fillMaxSize().drawWithContent {
             if (page() >= 0f) return@drawWithContent
@@ -688,6 +720,7 @@ private fun AthosVideo(g: Geometry, width: Dp, geoCache: GeoCache, page: () -> F
                 R.raw.athos_intro, aspect = 1920f / 720f, attached = splashDone, playing = visible && splashDone && resumed,
                 modifier = Modifier.fillMaxSize(), region = CRYSTAL_REGION, focus = CRYSTAL_FOCUS,
                 anchor = androidx.compose.ui.geometry.Offset(0.5f, RING_Y),
+                onView = { texture[0] = it },
             )
         }
     }
