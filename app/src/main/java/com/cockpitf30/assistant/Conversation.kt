@@ -178,6 +178,7 @@ class Conversation {
                 InfoTopic.FUEL_NEAR -> "las gasolineras cercanas"
                 InfoTopic.TYRES -> "las ruedas"
                 InfoTopic.WEATHER -> "el tiempo"
+                InfoTopic.WIND -> "el viento"
                 InfoTopic.TIME -> "la hora"
                 InfoTopic.DOORS -> "las puertas"
                 InfoTopic.TRIP -> "el viaje"

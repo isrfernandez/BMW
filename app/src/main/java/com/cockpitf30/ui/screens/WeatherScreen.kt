@@ -184,6 +184,7 @@ fun WeatherScreen() {
                         Column {
                             Text(f?.let { "${it.tempC}°" } ?: "--°", style = numeric(96, FontWeight.Medium))
                             Text(c?.text ?: "Sin datos", style = MaterialTheme.typography.titleMedium, color = Cockpit.TextDim)
+                            f?.let { windLine(it) }?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = Cockpit.TextDim, maxLines = 1) }
                         }
                     }
                     Spacer(Modifier.height(16.dp))
@@ -274,3 +275,16 @@ private fun Modifier.softEdges(edge: Float = 0.07f): Modifier = this
         drawRect(Brush.horizontalGradient(0f to Color.Transparent, fadeX to Color.Black, 1f - fadeX to Color.Black, 1f to Color.Transparent), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
         drawRect(Brush.verticalGradient(0f to Color.Transparent, edge to Color.Black, 1f - edge to Color.Black, 1f to Color.Transparent), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
     }
+
+/** «Viento de poniente · 15 km/h · flojo · rolando a suroeste por la tarde». */
+private fun windLine(f: com.cockpitf30.weather.Forecast): String? {
+    val w = com.cockpitf30.weather.Wind.now(f) ?: return null
+    if (w.kmh < com.cockpitf30.weather.Wind.CALM_KMH) return "Viento en calma"
+    val veer = com.cockpitf30.weather.Wind.veer(f.hours, java.time.LocalDateTime.now(), w.fromDeg)
+    return listOfNotNull(
+        "Viento ${com.cockpitf30.weather.Wind.from(w.fromDeg)}",
+        "${w.kmh} km/h",
+        com.cockpitf30.weather.Wind.force(w.kmh),
+        veer?.text,
+    ).joinToString(" · ")
+}

@@ -49,6 +49,7 @@ fun alertColor(c: AlertCategory): Color = when (c) {
     AlertCategory.REST -> Color(0xFF3DDC97)
     AlertCategory.TOURISM -> Color(0xFF7FD3FF)
     AlertCategory.FOOD -> Color(0xFFFFC46B)
+    AlertCategory.WIND -> Color(0xFFB7E4F0)
 }
 
 /**
