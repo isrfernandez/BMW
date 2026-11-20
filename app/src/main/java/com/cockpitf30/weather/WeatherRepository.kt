@@ -35,6 +35,9 @@ object WeatherRepository {
     val state: StateFlow<WeatherState> = _state.asStateFlow()
     private var cacheLoaded = false
 
+    /** Modo demo: el tiempo es el de este sitio (Madrid) y no se guarda en caché ni en recientes. */
+    @Volatile var demoPlace: Place? = null
+
     fun loadCache(context: Context) {
         if (cacheLoaded) return
         cacheLoaded = true
@@ -49,7 +52,8 @@ object WeatherRepository {
         _state.update { it.copy(loading = true, error = null) }
         val settings = AppSettings(context)
         val result = runCatching {
-            val place = settings.weatherPlace ?: currentPlace(context)
+            val demo = demoPlace
+            val place = demo ?: settings.weatherPlace ?: currentPlace(context)
                 ?: error(if (hasLocationPermission(context)) "Ubicación no disponible" else "Sin permiso de ubicación")
             val json = httpGet(
                 "https://api.open-meteo.com/v1/forecast?latitude=${place.lat}&longitude=${place.lon}" +
@@ -61,8 +65,10 @@ object WeatherRepository {
             )
             val forecast = parseForecast(json)
             val now = System.currentTimeMillis()
-            settings.weatherCache = Triple(json, place.name, now)
-            settings.addRecentPlace(place)
+            if (demo == null) {
+                settings.weatherCache = Triple(json, place.name, now)
+                settings.addRecentPlace(place)
+            }
             Triple(forecast, place.name, now)
         }
         result.onSuccess { (f, name, time) ->

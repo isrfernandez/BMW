@@ -15,6 +15,8 @@ sealed interface Command {
     data object Maps : Command
     /** «Cierra el mapa / Google Maps»: sale de la navegación del todo y vuelve a la app. */
     data object CloseMaps : Command
+    /** «Intro», «muestra la intro»: la presentación otra vez (como Ajustes › Ver la intro). */
+    data object Intro : Command
     /** «Pregunta a Google …»: se le pasa la pregunta (o nada para abrir el asistente de Google). */
     data class AskGoogle(val query: String?) : Command
     data object Help : Command
@@ -56,6 +58,8 @@ sealed interface Command {
     data object Recap : Command
     /** Charla: [key] de [Lines.CHAT] («hello», «howareyou», «tired»…). */
     data class Chat(val key: String) : Command
+    /** Respuesta a una adivinanza: acertada, fallada o «me rindo». */
+    data class RiddleAnswer(val riddle: Riddle, val outcome: RiddleOutcome) : Command
     /** «Activa / desactiva el copiloto»; null = activar. */
     data class Copilot(val on: Boolean?) : Command
     /** «Pausa»: se calla, pero recuerda dónde iba. */
@@ -121,6 +125,8 @@ object VoiceCommands {
      */
     private val NAME_FORMS: Set<String> = setOf(
         "athos", "atos", "hatos", "actos", "altos", "athus", "atus",
+        // «Athoox» (el nombre con equis): suena casi igual; Google puede escribirlo así.
+        "athoox", "athox", "atox", "atoks", "atoxs",
         // Lo que el modelo pequeño cree oír a menudo: «a dos», «datos», «gatos», «patos».
         "ados", "datos", "gatos", "patos",
     )
@@ -131,12 +137,13 @@ object VoiceCommands {
      */
     val WAKE_GRAMMAR: String = listOf(
         "hola athos", "hola atos", "hola a tos", "ola atos", "ola a tos", "oye atos", "oye a tos",
-        "hola actos", "hola altos", "hola a dos", "ola a dos", "hola datos", "hola gatos", "hola patos", "[unk]",
+        "hola actos", "hola altos", "hola a dos", "ola a dos", "hola datos", "hola gatos", "hola patos", "hola atox", "[unk]",
     ).joinToString(",", "[", "]") { "\"$it\"" }
 
     /** Palabras para cortar al asistente mientras habla. */
     /** Cortar y callarse. */
-    private val STOP_WORDS = listOf("para", "para ya", "detente", "cancela", "cancelar", "cancélalo", "cancela ya", "silencio", "calla", "callate", "cállate", "basta", "vale ya", "stop")
+    private val STOP_WORDS = listOf("para", "para ya", "detente", "cancela", "cancelar", "cancélalo", "cancela ya", "silencio", "calla", "callate", "cállate", "basta", "vale ya", "stop",
+        "deja de hablar", "no sigas", "suficiente", "no me interesa")
     /** Pausar para luego seguir («continúa»). */
     private val PAUSE_WORDS = listOf("pausa", "haz una pausa")
     /** Retomar lo que estaba diciendo. */
@@ -191,6 +198,34 @@ object VoiceCommands {
         return if (words.any { CANCEL_LIKE.containsMatchIn(it) }) "cancela" else null
     }
 
+    /**
+     * Órdenes de corte inconfundibles, con las formas en que las escribe el reconocedor libre.
+     * Se buscan en TODO lo que lleva transcrito, no solo al final: mientras dices «cancela» la radio
+     * sigue hablando, el reconocedor sigue escribiendo su eco detrás y la palabra dejaba de estar al
+     * final antes de los 0,7 s que se pedían, así que la explicación turística no había quien la parase.
+     */
+    private val STRONG_STOPS: List<Pair<Regex, String>> = listOf(
+        Regex("\\b[ck]an[cs]e?l\\w*") to "cancela",
+        Regex("\\bde ?t[ei]n ?t[ea]\\b|\\bdeten\\b|\\bdetenga\\w*") to "detente",
+        Regex("\\bsilencio\\b") to "silencio",
+        Regex("\\b[bv]asta\\b") to "basta",
+        Regex("\\b(?:call?ate|cayate|calla(?: te| ya)?|a callar|callese)\\b") to "callate",
+        Regex("\\be?stop\\b") to "stop",
+        Regex("\\bpara ya\\b|\\bparate\\b|\\bpara para\\b") to "para ya",
+        Regex("\\b(?:deja|para|dejar) de hablar\\b") to "deja de hablar",
+        Regex("\\bno sigas\\b") to "no sigas",
+        Regex("\\b(?:ya vale|vale ya)\\b") to "vale ya",
+        Regex("\\b(?:ya es )?suficiente\\b") to "suficiente",
+        Regex("\\bno me interesa\\b") to "no me interesa",
+    )
+
+    /** Todas las órdenes de corte inconfundibles que aparecen en [text] (en su forma canónica). */
+    fun stopKinds(text: String): Set<String> {
+        val t = normalize(text.replace("[unk]", " "))
+        if (t.isEmpty()) return emptySet()
+        return STRONG_STOPS.filter { it.first.containsMatchIn(t) }.mapTo(LinkedHashSet()) { it.second }
+    }
+
     /** Lo que pide una palabra dicha mientras habla el asistente. */
     enum class Barge { STOP, PAUSE, HOLD, RESUME }
 
@@ -229,10 +264,10 @@ object VoiceCommands {
 
     /** ¿Está el nombre entero en la frase? (sensibilidad baja: solo «Athos/Atos», no las confusiones). */
     fun hasFullName(text: String): Boolean = normalize(text).let { t ->
-        listOf("athos", "atos", "a tos").any { t.contains(it) }
+        listOf("athos", "atos", "a tos", "athoox", "athox", "atox", "atoks").any { t.contains(it) }
     }
 
-    private val WAKE_PREFIX = Regex("^((hola|ola|oye|hello) )+((a tos|a dos|athos|atos|hatos|actos|altos|atus|athus|datos|gatos|patos) )?|^(a tos|athos|atos|hatos|atus|athus) ")
+    private val WAKE_PREFIX = Regex("^((hola|ola|oye|hello) )+((a tos|a dos|athoox|athox|atox|atoks|athos|atos|hatos|actos|altos|atus|athus|datos|gatos|patos) )?|^(a tos|athoox|athox|atox|atoks|athos|atos|hatos|atus|athus) ")
 
     /**
      * Quita del principio los restos de «hola Athos»: la activación salta en cuanto se oye, así que
@@ -254,7 +289,7 @@ object VoiceCommands {
         val camp = h("camping", "acampar", "autocaravana", "caravana")
         val sleep = h("alojamiento", "alojarme", "alojarnos", "hotel", "hostal", "dormir", "pension", "albergue", "casa rural", "pasar la noche", "hospedarnos", "hospedarme")
         val drink = h("bares", "un bar", "algun bar", "tomar algo", "tomar un cafe", "cafeteria", "un cafe")
-        val eat = h("donde comer", "para comer", "sitio de comer", "comer algo", "restaurante", "donde cenar", "para cenar", "cenar algo", "comida", "un menu", "menu del dia", "tengo hambre", "almorzar")
+        val eat = h("donde comer", "donde puedo comer", "donde podemos comer", "donde se come", "para comer", "sitio de comer", "comer algo", "restaurante", "donde cenar", "para cenar", "cenar algo", "comida", "un menu", "menu del dia", "tengo hambre", "almorzar")
         val kinds = buildSet {
             if (eat) add(com.cockpitf30.nav.StayKind.EAT)
             if (drink) add(com.cockpitf30.nav.StayKind.DRINK)
@@ -277,10 +312,18 @@ object VoiceCommands {
         // «cancela» suelto, que solo corta al asistente.
         if (has("cierra", "cerrar", "cierralo", "sal de", "salir de", "quita", "quitame", "termina", "terminar", "finaliza", "acaba", "deten la", "para la", "cancela la", "cancela el", "cancelar la") &&
             has("mapa", "maps", "navegacion", "navegador", "ruta", "gps")) return Command.CloseMaps
+        if (t in setOf("intro", "la intro", "presentacion", "la presentacion") ||
+            (has("intro", "presentacion") && has("muestra", "muestrame", "pon", "ponme", "ver", "ensena", "ensename", "reproduce", "repite", "otra vez", "quiero"))) return Command.Intro
         if (t in setOf("pausa", "haz una pausa")) return Command.Pause
         if (t in setOf("continua", "sigue", "sigue hablando", "continua hablando", "sigue por favor", "continua por favor", "por donde ibas", "donde te habias quedado")) return Command.Resume
-        if (t in setOf("para", "para ya", "detente", "parate", "stop", "basta", "vale ya")) return Command.Cancel
+        if (t in setOf("para", "para ya", "detente", "deten", "detente ya", "parate", "stop", "basta", "basta ya", "vale ya", "ya vale", "no sigas", "suficiente", "no me interesa")) return Command.Cancel
         if (t in setOf("nada", "no", "no gracias", "cancelar", "cancela", "olvidalo", "salir", "adios", "hasta luego", "nada mas") || has("cancela", "olvidalo")) return Command.Cancel
+        // «Pregúntale a Google…», «busca en Google…»: antes que todo lo demás («ideas para cenar»
+        // acababa en restaurantes cercanos). Google Maps / el mapa no cuentan.
+        if (has("google") && !has("maps", "mapa")) {
+            val q = t.substringAfter("google").trim()
+            return Command.AskGoogle(q.ifEmpty { null })
+        }
         if (has("gracias") && words.size <= 4) return Command.Thanks
         if (t in YES || (words.size <= 3 && t.startsWith("si "))) return Command.Yes
         if (t in ANOTHER) return Command.Another
@@ -345,10 +388,7 @@ object VoiceCommands {
         }
         if (has("sinceridad", "honestidad")) return Command.Honesty
 
-        if (has("google") && !has("maps", "mapa")) {
-            val q = t.substringAfter("google").trim()
-            return Command.AskGoogle(q.ifEmpty { null })
-        }
+
 
         // «Llama a Manuel», «llamar a mamá», «telefonea a Pedro móvil».
         Regex("^(?:(?:puedes|podrias) )?(?:llama|llamar|telefonea|marca)(?: a| al| a la)? (.+)").find(t)?.let { m ->
@@ -425,6 +465,8 @@ object VoiceCommands {
             has("mapa", "navegacion", "navegador", "maps", "gps") -> Command.Maps
             has("autonomia", "combustible", "gasoil", "deposito") -> Command.Info(InfoTopic.RANGE)
             has("hora") -> Command.Info(InfoTopic.TIME)
+            // «Hoy estás muy raro», «eres muy gracioso»…: algo sobre él que no tiene respuesta propia.
+            words.size >= 3 && (words.contains("eres") || words.contains("estas")) && !isRealQuestion(t) -> Command.Chat("aboutme")
             else -> Command.Unknown(t)
         }
     }
@@ -454,10 +496,48 @@ object VoiceCommands {
     private val YES = setOf("si", "vale", "venga", "claro", "dale", "por favor", "adelante", "de acuerdo", "ok", "okey", "bueno", "vale vale", "si si", "claro que si", "vamos alla", "por supuesto")
     private val ANOTHER = setOf("otro", "otra", "otra mas", "otro mas", "siguiente", "la siguiente", "el siguiente", "y otra", "y otro", "uno mas", "una mas", "mas", "cuentame otro", "dime otro", "dime otra")
 
+    /** ¿Empieza como una pregunta de verdad («qué es…», «cuándo…», «sabes…»)? */
+    fun isRealQuestion(text: String): Boolean =
+        Regex("^(?:y )?(?:que|como|cual|cuales|cuando|donde|quien|quienes|cuanto|cuanta|cuantos|cuantas|por que|sabes|conoces|me puedes decir)\\b").containsMatchIn(normalize(text))
+
     /** Charla: devuelve la clave de [Lines.CHAT] o null. */
     private fun chatKey(t: String, has: (Array<out String>) -> Boolean): String? {
         fun h(vararg k: String) = has(k)
+        val words = t.split(' ')
         return when {
+            // Que hable más o menos: «hoy no estás muy hablador», «estás muy callado», «dame conversación».
+            h("hablas mucho", "hablas demasiado", "hablas un monton", "que pesado", "que pesada", "eres un pesado", "eres una pesada", "cuanto hablas", "no te callas", "no paras de hablar") -> "chatty"
+            h("hablador", "habladora", "muy callado", "muy callada", "estas callado", "estas callada", "que callado", "que callada", "no dices nada", "no hablas", "no me hablas",
+                "dame conversacion", "dame charla", "dame palique", "charla conmigo", "habla conmigo", "hablemos", "vamos a hablar", "conversa conmigo", "di algo", "poco hablador",
+                "no tienes ganas de hablar", "estas muy serio", "estas muy seria", "que serio estas", "que seria estas", "estas mudo", "te ha comido la lengua") || t == "hablame" -> "talkative"
+            h("adivinanza", "acertijo", "adivina adivinanza") -> "riddle"
+            h("refran", "refranes", "dicho popular", "frase celebre", "una cita", "una frase bonita", "frase motivadora", "frase del dia") -> "saying"
+            h("preguntame algo", "hazme una pregunta", "pregunta algo", "preguntame lo que quieras", "preguntame tu") -> "question"
+            h("que tal tu dia", "como ha ido tu dia", "que tal el dia", "que tal te ha ido", "como te ha ido el dia", "que has hecho hoy") -> "day"
+            h("que haces", "en que piensas", "que estas haciendo", "que andas haciendo") -> "whatdoing"
+            h("tienes sentimientos", "tienes emociones", "eres feliz", "te gusta tu trabajo", "estas contento", "estas contenta", "estas feliz", "sientes algo", "te enfadas") -> "feelings"
+            h("estas vivo", "estas viva", "eres humano", "eres una persona", "eres real", "eres una maquina", "eres un robot", "tienes conciencia", "eres de verdad") -> "alive"
+            h("quien te ha hecho", "quien te hizo", "quien te creo", "quien te ha creado", "quien te programo", "quien te ha programado", "tu creador", "tu jefe", "quien es tu padre") -> "creator"
+            h("donde vives", "donde estas", "de donde eres") -> "where"
+            h("duermes", "cuando descansas", "no te cansas", "tienes sueno") -> "sleep"
+            h("favorit", "que te gusta", "que musica te gusta", "te gusta la musica", "que te gusta hacer") -> "favorite"
+            h("te gusta", "te parece", "opinas") && h("coche", "bmw", "serie tres") -> "car"
+            h("conduzco bien", "que tal conduzco", "como conduzco", "conduzco mal", "soy buen conductor", "soy buena conductora", "conduzco de lujo") -> "driving"
+            h("que opinas de mi", "que piensas de mi", "te caigo bien", "como soy", "te gusto") -> "opinion"
+            h("mi amigo", "mi amiga", "somos amigos", "eres mi colega") -> "friend"
+            h("me siento solo", "me siento sola", "estoy solo", "estoy sola", "voy solo", "voy sola") -> "lonely"
+            h("consejo", "aconsejame") -> "advice"
+            h("animame", "motivame", "dime algo bonito", "algo bonito", "un piropo", "echame un piropo", "dime algo bueno") -> "cheer"
+            h("triste", "de bajon", "mal dia", "dia horrible", "dia malo", "dia de perros", "estoy fatal", "estoy mal", "deprimid", "desanimad", "estoy regular") -> "sad"
+            h("estresad", "agobiad", "nervios", "llego tarde", "voy tarde", "tengo prisa", "voy con prisa") -> "stressed"
+            h("enfadad", "cabread", "mosquead", "estoy harto", "estoy harta", "que rabia", "me tienen frito") -> "angry"
+            h("atasco", "trafico", "caravana", "retencion", "no se mueve nadie") -> "traffic"
+            h("contento", "contenta", "feliz", "alegre", "buen dia", "dia estupendo", "que buen dia", "dia genial", "que bien") -> "happy"
+            h("que malo", "vaya chiste", "no tiene gracia", "malisimo", "que chiste mas malo", "no me hace gracia", "vaya tela", "que malos son") -> "badjoke"
+            words.any { it.startsWith("jaja") || it.startsWith("jeje") } || h("ja ja", "que gracioso", "que graciosa", "que gracia", "muy bueno", "me parto", "me meo", "buenisimo", "que risa") -> "laugh"
+            h("perdona", "perdon", "lo siento", "disculpa", "disculpame") -> "sorry"
+            h("buenas noches") && words.size <= 3 -> "hello"
+
             t in setOf("hola", "buenas", "buenos dias", "buenas tardes", "buenas noches", "hey", "hola hola") -> "hello"
             h("que tal", "como estas", "como te va", "como andas", "como te encuentras") -> "howareyou"
             h("quien eres", "como te llamas", "que eres", "presentate") -> "whoareyou"
@@ -471,6 +551,8 @@ object VoiceCommands {
             h("sentido de la vida") -> "life"
             h("cantame", "canta algo", "canta una", "cantas") -> "sing"
             h("hambre") -> "hungry"
+            h("curiosidad", "dato curioso", "datos curiosos", "sabias que", "algo interesante", "sorprendeme", "algo que no sepa") ||
+                t in setOf("cuentame algo", "dime algo", "cuentame una cosa", "dime una cosa") -> "fact"
             else -> null
         }
     }

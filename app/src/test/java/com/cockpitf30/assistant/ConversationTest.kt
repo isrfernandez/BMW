@@ -110,8 +110,8 @@ class ConversationTest {
         val lines = (1..10).map { "frase $it" }
         val picked = (1..10).map { r.choose(lines, Random(it))!! }
         assertEquals(10, picked.toSet().size)
-        // Agotadas: vuelve la más antigua.
-        assertEquals(picked.first(), r.choose(lines))
+        // Agotadas: vuelve una del tercio más antiguo.
+        assertTrue(r.choose(lines) in picked.take(3))
         val saved = r.save()
         val r2 = RecentLines(100).apply { load(saved) }
         assertTrue(r2.contains("frase 3"))

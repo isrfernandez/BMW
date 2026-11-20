@@ -51,6 +51,19 @@ object RadioLogic {
     const val FM_MAX = 10800
     const val DEFAULT_VOLUME = 70
 
+    /**
+     * Qué volver a poner al arrancar: la fuente de la última emisora que sonó. Las instalaciones
+     * anteriores a 0.9.110 no la guardaban: se toma la última fuente elegida, y si era Internet
+     * solo si hay emisora guardada. FM sin sintonizador accesible no se pone.
+     */
+    fun autoPlaySource(lastPlayed: String?, lastSource: String?, hasStation: Boolean, tunerAvailable: Boolean): RadioSource? {
+        val src = runCatching { RadioSource.valueOf(lastPlayed ?: lastSource ?: return null) }.getOrNull() ?: return null
+        return when (src) {
+            RadioSource.FM -> src.takeIf { tunerAvailable }
+            RadioSource.INTERNET -> src.takeIf { hasStation }
+        }
+    }
+
     /** Fracción del volumen base mientras el asistente escucha: casi nada, para que no oiga la radio. */
     const val DUCK_LISTENING = 0.06f
     /** Mientras el asistente habla. */

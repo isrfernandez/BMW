@@ -120,4 +120,17 @@ class RadioLogicTest {
         assertEquals(listOf("los 40 principales", "los40principales", "los 40", "los40"), RadioLogic.searchVariants("los cuarenta principales"))
         assertEquals(listOf("cadena 100", "cadena100", "cadena"), RadioLogic.searchVariants("cadena cien"))
     }
+
+    @Test
+    fun autoPlayResumesLastSource() {
+        assertEquals(RadioSource.FM, RadioLogic.autoPlaySource("FM", "INTERNET", hasStation = true, tunerAvailable = true))
+        assertEquals(RadioSource.INTERNET, RadioLogic.autoPlaySource("INTERNET", "FM", hasStation = true, tunerAvailable = true))
+        // Nunca sonó nada: no se pone nada.
+        assertNull(RadioLogic.autoPlaySource(null, null, hasStation = false, tunerAvailable = true))
+        // FM sin sintonizador o Internet sin emisora guardada: nada.
+        assertNull(RadioLogic.autoPlaySource("FM", null, hasStation = true, tunerAvailable = false))
+        assertNull(RadioLogic.autoPlaySource("INTERNET", null, hasStation = false, tunerAvailable = true))
+        // Versiones anteriores: vale la última fuente elegida.
+        assertEquals(RadioSource.INTERNET, RadioLogic.autoPlaySource(null, "INTERNET", hasStation = true, tunerAvailable = false))
+    }
 }

@@ -83,8 +83,8 @@ class FuelView(
     val state: FuelState,
 )
 
-/** Centro del recorrido de ejemplo del modo Demo (Múnich). */
-internal val DEMO_CENTER = GeoPoint(48.1575, 11.5840)
+/** Centro del recorrido de ejemplo del modo Demo (Madrid, la Castellana a la altura de Colón). */
+internal val DEMO_CENTER = GeoPoint(40.4300, -3.6900)
 
 @Composable
 fun rememberFuelView(): FuelView {
@@ -97,7 +97,7 @@ fun rememberFuelView(): FuelView {
     val near = remember(key, fuel.stations, demo) {
         when {
             pos == null -> emptyList()
-            demo -> FuelStations.nearest(FuelRepository.demoStations(DEMO_CENTER), pos)
+            demo -> FuelStations.nearest(FuelRepository.demoList(fuel.stations, DEMO_CENTER), pos)
             else -> FuelStations.nearest(fuel.stations, pos)
         }
     }
@@ -144,6 +144,8 @@ fun FuelScreen() {
 }
 
 private fun statusText(view: FuelView): String = when {
+    view.demo && view.state.dataDate != null && view.near.firstOrNull()?.station?.id?.startsWith("demo") == false ->
+        "Demo en Madrid · precios del Ministerio · ${view.state.dataDate}"
     view.demo -> "Demo · estaciones de ejemplo"
     view.state.loading && view.state.stations.isEmpty() -> "Descargando estaciones…"
     view.state.dataDate != null -> "Precios del Ministerio · ${view.state.dataDate}"

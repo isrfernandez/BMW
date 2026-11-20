@@ -118,7 +118,25 @@ object RouteTracker {
         }
     }
 
+    /**
+     * Modo demo de Diagnóstico: manda la ruta de ejemplo (Madrid) aunque la radio tenga GPS, y
+     * empieza desde el principio (Atocha). Al quitarlo vuelven las posiciones reales.
+     */
+    @Volatile var demoOverride = false
+        private set
+
+    fun setDemoOverride(on: Boolean) {
+        if (on == demoOverride) return
+        demoOverride = on
+        if (on) {
+            demoMeters = 0.0
+            val (p, bearing) = DemoRoute.at(0.0)
+            push(p, bearing, live = false, time = System.currentTimeMillis(), reset = true)
+        }
+    }
+
     private fun onLocation(loc: Location) {
+        if (demoOverride) return
         // El GPS manda frente a la red: si hay un GPS reciente, ignoramos las posiciones de red.
         // Se compara con el reloj de arranque: loc.time del GPS viene de los satélites y el de la red
         // del reloj de la radio, que puede ir desfasado; antes eso dejaba pasar posiciones de red
@@ -146,7 +164,7 @@ object RouteTracker {
     /** Modo Demo: avanza por un recorrido de ejemplo mientras no haya GPS real. */
     fun simulate(speedKmh: Int, dtSeconds: Double) {
         val s = _state.value
-        if (s.live && System.currentTimeMillis() - s.time < 15_000) return
+        if (!demoOverride && s.live && System.currentTimeMillis() - s.time < 15_000) return
         demoMeters += speedKmh / 3.6 * dtSeconds
         val (p, bearing) = DemoRoute.at(demoMeters)
         push(p, bearing, live = false, time = System.currentTimeMillis(), reset = s.live)
@@ -179,17 +197,28 @@ object RouteTracker {
     }
 }
 
-/** Recorrido de ejemplo para el modo Demo: Ludwigstraße y Leopoldstraße (Múnich), ida y vuelta. */
+/**
+ * Recorrido de ejemplo para el modo Demo, en Madrid: de Atocha por el paseo del Prado, Cibeles,
+ * Recoletos y la Castellana hasta la plaza de Castilla, ida y vuelta. Pasa junto al Prado, Neptuno,
+ * Cibeles, Colón y el Bernabéu, así Turismo, gasolineras (precios reales del Ministerio) y los
+ * avisos salen sobre sitios conocidos.
+ */
 private object DemoRoute {
     private val points = listOf(
-        GeoPoint(48.14180, 11.57735), // Odeonsplatz
-        GeoPoint(48.14600, 11.57900),
-        GeoPoint(48.15050, 11.58110), // Universität
-        GeoPoint(48.15226, 11.58217), // Siegestor
-        GeoPoint(48.15700, 11.58430),
-        GeoPoint(48.16205, 11.58660), // Münchner Freiheit
-        GeoPoint(48.16800, 11.58900),
-        GeoPoint(48.17300, 11.59080),
+        GeoPoint(40.40790, -3.69190), // Atocha (glorieta del Emperador Carlos V)
+        GeoPoint(40.41120, -3.69300), // Jardín Botánico
+        GeoPoint(40.41380, -3.69330), // Museo del Prado
+        GeoPoint(40.41530, -3.69400), // Neptuno
+        GeoPoint(40.41930, -3.69310), // Cibeles
+        GeoPoint(40.42250, -3.69240), // Recoletos
+        GeoPoint(40.42530, -3.69050), // Colón
+        GeoPoint(40.43000, -3.68980), // Castellana · Rubén Darío
+        GeoPoint(40.43380, -3.68960), // Emilio Castelar
+        GeoPoint(40.43790, -3.69090), // Gregorio Marañón
+        GeoPoint(40.44560, -3.69180), // Nuevos Ministerios
+        GeoPoint(40.45250, -3.69140), // Santiago Bernabéu
+        GeoPoint(40.45900, -3.68980), // Cuzco
+        GeoPoint(40.46660, -3.68870), // Plaza de Castilla
     )
     private val legs = points.zipWithNext { a, b -> RouteTracker.distance(a, b) }
     private val total = legs.sum()

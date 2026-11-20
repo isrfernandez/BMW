@@ -1,8 +1,15 @@
 package com.cockpitf30.ui.components
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,39 +22,57 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.cockpitf30.R
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.cockpitf30.system.AppSettings
+import com.cockpitf30.ui.screens.CardOrder
 import com.cockpitf30.ui.theme.Cockpit
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * Ilustración de fondo de cada botón del menú lateral y su color de acento. Todo el menú va en
- * cobre metalizado y azul acero: los acentos alternan entre los dos y [second] es el metal que
- * acompaña a cada uno.
+ * Ilustración de cada botón del menú lateral y su color de acento. Todo el menú va en cobre metalizado
+ * y azul acero: los acentos alternan entre los dos y [second] es el metal que acompaña a cada uno.
  */
 enum class SideArt(private val steelFirst: Boolean) {
     HOME(true),
@@ -62,6 +87,7 @@ enum class SideArt(private val steelFirst: Boolean) {
     val second: Color get() = if (steelFirst) Cockpit.Copper else Cockpit.SteelBlue
 }
 
+/** [label] ya no se ve (solo iconos): queda para accesibilidad. El id para el orden es [art]. */
 class SideItem(
     val label: String,
     val art: SideArt,
@@ -71,12 +97,87 @@ class SideItem(
 )
 
 /**
+ * Modo mover de la barra lateral, como el de las tarjetas del Inicio (ver Reorder): OK mantenido
+ * en el iDrive sobre un botón lo coge; la ruleta o arriba/abajo lo mueven; OK lo suelta y Back
+ * cancela. [focused] es el botón con el foco (null si el foco está fuera de la barra).
+ */
+object SidebarMove {
+    val moving = MutableStateFlow<String?>(null)
+    var focused: String? = null
+    var step: ((Int) -> Unit)? = null
+    var start: ((String) -> Unit)? = null
+    /** Suelta el botón que se mueve sin guardar el orden (vuelve a como estaba). */
+    var cancel: (() -> Unit)? = null
+    /** Orden actual de la barra (ids). */
+    var order: (() -> List<String>)? = null
+
+    /** OK mantenido: true si lo ha cogido la barra (el foco estaba en ella). */
+    fun longPress(): Boolean {
+        val id = focused ?: return false
+        if (moving.value != null) return true
+        start?.invoke(id) ?: return false
+        return true
+    }
+}
+
+/**
  * Columna fija de accesos rápidos a la izquierda, la zona más cercana al conductor. Cada botón
- * es una placa de cristal sobre una ilustración de su función (sin iconos) y mide más de 100 dp
- * de alto para poder pulsarlo sin mirar.
+ * es una placa de metal con la ilustración de su función, grande y sin rótulo, y mide 100 dp de alto para poder
+ * pulsarlo sin mirar. El orden se cambia como en la botonera del Inicio: pulsación larga y
+ * arrastrar (o OK mantenido y girar la ruleta) y se guarda en Ajustes.
  */
 @Composable
 fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val settings = remember { AppSettings(context) }
+    val byId = items.associateBy { it.art.name }
+    var order by remember { mutableStateOf(CardOrder.merge(settings.sidebarOrder, SideArt.entries.map { it.name })) }
+    var beforeMove by remember { mutableStateOf(order) }
+    val moving by SidebarMove.moving.collectAsStateWithLifecycle()
+    var dragY by remember { mutableFloatStateOf(0f) }
+    var dragged by remember { mutableStateOf(false) }
+    // Hasta cuándo ignorar un clic: el que pueda llegar al soltar tras arrastrar. Antes era un
+    // indicador que, si ese clic no llegaba, se comía el siguiente toque (había que pulsar dos veces).
+    var suppressUntil by remember { mutableStateOf(0L) }
+    var touchDrag by remember { mutableStateOf(false) }
+
+    fun startMove(id: String) {
+        beforeMove = order
+        SidebarMove.moving.value = id
+    }
+    fun step(dir: Int) {
+        val id = SidebarMove.moving.value ?: return
+        val from = order.indexOf(id)
+        order = CardOrder.move(order, from, from + dir)
+    }
+    fun finish() {
+        settings.sidebarOrder = order
+        SidebarMove.moving.value = null
+    }
+    fun cancel() {
+        order = beforeMove
+        SidebarMove.moving.value = null
+    }
+    DisposableEffect(Unit) {
+        val st: (Int) -> Unit = ::step
+        val sm: (String) -> Unit = ::startMove
+        val cn: () -> Unit = ::cancel
+        val od: () -> List<String> = { order }
+        SidebarMove.step = st
+        SidebarMove.start = sm
+        SidebarMove.cancel = cn
+        SidebarMove.order = od
+        onDispose {
+            if (SidebarMove.step === st) SidebarMove.step = null
+            if (SidebarMove.start === sm) SidebarMove.start = null
+            if (SidebarMove.cancel === cn) SidebarMove.cancel = null
+            if (SidebarMove.order === od) SidebarMove.order = null
+            SidebarMove.moving.value = null
+        }
+    }
+    BackHandler(enabled = moving != null) { cancel() }
+    val stepPx = with(LocalDensity.current) { (TILE_HEIGHT + TILE_GAP).toPx() }
+
     Column(
         modifier
             .width(132.dp)
@@ -87,45 +188,111 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
                 else Modifier.background(Brush.horizontalGradient(listOf(Color(0xFF080B12), Color(0xFF0B0F18).copy(alpha = 0.7f)))),
             )
             // Desplazable: si la pantalla es más baja de lo previsto, nada queda fuera de alcance.
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(rememberScrollState(), enabled = moving == null)
             .padding(vertical = 16.dp, horizontal = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(9.dp),
+        verticalArrangement = Arrangement.spacedBy(TILE_GAP),
     ) {
         AthosStripe(Modifier.padding(bottom = 2.dp), segment = 22.dp)
-        items.forEach { item ->
-            FocusTile(
-                onClick = item.onClick, onLongClick = item.onLongClick, selected = item.active,
-                modifier = Modifier.fillMaxWidth().height(100.dp),
-            ) { focused ->
-                val lit = item.active || focused
-                Box(
-                    Modifier.fillMaxSize().drawWithContent {
-                        drawContent()
-                        // Velo más ligero que antes: los iconos se veían apagados con luz de día.
-                        // En diurno sin velo oscuro: el rótulo va en negro sobre la placa clara.
-                        glassOverlay(item.art.accent, shade = if (Cockpit.Light) 0f else 0.35f)
+        order.forEach { id ->
+            val item = byId[id] ?: return@forEach
+            key(id) {
+                val isMoving = moving == id
+                // Temblor del botón que se mueve. Con Animatable y siempre en el mismo sitio: el
+                // rememberInfiniteTransition dentro de un if rompía la composición al coger el botón.
+                val wobble = remember { androidx.compose.animation.core.Animatable(0f) }
+                androidx.compose.runtime.LaunchedEffect(isMoving) {
+                    if (isMoving) wobble.animateTo(1.2f, infiniteRepeatable(tween(140), RepeatMode.Reverse), initialVelocity = 0f)
+                    else wobble.snapTo(0f)
+                }
+                // Al cambiar de puesto, el botón se desliza desde donde estaba (antes saltaba de golpe
+                // y apenas se notaba el cambio). El que se arrastra con el dedo ya va con el dedo.
+                val index = order.indexOf(id)
+                val slide = remember { androidx.compose.animation.core.Animatable(0f) }
+                var lastIndex by remember { mutableStateOf(index) }
+                androidx.compose.runtime.LaunchedEffect(index) {
+                    val moved = lastIndex - index
+                    lastIndex = index
+                    if (moved == 0 || (isMoving && touchDrag)) return@LaunchedEffect
+                    slide.snapTo(slide.value + moved * stepPx)
+                    slide.animateTo(0f, androidx.compose.animation.core.spring(dampingRatio = 0.72f, stiffness = 260f))
+                }
+                // Marcado mientras se mueve: se agranda, sale un poco hacia la derecha y brilla.
+                val lift by androidx.compose.animation.core.animateFloatAsState(if (isMoving) 1f else 0f, tween(220), label = "lift")
+                FocusTile(
+                    onClick = {
+                        when {
+                            android.os.SystemClock.uptimeMillis() < suppressUntil -> Unit
+                            isMoving -> finish()
+                            moving == null -> item.onClick()
+                        }
                     },
-                ) {
-                    SideArtwork(item.art, lit, Modifier.matchParentSize())
-                    Text(
-                        item.label,
-                        style = MaterialTheme.typography.labelLarge.copy(
-                            fontSize = 15.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp,
-                            shadow = if (Cockpit.Light) Shadow(Color.White, Offset(0f, 0f), 8f)
-                            else Shadow(Color.Black.copy(alpha = 0.9f), Offset(0f, 1f), 6f),
-                        ),
-                        color = Cockpit.Text,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.align(Alignment.BottomStart).padding(start = 10.dp, end = 6.dp, bottom = 8.dp),
-                    )
-                    // Marca del ítem activo: filo del color de acento a la izquierda.
-                    if (item.active) {
-                        Box(
-                            Modifier.align(Alignment.CenterStart).width(4.dp).height(48.dp)
-                                .background(item.art.accent, RoundedCornerShape(topEnd = 2.dp, bottomEnd = 2.dp)),
-                        )
+                    selected = item.active || isMoving,
+                    modifier = Modifier.fillMaxWidth().height(TILE_HEIGHT)
+                        .then(if (isMoving) Modifier.zIndex(1f) else Modifier)
+                        .graphicsLayer {
+                            translationY = (if (isMoving) dragY else 0f) + slide.value
+                            // Cabe dentro de la barra (que recorta lo que sale de ella): sin desplazarse
+                            // a la derecha ni sombra exterior, que quedaban cortadas.
+                            rotationZ = if (isMoving) (wobble.value * 2f - 1.2f) * 1.2f else 0f
+                            val sc = 1f + 0.09f * lift
+                            scaleX = sc; scaleY = sc
+                        }
+                        // Siempre el mismo modificador (el borde se pinta solo si toca): si la cadena
+                        // cambiaba al coger el botón, se rehacía la detección del gesto de debajo y el
+                        // arrastre se cancelaba nada más empezar (fallo de 0.9.119).
+                        .drawWithContent {
+                            drawContent()
+                            if (lift > 0.01f) {
+                                // Borde de su color y un brillo hacia dentro (no sale del botón).
+                                val r = androidx.compose.ui.geometry.CornerRadius(14.dp.toPx())
+                                drawRoundRect(item.art.accent.copy(alpha = 0.18f * lift), cornerRadius = r, style = androidx.compose.ui.graphics.drawscope.Stroke(10.dp.toPx()))
+                                drawRoundRect(item.art.accent.copy(alpha = 0.9f * lift), cornerRadius = r, style = androidx.compose.ui.graphics.drawscope.Stroke(2.5.dp.toPx()))
+                            }
+                        }
+                        .semantics { contentDescription = item.label }
+                        .onFocusChanged {
+                            if (it.isFocused) SidebarMove.focused = id
+                            else if (SidebarMove.focused == id) SidebarMove.focused = null
+                        }
+                        .pointerInput(id) {
+                            // Táctil: pulsación larga y arrastrar arriba/abajo; al soltar se guarda.
+                            // Pulsación larga sin arrastrar: su atajo (Home → Diagnóstico).
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { suppressUntil = Long.MAX_VALUE; dragged = false; touchDrag = true; startMove(id) },
+                                onDrag = { change, amount ->
+                                    change.consume()
+                                    dragY += amount.y
+                                    if (kotlin.math.abs(dragY) > 12.dp.toPx()) dragged = true
+                                    while (dragY > stepPx / 2 && order.indexOf(id) < order.lastIndex) { step(1); dragY -= stepPx }
+                                    while (dragY < -stepPx / 2 && order.indexOf(id) > 0) { step(-1); dragY += stepPx }
+                                },
+                                onDragEnd = {
+                                    suppressUntil = android.os.SystemClock.uptimeMillis() + 400
+                                    touchDrag = false
+                                    dragY = 0f
+                                    finish()
+                                    if (!dragged) item.onLongClick?.invoke()
+                                },
+                                onDragCancel = { suppressUntil = android.os.SystemClock.uptimeMillis() + 400; touchDrag = false; dragY = 0f; finish() },
+                            )
+                        },
+                ) { focused ->
+                    val lit = item.active || focused || isMoving
+                    Box(
+                        Modifier.fillMaxSize().drawWithContent {
+                            drawContent()
+                            glassOverlay(item.art.accent, shade = if (Cockpit.Light) 0f else 0.30f)
+                        },
+                    ) {
+                        SideArtwork(item.art, lit, Modifier.matchParentSize())
+                        // Marca del ítem activo: filo del color de acento a la izquierda.
+                        if (item.active) {
+                            Box(
+                                Modifier.align(Alignment.CenterStart).width(4.dp).height(48.dp)
+                                    .background(item.art.accent, RoundedCornerShape(topEnd = 2.dp, bottomEnd = 2.dp)),
+                            )
+                        }
                     }
                 }
             }
@@ -133,35 +300,9 @@ fun Sidebar(items: List<SideItem>, modifier: Modifier = Modifier) {
     }
 }
 
-/** Fondo ilustrado del botón. Apagado cuando no está activo ni enfocado. */
-@Composable
-private fun SideArtwork(art: SideArt, lit: Boolean, modifier: Modifier = Modifier) {
-    val dim = if (lit) 1f else 0.9f
-    Box(modifier) {
-        Canvas(Modifier.matchParentSize()) { backdrop(art, dim) }
-        if (art == SideArt.HOME) {
-            // El propio coche, en vista 3/4, posado sobre un suelo azul.
-            Image(
-                com.cockpitf30.ui.components.cachedPainter(R.drawable.car_34_closed), null,
-                Modifier.matchParentSize().padding(bottom = 18.dp),
-                contentScale = ContentScale.Crop,
-                alpha = dim,
-            )
-        } else {
-            Canvas(Modifier.matchParentSize()) {
-                when (art) {
-                    SideArt.NAV -> navArt(art.accent, dim)
-                    SideArt.MUSIC -> musicArt(art.accent, art.second, dim)
-                    SideArt.APPS -> appsArt(dim)
-                    SideArt.SETTINGS -> settingsArt(art.accent, dim)
-                    SideArt.PERF -> perfArt(art.accent, art.second, dim)
-                    SideArt.HOME -> Unit
-                }
-            }
-        }
-        if (Cockpit.Light) Canvas(Modifier.matchParentSize()) { lightLabelBand() }
-    }
-}
+private val TILE_HEIGHT = 100.dp
+private val TILE_GAP = 9.dp
+
 
 /**
  * Fondo común: placa de metal cepillado entre azul acero oscuro y cobre, con un reflejo diagonal
@@ -232,10 +373,59 @@ private fun DrawScope.lightBackdrop(art: SideArt, dim: Float) {
     )
 }
 
-/** Franja clara al pie de la placa diurna para que el rótulo negro se lea encima del dibujo. */
-private fun DrawScope.lightLabelBand() {
-    drawRect(Brush.verticalGradient(0.55f to Color.Transparent, 0.78f to Color.White.copy(alpha = 0.85f), 1f to Color.White.copy(alpha = 0.95f)))
+// ---------------------------------------------------------------- ilustraciones
+
+/**
+ * Ilustración del botón (la de siempre), ahora sin rótulo: se agranda y se centra en la placa.
+ * Apagada cuando no está activo ni enfocado.
+ */
+@Composable
+private fun SideArtwork(art: SideArt, lit: Boolean, modifier: Modifier = Modifier) {
+    val dim = if (lit) 1f else 0.9f
+    Box(modifier) {
+        Canvas(Modifier.matchParentSize()) { backdrop(art, dim) }
+        if (art == SideArt.HOME) {
+            // El propio coche, en vista 3/4, ocupando la placa entera (antes dejaba sitio al rótulo).
+            Image(
+                cachedPainter(R.drawable.car_34_closed), null,
+                Modifier.matchParentSize().graphicsLayer { scaleX = 1.12f; scaleY = 1.12f },
+                contentScale = ContentScale.Crop,
+                alpha = dim,
+            )
+        } else {
+            Canvas(Modifier.matchParentSize()) {
+                val w = size.width; val h = size.height
+                // Los dibujos estaban arriba a la derecha (abajo iba el nombre): se llevan al centro y se agrandan.
+                val (px, py) = ART_CENTER.getValue(art)
+                withTransform({
+                    translate(w * (0.5f - px), h * (0.5f - py))
+                    scale(ART_SCALE, ART_SCALE, Offset(w * px, h * py))
+                }) {
+                    when (art) {
+                        SideArt.NAV -> navArt(art.accent, dim)
+                        SideArt.MUSIC -> musicArt(art.accent, art.second, dim)
+                        SideArt.APPS -> appsArt(dim)
+                        SideArt.SETTINGS -> settingsArt(art.accent, dim)
+                        SideArt.PERF -> perfArt(art.accent, art.second, dim)
+                        SideArt.HOME -> Unit
+                    }
+                }
+            }
+        }
+    }
 }
+
+private const val ART_SCALE = 1.22f
+
+/** Centro aproximado de cada dibujo (fracción de la placa), que se lleva al centro. */
+private val ART_CENTER = mapOf(
+    SideArt.NAV to (0.55f to 0.45f),
+    SideArt.MUSIC to (0.52f to 0.42f),
+    SideArt.APPS to (0.62f to 0.38f),
+    SideArt.SETTINGS to (0.52f to 0.36f),
+    SideArt.PERF to (0.50f to 0.42f),
+    SideArt.HOME to (0.5f to 0.5f),
+)
 
 /** Calles en perspectiva, una ruta luminosa y el pin de destino. */
 private fun DrawScope.navArt(accent: Color, dim: Float) {

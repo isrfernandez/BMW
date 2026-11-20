@@ -141,11 +141,20 @@ object DragTimes {
         }
     }
 
+    /** Modo demo: las marcas se enseñan pero no se guardan (al acabar, [reload] trae las de verdad). */
+    @Volatile var demo = false
+
+    /** Vuelve a las marcas guardadas (tras el modo demo). */
+    fun reload() {
+        _state.value = DragState()
+        context?.let { load(it) }
+    }
+
     private fun record(r: DragResult) {
         freshUntil = System.currentTimeMillis() + 15_000
         val hist = (listOf(r) + _state.value.history).take(HISTORY)
         _state.value = summarize(hist, keepBest = _state.value.best).copy(fresh = r, running = timer.running, armed = timer.armed)
-        save(hist, _state.value.best)
+        if (!demo) save(hist, _state.value.best)
     }
 
     fun clear() {

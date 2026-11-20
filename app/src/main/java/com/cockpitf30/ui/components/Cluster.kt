@@ -56,6 +56,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.runtime.collectAsState
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -156,9 +159,11 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     LaunchedEffect(Unit) {
         if (ClusterIntro.swept) return@LaunchedEffect
         Startup.splashDone.first { it }
-        delay(450)
-        launch { fadeIn.animateTo(1f, tween(650, easing = FastOutSlowInEasing)) }
-        delay(200)
+        // La presentación ya funde desde negro todo el Inicio: el cuadro está desde el principio
+        // (antes se fundía él aparte, después, y se notaba como un segundo salto). El barrido
+        // espera a que se haya ido el negro.
+        fadeIn.snapTo(1f)
+        delay(1_500)
         doSweep()
         ClusterIntro.swept = true
     }
@@ -231,14 +236,35 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     val scope = rememberCoroutineScope()
     fun choose(to: Int) {
         val t = to.coerceIn(-1, 1)
-        if (t == -1 && target != -1) AthosSound.play(ctx)
         target = t
         ClusterIntro.done = true
         scope.launch { page.animateTo(t.toFloat(), tween(450, easing = FastOutSlowInEasing)) }
     }
-    LaunchedEffect(Unit) {
-        if (ClusterIntro.done) return@LaunchedEffect
-        delay(ClusterIntro.ATHOS_MS)
+    val replayN by ClusterIntro.replay.collectAsState()
+    LaunchedEffect(replayN) {
+        if (replayN > ClusterIntro.replayHandled) {
+            // «Ver la intro»: otra vez la vista Athoox y después coche y mapa, como al arrancar.
+            ClusterIntro.replayHandled = replayN
+            ClusterIntro.done = false
+            target = -1
+            page.snapTo(-1f)
+        } else {
+            if (ClusterIntro.done) return@LaunchedEffect
+            Startup.splashDone.first { it }
+        }
+        // La vista Athoox cuenta desde que se va la presentación (antes contaba desde que se
+        // montaba el Inicio, debajo, y casi no se veía) y se queda mientras habla el asistente
+        // (el saludo de arranque), con un mínimo y un máximo.
+        val since = System.currentTimeMillis()
+        delay(ClusterIntro.ATHOS_MIN_MS)
+        var quietSince = 0L
+        while (!ClusterIntro.done && System.currentTimeMillis() - since < ClusterIntro.ATHOS_MAX_MS) {
+            val now = System.currentTimeMillis()
+            val talking = com.cockpitf30.assistant.VoiceAssistant.state.value.phase == com.cockpitf30.assistant.AssistantPhase.ANSWERING
+            if (talking) quietSince = 0L else if (quietSince == 0L) quietSince = now
+            if (quietSince != 0L && now - quietSince >= ClusterIntro.QUIET_MS) break
+            delay(200)
+        }
         if (ClusterIntro.done) return@LaunchedEffect
         target = 0
         page.animateTo(0f, tween(900, easing = FastOutSlowInEasing))
@@ -249,9 +275,16 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             page.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
         }
     }
+    // Modo demo: enseña cada vista del centro (sin el sonido de la vista Athos).
+    val demoPage = DemoTour.clusterPage
+    LaunchedEffect(demoPage) {
+        val p = demoPage ?: return@LaunchedEffect
+        target = p
+        ClusterIntro.done = true
+        page.animateTo(p.toFloat(), tween(600, easing = FastOutSlowInEasing))
+    }
     val athosFeed = rememberAthosFeed { page.value < 0f }
     val athosText = remember { AthosText() }
-    val athosImage = cachedBitmap(R.drawable.athos_view) // sin el rótulo: solo el triángulo
     var focused by remember { mutableStateOf(false) }
 
     val route by RouteTracker.state.collectAsStateWithLifecycle()
@@ -324,12 +357,14 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             else MapFrame(route, route.position, route.bearing, 17f, 0f)
             drawPanel(geo, scene, rangeKm, outsideTemp, measurer, overlay, pg, map, mapText, focused)
         }
+        // 1a) Vídeo del cristal de Athos, recortado al panel y deslizándose con la página.
+        AthosVideo(g, maxWidth, geoCache) { page.value }
         // 1b) Vista Athos: solo pinta (y anima) mientras se ve, entrando por la izquierda.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
             val pg = page.value
             if (pg >= 0f) return@Canvas
             val geo = geoCache.get(g, this)
-            drawAthosPanel(geo, pg, athosImage, athosFeed, measurer, athosText, focused)
+            drawAthosPanel(geo, pg, athosFeed, measurer, athosText, focused)
         }
         // 2) Franjas vacías de acero: fijas.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
@@ -385,10 +420,14 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
                 .padding(start = g.contentInset, end = g.contentInset),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Durante el barrido las cifras suben y bajan con las barras.
-            val sw = sweep.value
-            val shownSpeed = if (sw > 0f) maxOf(state.speedKmh ?: 0, speedFromFraction(sw)) else state.speedKmh
-            val shownRpm = if (sw > 0f) maxOf(state.rpm ?: 0, (sw * RPM_MAX).roundToInt() / 50 * 50) else state.rpm
+            // Durante el barrido las cifras suben y bajan con las barras. Solo se recompone cuando
+            // cambia la cifra (antes, en cada fotograma del barrido).
+            val shownSpeed by remember(state.speedKmh) {
+                derivedStateOf { val sw = sweep.value; if (sw > 0f) maxOf(state.speedKmh ?: 0, speedFromFraction(sw)) else state.speedKmh }
+            }
+            val shownRpm by remember(state.rpm) {
+                derivedStateOf { val sw = sweep.value; if (sw > 0f) maxOf(state.rpm ?: 0, (sw * RPM_MAX).roundToInt() / 50 * 50) else state.rpm }
+            }
             TabValue(shownSpeed?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false, glow = SpeedGlow, intensity = speedGlow)
             Spacer(Modifier.weight(1.5f))
             // Junto a la marcha y las rpm, lo más urgente del mantenimiento (solo en la vista del coche
@@ -436,11 +475,17 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
 /** Presentación del Inicio: el coche se ve solo durante los primeros segundos tras arrancar la app. */
 object ClusterIntro {
     /** Vista Athos al arrancar y después el coche, antes de pasar al mapa. */
-    const val ATHOS_MS = 8_000L
+    const val ATHOS_MIN_MS = 10_000L
+    const val ATHOS_MAX_MS = 35_000L
+    /** Callado al menos esto (tras el mínimo) para pasar al coche. */
+    const val QUIET_MS = 1_500L
     const val CAR_MS = 8_000L
     /** Motor parado al menos esto para repetir el barrido al arrancarlo. */
     const val ENGINE_OFF_MS = 5_000L
     @Volatile var done = false
+    /** «Ver la intro»: cada vez que sube, el cuadro vuelve a empezar por la vista Athoox. */
+    val replay = kotlinx.coroutines.flow.MutableStateFlow(0)
+    @Volatile var replayHandled = 0
     /** Ya se hizo el barrido de bienvenida de las agujas. */
     @Volatile var swept = false
 }
@@ -638,12 +683,89 @@ private fun panelShape(g: GeoPx): Triple<Path, Rect, Float> {
     return Triple(roundedPolygon(pts, g.dp(22f)), Rect(g.xv + inset, top, g.w - g.xv - inset, bottom), g.w - 2 * (g.xv + inset))
 }
 
+/**
+ * Vídeo de la vista Athos: el mismo de la presentación ([SharedLoop], mismo decodificador), con
+ * la franja del cristal y sus órbitas ([CRYSTAL_REGION], el rótulo queda fuera) cubriendo el panel,
+ * recortado a su forma y desplazado con la página igual que las lecturas que se pintan encima.
+ * Al irse la presentación el vídeo pasa aquí sin pararse; después solo corre mientras se ve y con
+ * la app delante.
+ */
+@Composable
+private fun AthosVideo(g: Geometry, width: Dp, geoCache: GeoCache, page: () -> Float) {
+    val splashDone by Startup.splashDone.collectAsState()
+    val replaying by Startup.replaying.collectAsState()
+    val visible by remember { derivedStateOf { page() < 0f } }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    val lifeState by lifecycle.currentStateFlow.collectAsState()
+    val resumed = lifeState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+    val left = g.scaleWidth + 6.dp + g.band + 14.dp
+    val top = g.frameTop + PANEL_TOP
+    val panelW = width - left * 2
+    val panelH = g.frameBottom - PANEL_BOTTOM - top
+    // Cuando habla el asistente, el propio cristal se ilumina con la voz: el vídeo se pinta con un
+    // filtro de color (más brillo y un punto de azul) que sigue el nivel de la voz, fotograma a
+    // fotograma. Callado o fuera de la vista, sin filtro (coste cero).
+    val texture = remember { arrayOfNulls<android.view.TextureView>(1) }
+    LaunchedEffect(visible, resumed) {
+        val tv = texture[0]
+        if (!visible || !resumed || tv == null) { tv?.setLayerPaint(null); return@LaunchedEffect }
+        val paint = android.graphics.Paint()
+        val cm = android.graphics.ColorMatrix()
+        var shown = 0f
+        try {
+            while (true) {
+                val speaking = com.cockpitf30.assistant.VoiceAssistant.state.value.phase == com.cockpitf30.assistant.AssistantPhase.ANSWERING
+                // Callado y ya apagado: se mira 5 veces por segundo, sin pedir fotogramas.
+                if (!speaking && shown < 0.02f) { delay(200); continue }
+                androidx.compose.runtime.withFrameMillis { }
+                val lvl = if (speaking) com.cockpitf30.assistant.SpeechPulse.level(System.currentTimeMillis()) else 0f
+                // Sube rápido con cada sílaba y cae algo más despacio, como un destello.
+                val next = if (lvl > shown) shown + (lvl - shown) * 0.22f else shown + (lvl - shown) * 0.07f
+                if (kotlin.math.abs(next - shown) < 0.01f && !(next < 0.02f && shown >= 0.02f)) continue
+                shown = next
+                if (shown < 0.02f) { tv.setLayerPaint(null); continue }
+                // Más suave que en 0.9.117-0.9.118 (el usuario lo vio demasiado intenso).
+                val k = 1f + 0.30f * shown
+                cm.set(floatArrayOf(
+                    k, 0f, 0f, 0f, 4f * shown,
+                    0f, k, 0f, 0f, 12f * shown,
+                    0f, 0f, k * 1.05f, 0f, 24f * shown,
+                    0f, 0f, 0f, 1f, 0f,
+                ))
+                paint.colorFilter = android.graphics.ColorMatrixColorFilter(cm)
+                tv.setLayerPaint(paint)
+            }
+        } finally { tv.setLayerPaint(null) }
+    }
+    Box(
+        Modifier.fillMaxSize().drawWithContent {
+            if (page() >= 0f) return@drawWithContent
+            val (panel, _, _) = panelShape(geoCache.get(g, this))
+            clipPath(panel) { this@drawWithContent.drawContent() }
+        },
+    ) {
+        Box(
+            Modifier.offset(left, top).size(panelW, panelH)
+                .graphicsLayer { translationX = (-1f - page()) * panelW.toPx() }
+                .background(Color.Black),
+        ) {
+            LoopVideo(
+                R.raw.athos_intro, aspect = 1920f / 720f, attached = splashDone && !replaying, playing = visible && splashDone && !replaying && resumed,
+                modifier = Modifier.fillMaxSize(), region = CRYSTAL_REGION, focus = CRYSTAL_FOCUS,
+                anchor = androidx.compose.ui.geometry.Offset(0.5f, RING_Y),
+                onView = { texture[0] = it },
+                onFirstFrame = { Startup.clusterVideo.value = true },
+            )
+        }
+    }
+}
+
 /** Vista Athos dentro del panel: entra por la izquierda (página −1). */
-private fun DrawScope.drawAthosPanel(g: GeoPx, page: Float, image: ImageBitmap, feed: AthosFeed, tm: TextMeasurer, st: AthosText, focused: Boolean) {
+private fun DrawScope.drawAthosPanel(g: GeoPx, page: Float, feed: AthosFeed, tm: TextMeasurer, st: AthosText, focused: Boolean) {
     val (panel, bounds, pw) = panelShape(g)
     clipPath(panel) {
         translate(left = (-1f - page) * pw) {
-            clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawAthos(bounds, image, feed, tm, st) }
+            clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawAthos(bounds, feed, tm, st) }
         }
     }
     val edge = if (focused) Cyan.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.10f)
