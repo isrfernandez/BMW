@@ -37,6 +37,9 @@ class DemoTourTest {
         assertEquals(Command.Info(InfoTopic.FUEL_NEAR), VoiceCommands.parse(DemoTour.ASK_FUEL))
         assertEquals(Command.Chat("fact"), VoiceCommands.parse(DemoTour.ASK_CHAT))
         assertTrue(VoiceCommands.parse(DemoTour.ASK_EAT) is Command.Stays)
+        assertEquals(Command.Info(InfoTopic.WEATHER), VoiceCommands.parse(DemoTour.ASK_WEATHER))
+        assertEquals(Command.Info(InfoTopic.WIND), VoiceCommands.parse("¿de dónde sopla el viento?"))
+        assertEquals(Command.Info(InfoTopic.WIND), VoiceCommands.parse("¿tenemos viento en contra?"))
     }
 
     @Test

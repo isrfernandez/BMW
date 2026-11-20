@@ -62,7 +62,8 @@ import kotlinx.coroutines.launch
  * y lo pone a prueba, sobre una ruta de ejemplo por Madrid (Atocha–Castellana–Plaza de Castilla, ver
  * DemoRoute) con el tiempo de Madrid: las tres vistas del cuadro, el asistente contestando por voz
  * (sin micrófono) y charlando, la barra lateral reordenándose (sin guardar), las gasolineras y dónde
- * comer por voz, el resumen del viaje, un aviso turístico en ruta, Turismo con sus
+ * comer por voz, el resumen del viaje, el tiempo con el viento, el viento en ruta en términos
+ * náuticos, un aviso turístico en ruta, Turismo con sus
  * pestañas, una salida desde parado cronometrada en Rendimiento, los modos de color y un repaso
  * rápido de cada sección de Ajustes (las filas enseñan el cambio sin guardarlo). El rótulo va
  * arriba (abajo salen los subtítulos del asistente) y dice qué se ve y cuánto falta.
@@ -94,6 +95,7 @@ object DemoTour {
     const val ASK_FUEL = "busca la gasolinera más cercana"
     const val ASK_CHAT = "cuéntame una curiosidad"
     const val ASK_EAT = "¿dónde puedo comer por aquí?"
+    const val ASK_WEATHER = "¿qué tiempo hace?"
 
     /** El tiempo de la demo: el del recorrido de ejemplo, en Madrid. */
     val MADRID = Place("Madrid", "Comunidad de Madrid", "España", 40.4168, -3.7038)
@@ -146,7 +148,18 @@ object DemoTour {
             TripComputer.showSummary()
             try { awaitCancellation() } finally { TripComputer.dismissSummary() }
         },
-        Step(Screen.WEATHER, "Tiempo", "Tiempo de Madrid ahora, por horas y los próximos 7 días, y el de la ruta.", 6),
+        Step(Screen.WEATHER, "Tiempo y viento", "«¿Qué tiempo hace?»: Madrid ahora, por horas y 7 días, con el viento: de dónde sopla, su fuerza y si va rolando.", 12) {
+            delay(400)
+            VoiceAssistant.demoAsk(ASK_WEATHER)
+            delay(6000)
+            caption("El parte al arrancar también dice el viento: «viento de levante, flojo, rolando a poniente por la tarde».")
+        },
+        Step(Screen.HOME, "Viento en ruta", "Con el rumbo del coche dice cómo entra el viento, como en un barco: de proa, por la amura, de través, por la aleta o de popa.", 10, clusterPage = 1) {
+            delay(800)
+            RouteAlerts.windTest()
+            delay(4500)
+            caption("Barlovento es el lado por donde entra el viento; sotavento, el contrario. De través fuerte, avisa de las rachas.")
+        },
         Step(Screen.ROUTE, "Ruta", "Lo que hay por delante: radares, peligros, áreas de descanso y turismo a 10, 25 y 50 km.", 8) {
             delay(1500)
             caption("Al pasar cerca de algo que merece la pena (el Prado, Cibeles…), aviso con foto y explicación por voz.")

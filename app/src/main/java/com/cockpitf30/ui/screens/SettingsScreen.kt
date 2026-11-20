@@ -412,6 +412,7 @@ private fun alertHint(c: AlertCategory): String = when (c) {
     AlertCategory.REST -> "Áreas de descanso tras hora y media al volante."
     AlertCategory.TOURISM -> "Monumentos, miradores y pueblos con artículo en Wikipedia, con foto."
     AlertCategory.FOOD -> "Restaurantes a la hora de comer o cenar, y hoteles y campings por la noche o tras tres horas al volante."
+    AlertCategory.WIND -> "Viento de proa, de través o de popa según el rumbo, en términos náuticos, cuando sopla con fuerza."
 }
 
 @Composable

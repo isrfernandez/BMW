@@ -69,6 +69,11 @@ data class Forecast(
     /** El primer día es hoy. */
     val days: List<DayForecast>,
     val hours: List<HourForecast> = emptyList(),
+    /** Viento de ahora (de «current»; null en cachés antiguas). */
+    val windKmh: Int? = null,
+    /** De dónde viene el viento ahora, en grados (0 = norte). */
+    val windDir: Int? = null,
+    val gustKmh: Int? = null,
 ) {
     fun hoursOf(date: LocalDate) = hours.filter { it.time.toLocalDate() == date }
 }
@@ -115,6 +120,9 @@ fun parseForecast(json: String): Forecast {
         isDay = current.optInt("is_day", 1) == 1,
         days = days,
         hours = root.optJSONObject("hourly")?.let(::parseHours).orEmpty(),
+        windKmh = current.optDoubleOrNull("wind_speed_10m")?.let { Math.round(it).toInt() },
+        windDir = current.optDoubleOrNull("wind_direction_10m")?.let { Math.round(it).toInt() },
+        gustKmh = current.optDoubleOrNull("wind_gusts_10m")?.let { Math.round(it).toInt() },
     )
 }
 
@@ -144,6 +152,8 @@ private fun parseHours(h: JSONObject): List<HourForecast> {
         )
     }
 }
+
+private fun JSONObject.optDoubleOrNull(name: String): Double? = if (!has(name) || isNull(name)) null else optDouble(name).takeIf { !it.isNaN() }
 
 private fun JSONArray?.doubleAt(i: Int): Double? = if (this == null || i >= length() || isNull(i)) null else optDouble(i)
 

@@ -40,6 +40,7 @@ import com.cockpitf30.ui.screens.place
 import com.cockpitf30.vehicle.VehicleRepository
 import com.cockpitf30.vehicle.trip.TripComputer
 import com.cockpitf30.weather.WeatherRepository
+import com.cockpitf30.weather.Wind
 import com.cockpitf30.weather.wmoCondition
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -1369,7 +1370,8 @@ object VoiceAssistant {
             else -> "El " + d.date.dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, es)
         }
         val rain = d.precipProbMax?.takeIf { it >= 30 }?.let { ". Probabilidad de lluvia del $it por ciento" } ?: ""
-        return joke("$label, ${wmoCondition(d.code).text.lowercase(es)}, entre ${d.minC} y ${d.maxC} grados$rain", "weather")
+        val wind = (if (offset == 0) Wind.today(f) else Wind.day(f, d.date))?.let { ". $it" } ?: ""
+        return joke("$label, ${wmoCondition(d.code).text.lowercase(es)}, entre ${d.minC} y ${d.maxC} grados$rain$wind", "weather")
     }
 
     private fun info(topic: InfoTopic, now: Long = System.currentTimeMillis()): String {
@@ -1425,7 +1427,19 @@ object VoiceAssistant {
                     val today = f.days.firstOrNull()
                     val rain = today?.precipProbMax?.takeIf { it >= 30 }?.let { ". Probabilidad de lluvia del $it por ciento" } ?: ""
                     joke((w.placeName?.let { "En $it, " } ?: "") + "${f.tempC} grados y ${wmoCondition(f.code).text.lowercase(es)}" +
-                        (today?.let { ". Hoy entre ${it.minC} y ${it.maxC}" } ?: "") + rain, "weather")
+                        (today?.let { ". Hoy entre ${it.minC} y ${it.maxC}" } ?: "") + rain +
+                        (Wind.today(f)?.let { ". $it" } ?: ""), "weather")
+                }
+            }
+            InfoTopic.WIND -> {
+                val f = WeatherRepository.state.value.forecast
+                val w = f?.let { Wind.now(it) }
+                if (f == null || w == null) "Todavía no tengo el viento"
+                else {
+                    val route = RouteTracker.state.value
+                    val moving = (car.speedKmh ?: 0) >= 20 || (!route.live && route.position != null && com.cockpitf30.ui.components.DemoTour.running)
+                    val rel = if (moving && w.kmh >= Wind.CALM_KMH) " " + Wind.spokenRelative(w, Wind.relative(w.fromDeg, route.bearing)) else ""
+                    joke((Wind.today(f) ?: Wind.spoken(w)) + "." + rel, "weather")
                 }
             }
             InfoTopic.TIME -> LocalTime.now().let { joke("Son las ${it.hour}:${"%02d".format(it.minute)}", "time") }

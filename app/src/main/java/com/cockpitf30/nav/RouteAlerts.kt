@@ -142,12 +142,34 @@ object RouteAlerts {
                 if (fuelDue(range, memory, now)) fuelAlert(range!!, stationsAhead(pos, bearing, live), st.tankLiters) else null
             }
             else -> null
-        }
+        } ?: if (AlertCategory.WIND in on) windPick(st, bearing, now, demo) else null
         if (alert != null) {
             if (alert.category == AlertCategory.FUEL) memory.fuelRange = VehicleRepository.state.value.rangeKm
             memory.mark(alert, now)
             if (!send(alert, now)) pending = alert
         }
+    }
+
+    private val wind = WindAlerts()
+
+    /**
+     * Viento en ruta, con el de la previsión de donde estamos (si el tiempo es de una localidad
+     * elegida a mano, no vale para aquí y no se avisa).
+     */
+    private fun windPick(st: AppSettings, bearing: Float, now: Long, demo: Boolean): RouteAlert? {
+        if (!demo && st.weatherPlace != null) return null
+        val w = com.cockpitf30.weather.WeatherRepository.state.value.forecast?.let { com.cockpitf30.weather.Wind.now(it) }
+        return wind.tick(w, bearing, VehicleRepository.state.value.speedKmh, now, demo)
+    }
+
+    /** Demo: el aviso de viento ya, con el rumbo de ahora (y un poniente fresquito si no hay previsión o está en calma). */
+    fun windTest(): Boolean {
+        val now = System.currentTimeMillis()
+        val w = com.cockpitf30.weather.WeatherRepository.state.value.forecast?.let { com.cockpitf30.weather.Wind.now(it) }
+            ?.takeIf { it.kmh >= com.cockpitf30.weather.Wind.CALM_KMH }
+            ?: com.cockpitf30.weather.WindNow(270, 32, 50)
+        val r = com.cockpitf30.weather.Wind.relative(w.fromDeg, RouteTracker.state.value.bearing)
+        return send(WindAlerts.alert(w, r, now), now)
     }
 
     /** Comer y dormir: descarga lo de alrededor y elige si toca avisar de un restaurante u hotel. */
@@ -409,5 +431,5 @@ object RouteAlerts {
     }
 
     /** Para pruebas. */
-    fun reset() { memory.said.clear(); memory.lastByCat.clear(); memory.byKey.clear(); memory.fuelRange = null; pending = null; _current.value = null; lastTourism = null }
+    fun reset() { wind.reset(); memory.said.clear(); memory.lastByCat.clear(); memory.byKey.clear(); memory.fuelRange = null; pending = null; _current.value = null; lastTourism = null }
 }
