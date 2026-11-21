@@ -158,6 +158,11 @@ internal class AthosText(
 /** Altura del centro del anillo (y del triángulo) en el panel, como fracción del alto. */
 internal const val RING_Y = 0.52f
 
+/** athoox_core.mp4 (1440×360): la franja [CRYSTAL_REGION] de athos_intro.mp4, que es lo que se ve en la vista Athoox. */
+internal const val CORE_ASPECT = 1440f / 360f
+/** Centro del cristal en athoox_core.mp4 (fracciones): el de [CRYSTAL_FOCUS] pasado a la franja. */
+internal val CORE_FOCUS = Offset(0.505f, (0.3633f * 720f - 12f) / 480f)
+
 /** Franja de athos_intro.mp4 con el cristal y sus órbitas, sin el rótulo (fracciones del vídeo). */
 internal val CRYSTAL_REGION = androidx.compose.ui.geometry.Rect(0f, 12f / 720f, 1f, 492f / 720f)
 /** Centro del cristal en athos_intro.mp4 (fracciones del vídeo): se coloca en el centro del anillo. */
@@ -247,8 +252,6 @@ internal fun DrawScope.drawAthos(b: Rect, feed: AthosFeed, tm: TextMeasurer, st:
     val tel = Telemetry.state.value
     val cams = SpeedCameras.state.value
     val blink = if ((t / 600) % 2 == 0L) 1f else 0.35f
-    drawCircle(AthosOk.copy(alpha = blink), 5f, Offset(b.left + pad, top + 9f))
-    text(tm, "ATHOS · VIGILANCIA ACTIVA", st.label, AthosOk, Offset(b.left + pad + 14f, top))
     var sx2 = b.left + pad + 14f
     listOf(
         "GPS" to (route.live && route.fix != null),

@@ -684,11 +684,11 @@ private fun panelShape(g: GeoPx): Triple<Path, Rect, Float> {
 }
 
 /**
- * Vídeo de la vista Athos: el mismo de la presentación ([SharedLoop], mismo decodificador), con
- * la franja del cristal y sus órbitas ([CRYSTAL_REGION], el rótulo queda fuera) cubriendo el panel,
- * recortado a su forma y desplazado con la página igual que las lecturas que se pintan encima.
- * Al irse la presentación el vídeo pasa aquí sin pararse; después solo corre mientras se ve y con
- * la app delante.
+ * Vídeo de la vista Athoox: res/raw/athoox_core.mp4, la franja del cristal y sus órbitas del vídeo
+ * de la presentación (sin el rótulo) a 1440×360, H.264 Baseline. Tiene su propio reproductor: se
+ * prepara detrás de la presentación (primer fotograma listo, parado) y arranca al acabar, con la
+ * pantalla en negro. Cubre el panel, recortado a su forma y desplazado con la página igual que
+ * las lecturas que se pintan encima. Solo corre mientras se ve y con la app delante.
  */
 @Composable
 private fun AthosVideo(g: Geometry, width: Dp, geoCache: GeoCache, page: () -> Float) {
@@ -706,6 +706,9 @@ private fun AthosVideo(g: Geometry, width: Dp, geoCache: GeoCache, page: () -> F
     // filtro de color (más brillo y un punto de azul) que sigue el nivel de la voz, fotograma a
     // fotograma. Callado o fuera de la vista, sin filtro (coste cero).
     val texture = remember { arrayOfNulls<android.view.TextureView>(1) }
+    // El fundido del negro al Inicio espera a que el vídeo esté pintado aquí (también tras «Ver la intro»).
+    val firstFrame = remember { androidx.compose.runtime.mutableStateOf(false) }
+    LaunchedEffect(firstFrame.value, replaying) { if (firstFrame.value && !replaying) Startup.clusterVideo.value = true }
     LaunchedEffect(visible, resumed) {
         val tv = texture[0]
         if (!visible || !resumed || tv == null) { tv?.setLayerPaint(null); return@LaunchedEffect }
@@ -750,11 +753,11 @@ private fun AthosVideo(g: Geometry, width: Dp, geoCache: GeoCache, page: () -> F
                 .background(Color.Black),
         ) {
             LoopVideo(
-                R.raw.athos_intro, aspect = 1920f / 720f, attached = splashDone && !replaying, playing = visible && splashDone && !replaying && resumed,
-                modifier = Modifier.fillMaxSize(), region = CRYSTAL_REGION, focus = CRYSTAL_FOCUS,
+                R.raw.athoox_core, aspect = CORE_ASPECT, playing = visible && splashDone && !replaying && resumed,
+                modifier = Modifier.fillMaxSize(), focus = CORE_FOCUS,
                 anchor = androidx.compose.ui.geometry.Offset(0.5f, RING_Y),
                 onView = { texture[0] = it },
-                onFirstFrame = { Startup.clusterVideo.value = true },
+                onFirstFrame = { firstFrame.value = true },
             )
         }
     }
