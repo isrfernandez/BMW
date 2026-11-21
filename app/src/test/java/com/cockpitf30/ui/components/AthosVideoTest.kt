@@ -58,6 +58,24 @@ class AthosVideoTest {
         assertTrue(loc[1] + tv.height * 492f / 720f >= 434f - 1f)
     }
 
+    /** El vídeo propio de la vista Athoox (la franja ya recortada) queda igual que el recorte del vídeo grande. */
+    @Test fun coreClipFramesLikeTheCrop() {
+        var root: View? = null
+        rule.setContent {
+            root = LocalView.current
+            Box(Modifier.size(1510.dp, 434.dp)) {
+                LoopVideo(R.raw.athoox_core, CORE_ASPECT, playing = false, Modifier.fillMaxSize(), focus = CORE_FOCUS, anchor = Offset(0.5f, RING_Y))
+            }
+        }
+        rule.waitForIdle()
+        val tv = textureViews(root!!.rootView).single()
+        assertEquals(434, tv.height)
+        assertEquals(1736, tv.width)
+        val loc = IntArray(2).also { tv.getLocationInWindow(it) }
+        assertTrue("cristal en x=${loc[0] + tv.width * CORE_FOCUS.x}", kotlin.math.abs(loc[0] + tv.width * CORE_FOCUS.x - 755f) < 3f)
+        assertEquals(0, loc[1])
+    }
+
     @Test fun clusterAndSplashCompose() {
         rule.setContent {
             CockpitTheme {

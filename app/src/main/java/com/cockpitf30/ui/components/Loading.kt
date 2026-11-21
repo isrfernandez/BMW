@@ -128,23 +128,36 @@ fun StartupSplash(maxMs: Long = 9_000, replay: Boolean = false) {
     var handedOver by remember { androidx.compose.runtime.mutableStateOf(false) }
     var playing by remember { androidx.compose.runtime.mutableStateOf(false) }
     val firstFrame = remember { kotlinx.coroutines.CompletableDeferred<Unit>() }
+    val windowInfo = androidx.compose.ui.platform.LocalWindowInfo.current
     LaunchedEffect(Unit) {
         val started = System.currentTimeMillis()
         if (replay) { Startup.replaying.value = true; Startup.clusterVideo.value = false }
-        // El sonido se prepara fuera del hilo principal y suena en cuanto está listo, sin esperar
-        // al vídeo (en 0.9.114–0.9.118 esperaba a su primer fotograma y en la radio dejó de oírse).
+        // El sonido se prepara fuera del hilo principal mientras el vídeo prepara su primer fotograma.
         val enabled = com.cockpitf30.system.AppSettings(ctx).startSound
         val sound = if (!enabled) null else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             runCatching { logoPlayer(ctx) }.onFailure { com.cockpitf30.assistant.VoiceAssistant.note("sonido de inicio: no se pudo preparar (${it.javaClass.simpleName}: ${it.message})") }.getOrNull()
         }
         sound?.setOnErrorListener { _, what, extra -> com.cockpitf30.assistant.VoiceAssistant.note("sonido de inicio: error $what/$extra"); true }
+        kotlinx.coroutines.withTimeoutOrNull(FIRST_FRAME_MAX_MS) { firstFrame.await() }
+        // Al encender, la radio a veces tarda en enseñar la app (su propia pantalla de arranque va
+        // encima): el sonido sonaba sin imagen. Ahora sonido y vídeo esperan a que la ventana de la
+        // app esté de verdad delante (con el foco) y la pantalla encendida; como mucho [SCREEN_WAIT_MAX_MS].
+        val waitFrom = System.currentTimeMillis()
+        val shown = kotlinx.coroutines.withTimeoutOrNull(SCREEN_WAIT_MAX_MS) {
+            androidx.compose.runtime.snapshotFlow { windowInfo.isWindowFocused }.first { it }
+            while (!displayOn(ctx)) delay(100)
+            true
+        } != null
+        val waited = System.currentTimeMillis() - waitFrom
+        if (waited > 150 || !shown) com.cockpitf30.assistant.VoiceAssistant.note(
+            if (shown) "inicio: la radio enseñó la app tras $waited ms" else "inicio: la app no llegó a tener el foco en ${SCREEN_WAIT_MAX_MS / 1000} s (sigo)",
+        )
         runCatching { sound?.start() }.onFailure { com.cockpitf30.assistant.VoiceAssistant.note("sonido de inicio: no arranca (${it.message})") }
         com.cockpitf30.assistant.VoiceAssistant.note(
             if (!enabled) "sonido de inicio: desactivado en Ajustes"
             else if (sound?.isPlaying == true) "sonido de inicio: sonando (volumen multimedia ${mediaVolume(ctx)})" else "sonido de inicio: no suena",
         )
-        kotlinx.coroutines.withTimeoutOrNull(FIRST_FRAME_MAX_MS) { firstFrame.await() }
-        // Arranca el vídeo y se retira el velo (el sonido ya va: su subida acompaña el fundido).
+        // Arranca el vídeo y se retira el velo a la vez que el sonido (su subida acompaña el fundido).
         playing = true
         withFrameNanos { }
         veil.animateTo(0f, androidx.compose.animation.core.tween(FADE_IN_MS, easing = androidx.compose.animation.core.LinearOutSlowInEasing))
@@ -179,6 +192,12 @@ fun StartupSplash(maxMs: Long = 9_000, replay: Boolean = false) {
     }
 }
 
+/** ¿Está encendida la pantalla principal? */
+private fun displayOn(ctx: android.content.Context): Boolean = runCatching {
+    val dm = ctx.getSystemService(android.hardware.display.DisplayManager::class.java)
+    dm.getDisplay(android.view.Display.DEFAULT_DISPLAY)?.state != android.view.Display.STATE_OFF
+}.getOrDefault(true)
+
 private fun mediaVolume(ctx: android.content.Context): String = runCatching {
     val am = ctx.getSystemService(android.media.AudioManager::class.java)
     "${am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)}/${am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)}"
@@ -209,6 +228,7 @@ private const val FADE_IN_MS = 900
 private const val HOLD_MS = 3_500L
 private const val FADE_OUT_MS = 500
 private const val FIRST_FRAME_MAX_MS = 2_000L
+private const val SCREEN_WAIT_MAX_MS = 8_000L
 private const val HANDOVER_MAX_MS = 800L
 private const val REVEAL_MS = 1_100
 
