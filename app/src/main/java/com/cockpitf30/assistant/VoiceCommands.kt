@@ -301,6 +301,39 @@ object VoiceCommands {
         return Command.Stays(kinds)
     }
 
+    /**
+     * Nombres de pantalla que bastan solos («rendimiento», «radares», «ruta», «el tiempo»…). Se
+     * atienden en cuanto se oyen, sin esperar al silencio de fin de frase, y tras abrirla el asistente
+     * sigue escuchando para la siguiente.
+     */
+    private val QUICK: Map<String, Command> = buildMap {
+        fun put(screen: Screen, vararg names: String) = names.forEach { put(it, Command.Open(screen)) }
+        put(Screen.PERFORMANCE, "rendimiento", "potencia", "telemetria", "fuerzas g", "fuerza g", "altitud")
+        put(Screen.ROUTE, "radares", "radar", "ruta", "la ruta", "en ruta", "radares en ruta", "radares y ruta", "avisos", "avisos en ruta")
+        put(Screen.WEATHER, "tiempo", "el tiempo", "meteo", "clima", "prevision", "la prevision")
+        put(Screen.TRIP, "viaje", "el viaje", "consumo", "datos de viaje")
+        put(Screen.FUEL, "gasolineras", "gasolinera", "las gasolineras")
+        put(Screen.MAINTENANCE, "mantenimiento", "el mantenimiento", "revisiones")
+        put(Screen.TOURISM, "turismo")
+        put(Screen.PHONE, "telefono", "el telefono", "agenda")
+        put(Screen.APPS, "aplicaciones", "apps", "las aplicaciones")
+        put(Screen.SETTINGS, "ajustes", "los ajustes", "configuracion")
+        put(Screen.DIAGNOSTICS, "diagnostico", "el diagnostico")
+        put(Screen.HOME, "inicio", "el inicio", "pantalla principal", "home")
+        put(Screen.RADIO, "emisoras", "las emisoras", "pantalla de la radio")
+        put(Screen.VEHICLE, "vehiculo", "el vehiculo")
+        put("mapa", Command.Maps); put("el mapa", Command.Maps); put("maps", Command.Maps); put("navegador", Command.Maps)
+        put("musica", Command.Music); put("la musica", Command.Music)
+    }
+    private val QUICK_PREFIX = Regex("^(?:(?:abre|abreme|pon|ponme|muestra|muestrame|ensename|ver|ve a|vete a|pasa a|cambia a|quiero ver|a) )?(?:(?:la )?pantalla (?:de )?)?(?:(?:la|el|los|las) )?")
+
+    /** La orden rápida que es [text] entero (ya normalizado o no), o null. */
+    fun quick(text: String): Command? {
+        val t = normalize(text)
+        if (t.isEmpty() || t.split(' ').size > 5) return null
+        return QUICK[t] ?: QUICK[t.replaceFirst(QUICK_PREFIX, "").trim()]
+    }
+
     fun parse(text: String): Command {
         val t = normalize(text)
         if (t.isEmpty()) return Command.Cancel
@@ -318,6 +351,8 @@ object VoiceCommands {
         if (t in setOf("continua", "sigue", "sigue hablando", "continua hablando", "sigue por favor", "continua por favor", "por donde ibas", "donde te habias quedado")) return Command.Resume
         if (t in setOf("para", "para ya", "detente", "deten", "detente ya", "parate", "stop", "basta", "basta ya", "vale ya", "ya vale", "no sigas", "suficiente", "no me interesa")) return Command.Cancel
         if (t in setOf("nada", "no", "no gracias", "cancelar", "cancela", "olvidalo", "salir", "adios", "hasta luego", "nada mas") || has("cancela", "olvidalo")) return Command.Cancel
+        // «Rendimiento», «radares», «ruta»…: el nombre de una pantalla, solo o con «abre / pon / la…».
+        quick(t)?.let { return it }
         // «Pregúntale a Google…», «busca en Google…»: antes que todo lo demás («ideas para cenar»
         // acababa en restaurantes cercanos). Google Maps / el mapa no cuentan.
         if (has("google") && !has("maps", "mapa")) {
