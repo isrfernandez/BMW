@@ -114,14 +114,29 @@ object TripComputer {
         return s.copy(current = null, last = done, history = history)
     }
 
-    /** Enseña el resumen del viaje en curso (o del último). */
-    fun showSummary(now: Long = System.currentTimeMillis()) {
+    /**
+     * Enseña el resumen del viaje en curso o, si este acaba de empezar (menos de [SUMMARY_MIN_KM]),
+     * el del último; sin ninguno de los dos, el último del histórico. Devuelve false si no hay
+     * ningún trayecto que enseñar (la pantalla lo dice en vez de no hacer nada).
+     */
+    fun showSummary(now: Long = System.currentTimeMillis()): Boolean {
         val s = _state.value
-        val trip = s.current ?: s.last ?: run { logSummary("sin viaje que resumir"); return }
+        val cur = s.current
+        val trip = cur?.takeIf { it.distanceKm >= SUMMARY_MIN_KM || s.last == null }
+            ?: s.last ?: cur ?: s.history.maxByOrNull { it.endMillis }?.toTrip()
+            ?: run { logSummary("sin viaje que resumir"); return false }
         if (::settings.isInitialized && !s.demo) settings.lastSummaryStart = trip.startMillis
         logSummary("resumen enseñado (${"%.1f".format(trip.distanceKm)} km)")
         _summary.value = TripSummaryInfo(trip, TripScore.of(trip, s.tankLiters), TripHistory.week(withCurrent(s, trip, now), now), s.tankLiters, now)
+        return true
     }
+
+    /** Un trayecto del histórico como viaje terminado (sin la gráfica de velocidad). */
+    private fun TripRecord.toTrip() = Trip(
+        startMillis = startMillis, lastMillis = endMillis, lastMoveMillis = endMillis, finished = true,
+        distanceM = distanceKm * 1000, movingMillis = movingMillis, maxSpeedKmh = maxSpeedKmh, carConsumption = consumption,
+        startLat = startLat, startLon = startLon, endLat = endLat, endLon = endLon,
+    )
 
     fun dismissSummary() { _summary.value = null }
 

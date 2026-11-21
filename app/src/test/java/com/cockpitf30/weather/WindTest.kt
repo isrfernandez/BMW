@@ -102,4 +102,18 @@ class WindTest {
         val f = parseForecast(json)
         assertEquals(WindNow(243, 18, 38), Wind.now(f, LocalDateTime.of(2026, 11, 20, 12, 0)))
     }
+
+    @Test fun dayPartsOneWhenSteadyFourWhenItChanges() {
+        val steady = hours(*Array(24) { 270 to 14 })
+        assertEquals(1, Wind.dayParts(steady).size)
+        val calm = hours(*Array(24) { 90 to 2 })
+        assertTrue(Wind.dayParts(calm).single().calm)
+        // De levante flojo por la mañana a poniente fresquito por la tarde: cuatro tramos.
+        val turning = hours(*Array(24) { h -> if (h < 12) 90 to 10 else 270 to 32 })
+        val parts = Wind.dayParts(turning)
+        assertEquals(listOf("Madrugada", "Mañana", "Tarde", "Noche"), parts.map { it.label })
+        assertEquals("levante", Wind.name(parts[1].fromDeg))
+        assertEquals("poniente", Wind.name(parts[2].fromDeg))
+        assertEquals(32, parts[3].kmh)
+    }
 }

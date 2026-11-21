@@ -358,7 +358,10 @@ private fun DrivingSettings(onOpen: (Screen) -> Unit) {
         ToggleRow("Resumen al apagar el motor", "Km, tiempo, consumo y nota del viaje.", summary) {
             summary = it; settings.tripSummary = it
         }
-        ActionRow("Ver el resumen", null, "Ver") { TripComputer.showSummary(System.currentTimeMillis()) }
+        var noTrip by remember { mutableStateOf(false) }
+        ActionRow("Ver el resumen", if (noTrip) "Aún no hay ningún trayecto guardado: sale en cuanto hagas el primero." else "El del trayecto en curso o el último.", "Ver") {
+            noTrip = !TripComputer.showSummary(System.currentTimeMillis())
+        }
     }
     SettingGroup("Cuadro") {
         var shift by remember { mutableStateOf(settings.shiftIndicator) }

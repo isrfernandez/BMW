@@ -141,6 +141,22 @@ fun WindVane(fromDeg: Int, modifier: Modifier = Modifier) {
     }
 }
 
+/** Flecha fija hacia donde sopla el viento (para las fichas de los días: sin animación). */
+@Composable
+fun WindArrow(fromDeg: Int, modifier: Modifier = Modifier, color: Color = Color.White) {
+    Canvas(modifier) {
+        rotate(fromDeg + 180f) {
+            val w = size.width
+            val h = size.height
+            val p = Path().apply {
+                moveTo(w / 2, 0f); lineTo(w * 0.88f, h * 0.55f); lineTo(w * 0.6f, h * 0.48f)
+                lineTo(w * 0.6f, h); lineTo(w * 0.4f, h); lineTo(w * 0.4f, h * 0.48f); lineTo(w * 0.12f, h * 0.55f); close()
+            }
+            drawPath(p, color)
+        }
+    }
+}
+
 /**
  * Temperatura como línea suave con área en degradado y puntos con su valor; debajo, barras de
  * precipitación (mm) con la probabilidad sombreada detrás. Alineada con las columnas de horas.
