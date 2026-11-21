@@ -108,7 +108,6 @@ private val Cyan: Color get() = when (DriveModes.current) {
 /** Cifras de la escala: blanco con un punto de azul hielo; rojo en la zona roja de las rpm. */
 private val SpeedLabel = Color(0xFFF4F8FC)
 private val RpmLabel = Color(0xFFF4F8FC)
-private val RpmRed = Color(0xFFFF4A3D)
 /** Halo de las cifras grandes, del color de su marcador. */
 private val SpeedGlow: Color get() = SpeedMetal.light
 private val RpmGlow: Color get() = SteelMetal.light
@@ -126,7 +125,6 @@ private fun speedFromFraction(f: Float): Int =
     (if (f <= 0.625f) f / 0.625f * 150f else 150f + (f - 0.625f) / 0.375f * 100f).roundToInt()
 
 private const val RPM_MAX = 8000
-private const val RPM_RED = 6000
 
 /** Altura (0..1) de cada cifra de la escala, para grabar las marcas en la franja. */
 private val SPEED_FRACTIONS = SPEED_MARKS.map(::speedFraction)
@@ -404,7 +402,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             val rMask = rpmEngraved
             val rLook = rpmLook(rpm)
             (1..7).forEach { k ->
-                drawMark(geo, measurer, "$k", RPM_FRACTIONS[k], true, scaleStyle, if (k * 1000 >= RPM_RED) RpmRed else RpmLabel, rMask and (1 shl k) != 0, rLook)
+                drawMark(geo, measurer, "$k", RPM_FRACTIONS[k], true, scaleStyle, RpmLabel, rMask and (1 shl k) != 0, rLook)
             }
 
             // Solo combustible: la temperatura del aceite no llega por ninguna vía (ni CAN ni radio).
