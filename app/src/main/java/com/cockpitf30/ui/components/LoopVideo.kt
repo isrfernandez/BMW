@@ -33,65 +33,77 @@ import androidx.media3.exoplayer.ExoPlayer
 import kotlin.math.roundToInt
 
 /**
- * Un único reproductor del vídeo de Athos para toda la app (presentación y vista Athos del cuadro).
+ * Reproductores de los vídeos en bucle, uno por vídeo (res/raw) y compartido por todas las pantallas
+ * que lo usan: la presentación tiene el suyo (athos_intro, 1920×720) y la vista Athoox del cuadro
+ * el suyo (athoox_core, solo la franja del cristal y a menor tamaño).
  *
- * Antes cada pantalla tenía el suyo: al acabar la intro se liberaba uno (en el hilo principal) y
- * arrancaba otro decodificador justo cuando empezaban el barrido de agujas, el saludo y la radio,
- * y el vídeo daba tirones. Ahora el mismo decodificador sigue corriendo: la presentación le cede la
- * superficie al cuadro (MediaCodec.setOutputSurface, sin pararlo) y el bucle continúa donde iba.
+ * Desde 0.9.115 hasta 0.9.122 la vista Athoox reutilizaba el de la presentación: decodificaba el
+ * vídeo entero de 1920×720 para enseñar solo un recorte, y en la radio, con el rato, se notaba
+ * más lento y con saltos. Ahora su vídeo tiene 3,4 veces menos píxeles por fotograma. El cambio de
+ * reproductor ocurre con la pantalla en negro (velo de la presentación), así que no se ve.
  *
  * Cada pantalla que lo usa es un «dueño»: la superficie es la del último que la pide
  * ([LoopVideo] con attached = true) y se reproduce mientras alguno quiera. Sin dueños durante
- * [IDLE_RELEASE_MS] se libera (no queda un decodificador ocupado fuera del Inicio).
+ * [IDLE_RELEASE_MS] se libera (no queda un decodificador ocupado fuera de donde se ve).
  */
 @OptIn(UnstableApi::class)
 internal object SharedLoop {
-    private var player: ExoPlayer? = null
-    private var res = 0
-    private val wants = HashMap<Any, Boolean>()
-    private val owners = HashSet<Any>()
+    private class Entry(val player: ExoPlayer) {
+        val wants = HashMap<Any, Boolean>()
+        val owners = HashSet<Any>()
+        val releaseIdle = Runnable { if (owners.isEmpty()) release() }
+        fun release() { player.release(); entries.values.remove(this) }
+    }
+    private val entries = HashMap<Int, Entry>()
     private val main = Handler(Looper.getMainLooper())
-    private val releaseIdle = Runnable { if (owners.isEmpty()) { player?.release(); player = null } }
 
-    fun player(ctx: Context, @RawRes id: Int): ExoPlayer {
-        player?.let { if (res == id) return it; it.release() }
-        res = id
-        return ExoPlayer.Builder(ctx.applicationContext)
-            // Vídeo local de 1–2 MB: basta con poco búfer (menos memoria y arranca antes).
-            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(1_500, 5_000, 250, 250).build())
-            .build().apply {
-                repeatMode = Player.REPEAT_MODE_ONE
-                volume = 0f
-                playWhenReady = false
-                setMediaItem(MediaItem.fromUri(RawResourceDataSource.buildRawResourceUri(id)))
-                prepare()
-            }.also { player = it }
+    private fun entry(ctx: Context, @RawRes id: Int): Entry = entries.getOrPut(id) {
+        Entry(
+            ExoPlayer.Builder(ctx.applicationContext)
+                // Vídeo local de 1–2 MB: basta con poco búfer (menos memoria y arranca antes).
+                .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(1_500, 5_000, 250, 250).build())
+                .build().apply {
+                    repeatMode = Player.REPEAT_MODE_ONE
+                    volume = 0f
+                    playWhenReady = false
+                    setMediaItem(MediaItem.fromUri(RawResourceDataSource.buildRawResourceUri(id)))
+                    prepare()
+                },
+        )
     }
 
-    fun join(owner: Any) { owners += owner; main.removeCallbacks(releaseIdle) }
-
-    fun leave(owner: Any, view: android.view.View?) {
-        owners -= owner; wants -= owner
-        player?.let { p ->
-            when (view) {
-                is TextureView -> p.clearVideoTextureView(view)
-                is android.view.SurfaceView -> p.clearVideoSurfaceView(view)
-            }
-            p.playWhenReady = wants.values.any { it }
-        }
-        if (owners.isEmpty()) main.postDelayed(releaseIdle, IDLE_RELEASE_MS)
+    fun join(ctx: Context, @RawRes id: Int, owner: Any): ExoPlayer {
+        val e = entry(ctx, id)
+        e.owners += owner
+        main.removeCallbacks(e.releaseIdle)
+        return e.player
     }
 
-    fun attach(view: android.view.View) {
+    private fun of(player: ExoPlayer) = entries.values.firstOrNull { it.player === player }
+
+    fun leave(player: ExoPlayer, owner: Any, view: android.view.View?) {
+        val e = of(player) ?: return
+        e.owners -= owner; e.wants -= owner
         when (view) {
-            is TextureView -> player?.setVideoTextureView(view)
-            is android.view.SurfaceView -> player?.setVideoSurfaceView(view)
+            is TextureView -> player.clearVideoTextureView(view)
+            is android.view.SurfaceView -> player.clearVideoSurfaceView(view)
+        }
+        player.playWhenReady = e.wants.values.any { it }
+        if (e.owners.isEmpty()) main.postDelayed(e.releaseIdle, IDLE_RELEASE_MS)
+    }
+
+    fun attach(player: ExoPlayer, view: android.view.View) {
+        if (of(player) == null) return
+        when (view) {
+            is TextureView -> player.setVideoTextureView(view)
+            is android.view.SurfaceView -> player.setVideoSurfaceView(view)
         }
     }
 
-    fun play(owner: Any, want: Boolean) {
-        wants[owner] = want
-        player?.playWhenReady = wants.values.any { it }
+    fun play(player: ExoPlayer, owner: Any, want: Boolean) {
+        val e = of(player) ?: return
+        e.wants[owner] = want
+        player.playWhenReady = e.wants.values.any { it }
     }
 
     private const val IDLE_RELEASE_MS = 20_000L
@@ -137,16 +149,16 @@ fun LoopVideo(
     val firstFrame = rememberUpdatedState(onFirstFrame)
     val isAttached = rememberUpdatedState(attached)
     val holder = remember { arrayOfNulls<android.view.View>(1) }
-    val player = remember(res) { SharedLoop.join(owner); SharedLoop.player(ctx, res) }
+    val player = remember(res) { SharedLoop.join(ctx, res, owner) }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onRenderedFirstFrame() { if (isAttached.value) firstFrame.value() }
         }
         player.addListener(listener)
-        onDispose { player.removeListener(listener); SharedLoop.leave(owner, holder[0]) }
+        onDispose { player.removeListener(listener); SharedLoop.leave(player, owner, holder[0]) }
     }
-    LaunchedEffect(player, attached) { holder[0]?.let { if (attached) SharedLoop.attach(it) } }
-    LaunchedEffect(player, playing) { SharedLoop.play(owner, playing) }
+    LaunchedEffect(player, attached) { holder[0]?.let { if (attached) SharedLoop.attach(player, it) } }
+    LaunchedEffect(player, playing) { SharedLoop.play(player, owner, playing) }
 
     BoxWithConstraints(modifier.clipToBounds(), contentAlignment = Alignment.TopStart) {
         val density = LocalDensity.current
@@ -163,7 +175,7 @@ fun LoopVideo(
         AndroidView(
             factory = { c ->
                 val v: android.view.View = if (surface) android.view.SurfaceView(c) else TextureView(c).also(onView)
-                v.also { holder[0] = it; if (attached) SharedLoop.attach(it) }
+                v.also { holder[0] = it; if (attached) SharedLoop.attach(player, it) }
             },
             modifier = Modifier.wrapContentSize(Alignment.TopStart, unbounded = true)
                 .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
