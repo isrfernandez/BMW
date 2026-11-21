@@ -135,7 +135,7 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
     val cards = remember {
         listOf(
             // Antes "Música" (ya está en la barra lateral): ahora el asistente de voz «Hola Athos».
-            Card("assistant", "Hola Athos", "Asistente de voz", CardTheme.ASSIST, { VoiceAssistant.tap(it) }),
+            Card("assistant", "Hola Athoox", "Asistente de voz", CardTheme.ASSIST, { VoiceAssistant.tap(it) }),
             // Antes "Navegación" (repetida en la barra lateral): ahora la gasolinera más cercana.
             Card("fuel", "Gasolinera", "La más cercana", CardTheme.FUEL, { onOpen(Screen.FUEL) }),
             // Modo de conducción: cada pulsación pasa al siguiente (Normal → Sport → Night).

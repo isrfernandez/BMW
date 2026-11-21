@@ -164,6 +164,11 @@ class AppSettings(context: Context) {
         get() = prefs.getString(KEY_CARD_ORDER, "")!!.split(',').filter { it.isNotBlank() }
         set(value) = prefs.edit().putString(KEY_CARD_ORDER, value.joinToString(",")).apply()
 
+    /** Orden de los botones de la barra lateral (ids de SideArt), como el de las tarjetas. */
+    var sidebarOrder: List<String>
+        get() = prefs.getString("sidebar_order", "")!!.split(',').filter { it.isNotBlank() }
+        set(value) = prefs.edit().putString("sidebar_order", value.joinToString(",")).apply()
+
     /** Lugar elegido para el tiempo; null = usar la ubicación GPS. */
     var weatherPlace: Place?
         get() {
@@ -389,6 +394,16 @@ class AppSettings(context: Context) {
         get() = prefs.getString("radio_last_station", null)
         set(value) = prefs.edit().putString("radio_last_station", value).apply()
 
+    /** Fuente de la última emisora que sonó (FM o INTERNET); null = nunca sonó ninguna. */
+    var radioLastPlayed: String?
+        get() = prefs.getString("radio_last_played", null)
+        set(value) = prefs.edit().putString("radio_last_played", value).apply()
+
+    /** Volver a poner la última emisora al arrancar la app. */
+    var radioAutoPlay: Boolean
+        get() = prefs.getBoolean("radio_auto_play", true)
+        set(value) = prefs.edit().putBoolean("radio_auto_play", value).apply()
+
     /** Volumen propio de la radio (0–100), independiente del general. */
     var radioVolume: Int
         get() = prefs.getInt("radio_volume", com.cockpitf30.radio.RadioLogic.DEFAULT_VOLUME)
@@ -398,6 +413,11 @@ class AppSettings(context: Context) {
     var radioDuckAssistant: Boolean
         get() = prefs.getBoolean("radio_duck_assistant", true)
         set(value) = prefs.edit().putBoolean("radio_duck_assistant", value).apply()
+
+    /** Bajar la radio con las indicaciones de Google Maps (ver radio.NavDuck). */
+    var radioDuckNav: Boolean
+        get() = prefs.getBoolean("radio_duck_nav", true)
+        set(value) = prefs.edit().putBoolean("radio_duck_nav", value).apply()
 
     private companion object {
         const val KEY_CAN_ASK_SPEED = "can_ask_speed"

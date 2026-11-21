@@ -15,8 +15,8 @@ android {
         // Las unidades TopWay/ZQ suelen venir con Android 10–13.
         minSdk = 26
         targetSdk = 34
-        versionCode = 110
-        versionName = "0.9.100"
+        versionCode = 134
+        versionName = "0.9.124"
         // Vosk trae su librería nativa para cada arquitectura (~9 MB cada una): la radio es ARM y el
         // emulador del PC x86_64; la de x86 de 32 bits no hace falta.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
@@ -70,6 +70,7 @@ android {
     packaging {
         jniLibs { useLegacyPackaging = true }
     }
+    testOptions { unitTests.isIncludeAndroidResources = true; unitTests.all { it.systemProperty("robolectric.dependency.repo.url", "https://maven-central.storage-download.googleapis.com/maven2") } }
     buildFeatures {
         compose = true
     }
@@ -98,6 +99,9 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.13")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
     // org.json de Android no funciona en tests de JVM: usamos la implementación de referencia.
     testImplementation("org.json:json:20240303")
 }

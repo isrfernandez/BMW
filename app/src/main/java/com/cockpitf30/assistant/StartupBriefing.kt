@@ -88,6 +88,7 @@ object StartupBriefing {
             tempC = fc?.tempC,
             weather = fc?.let { wmoCondition(it.code).text },
             rainLater = rainLater,
+            wind = fc?.let { com.cockpitf30.weather.Wind.today(it, nowLt) },
             rangeKm = VehicleRepository.state.value.rangeKm,
             camerasOnRoute = onRoute,
             routeKm = routeKm,

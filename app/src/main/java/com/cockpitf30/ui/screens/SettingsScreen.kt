@@ -3,6 +3,8 @@ package com.cockpitf30.ui.screens
 import android.view.KeyEvent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -73,7 +75,7 @@ import com.cockpitf30.vehicle.trip.TripComputer
 /** Secciones de Ajustes, en el orden de la columna de la izquierda. */
 enum class SettingsSection(val title: String, val hint: String) {
     DISPLAY("Pantalla e iluminación", "Modo diurno, tamaño de letra, Night y luz ambiente"),
-    ASSISTANT("Asistente de voz", "«Hola Athos», voz y personalidad"),
+    ASSISTANT("Asistente de voz", "«Hola Athoox», voz y personalidad"),
     DRIVING("Conducción", "Copiloto, briefing, resumen y cambio"),
     ALERTS("Avisos en ruta", "Radares, peligros, descanso, turismo, comer y dormir"),
     RADIO("Radio", "Fuente, volumen y atenuación"),
@@ -115,6 +117,25 @@ fun SettingsScreen(onOpen: (Screen) -> Unit = {}, initialSection: SettingsSectio
                 }
                 // Cada sección empieza arriba del todo.
                 key(section) {
+                    // Modo demo: las filas se resaltan por turnos enseñando el cambio, sin guardarlo.
+                    val demoRows = remember { DemoRows() }
+                    LaunchedEffect(demoSection) {
+                        if (demoSection == null) return@LaunchedEffect
+                        kotlinx.coroutines.delay(450)
+                        val n = demoRows.count
+                        if (n == 0) return@LaunchedEffect
+                        val total = (com.cockpitf30.ui.components.DemoTour.step?.seconds ?: 5) * 1000L - 900L
+                        val per = (total / n).coerceIn(220L, 700L)
+                        try {
+                            for (i in 0 until n) {
+                                com.cockpitf30.ui.components.DemoTour.settingsFlip = i
+                                kotlinx.coroutines.delay(per)
+                            }
+                        } finally {
+                            com.cockpitf30.ui.components.DemoTour.settingsFlip = -1
+                        }
+                    }
+                    androidx.compose.runtime.CompositionLocalProvider(LocalDemoRows provides demoRows.takeIf { demoSection != null }) {
                     Column(
                         Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -129,6 +150,7 @@ fun SettingsScreen(onOpen: (Screen) -> Unit = {}, initialSection: SettingsSectio
                             SettingsSection.MAPS -> MapsSettings()
                             SettingsSection.SYSTEM -> SystemSettings(onOpen)
                         }
+                    }
                     }
                 }
             }
@@ -189,9 +211,9 @@ private fun AssistantSettings() {
     val assistant = VoiceAssistant
     val voice by assistant.state.collectAsStateWithLifecycle()
 
-    SettingGroup("«Hola Athos»") {
+    SettingGroup("«Hola Athoox»") {
         var on by remember { mutableStateOf(settings.assistantEnabled) }
-        ToggleRow("Asistente de voz", "Escucha «Hola Athos» para pedir el tiempo, navegar, llamar, poner la radio…", on) {
+        ToggleRow("Asistente de voz", "Escucha «Hola Athoox» para pedir el tiempo, navegar, llamar, poner la radio…", on) {
             on = it; assistant.setEnabled(ctx, it)
         }
         var talks by remember { mutableStateOf(settings.assistantSpeaks) }
@@ -209,13 +231,13 @@ private fun AssistantSettings() {
             )
         }
         var follow by remember { mutableStateOf(settings.assistantFollowUp) }
-        ToggleRow("Sigue escuchando tras responder", "Puedes decir «otra», «¿y mañana?» o «repite» sin volver a decir «Hola Athos».", follow, enabled = on) {
+        ToggleRow("Sigue escuchando tras responder", "Puedes decir «otra», «¿y mañana?» o «repite» sin volver a decir «Hola Athoox».", follow, enabled = on) {
             follow = it; settings.assistantFollowUp = it
         }
         if (follow) {
             var secs by remember { mutableStateOf(settings.assistantFollowSeconds) }
             val opts = listOf(3, 5, 8, 12)
-            ChoiceRow("Tiempo de escucha tras responder", "Lo que espera tu respuesta antes de volver a «Hola Athos». Si empiezas a hablar, espera a que acabes.", opts.map { "$it s" }, opts.indexOf(secs).let { if (it < 0) 1 else it }) {
+            ChoiceRow("Tiempo de escucha tras responder", "Lo que espera tu respuesta antes de volver a «Hola Athoox». Si empiezas a hablar, espera a que acabes.", opts.map { "$it s" }, opts.indexOf(secs).let { if (it < 0) 1 else it }) {
                 secs = opts[it]; settings.assistantFollowSeconds = secs
             }
         }
@@ -223,14 +245,14 @@ private fun AssistantSettings() {
         val hasGoogle = remember { assistant.googleAvailable() }
         ChoiceRow(
             "Entender las órdenes con",
-            if (hasGoogle) "Google entiende el habla normal mucho mejor (necesita conexión o el idioma descargado). «Hola Athos» lo sigue oyendo el reconocedor sin conexión."
+            if (hasGoogle) "Google entiende el habla normal mucho mejor (necesita conexión o el idioma descargado). «Hola Athoox» lo sigue oyendo el reconocedor sin conexión."
             else "Esta radio no tiene el reconocedor de Google: se usa el de sin conexión.",
             listOf("Google", "Sin conexión"), if (withGoogle && hasGoogle) 0 else 1,
         ) {
             withGoogle = it == 0; settings.commandsWithGoogle = withGoogle
         }
         var sens by remember { mutableStateOf(settings.wakeSensitivity) }
-        ChoiceRow("Sensibilidad al oír «Hola Athos»", "Alta lo oye mejor con ruido, pero salta más veces sin querer.", listOf("Baja", "Normal", "Alta"), 2 - sens) {
+        ChoiceRow("Sensibilidad al oír «Hola Athoox»", "Alta lo oye mejor con ruido, pero salta más veces sin querer.", listOf("Baja", "Normal", "Alta"), 2 - sens) {
             sens = 2 - it; settings.wakeSensitivity = sens
         }
     }
@@ -321,12 +343,11 @@ private fun DrivingSettings(onOpen: (Screen) -> Unit) {
     }
     SettingGroup("Al arrancar y al parar") {
         var sound by remember { mutableStateOf(settings.startSound) }
-        ToggleRow("Iniciar con sonido", "El sonido de Athos en la pantalla de arranque.", sound) {
+        ToggleRow("Iniciar con sonido", "El sonido de Athoox en la pantalla de arranque.", sound) {
             sound = it; settings.startSound = it
         }
-        var viewSound by remember { mutableStateOf(settings.athosViewSound) }
-        ToggleRow("Sonido de la vista Athos", "Suena al pasar a la vista Athos en el centro del cuadro del Inicio.", viewSound) {
-            viewSound = it; settings.athosViewSound = it
+        ActionRow("Ver la intro", "La presentación de Athoox otra vez, con su sonido, y vuelta al Inicio como al arrancar.", "Ver ›") {
+            com.cockpitf30.ui.components.Startup.replay.value++
         }
         var briefing by remember { mutableStateOf(settings.briefing) }
         ToggleRow("Briefing al arrancar", "Saludo con el tiempo, los radares cercanos y la autonomía, si han pasado más de 45 minutos desde el anterior.", briefing) {
@@ -391,6 +412,7 @@ private fun alertHint(c: AlertCategory): String = when (c) {
     AlertCategory.REST -> "Áreas de descanso tras hora y media al volante."
     AlertCategory.TOURISM -> "Monumentos, miradores y pueblos con artículo en Wikipedia, con foto."
     AlertCategory.FOOD -> "Restaurantes a la hora de comer o cenar, y hoteles y campings por la noche o tras tres horas al volante."
+    AlertCategory.WIND -> "Viento de proa, de través o de popa según el rumbo, en términos náuticos, cuando sopla con fuerza."
 }
 
 @Composable
@@ -408,9 +430,18 @@ private fun RadioSettings(onOpen: (Screen) -> Unit) {
         ) { Radio.selectSource(RadioSource.entries[it]) }
         StepperRow("Volumen de la radio", "Independiente del volumen general.", "${radio.volume} %",
             onMinus = { Radio.changeVolume(-5) }, onPlus = { Radio.changeVolume(5) })
+        var autoPlay by remember { mutableStateOf(settings.radioAutoPlay) }
+        ToggleRow("Poner la última emisora al arrancar", "Vuelve a sonar la última que escuchaste, FM o Internet, salvo que ya suene otra música.", autoPlay) {
+            autoPlay = it; settings.radioAutoPlay = it
+        }
         var duck by remember { mutableStateOf(settings.radioDuckAssistant) }
         ToggleRow("Bajar la radio cuando habla el asistente", "También mientras te escucha, para que te entienda.", duck) {
             duck = it; settings.radioDuckAssistant = it
+        }
+        var duckNav by remember { mutableStateOf(settings.radioDuckNav) }
+        ToggleRow("Bajar la radio con las indicaciones de Google Maps", "Deja Maps como navegador de la radio y baja la FM mientras habla.", duckNav) {
+            duckNav = it; settings.radioDuckNav = it
+            if (it) Thread({ com.cockpitf30.radio.NavDuck.claim(ctx) }, "navegador-radio").start()
         }
         ActionRow("Emisoras y favoritas", null, "Abrir Radio ›") { onOpen(Screen.RADIO) }
     }
@@ -448,7 +479,7 @@ private fun MapsSettings() {
         }
         var listen by remember { mutableStateOf(settings.listenOutsideApp) }
         ToggleRow(
-            "«Hola Athos» también con Maps delante",
+            "«Hola Athoox» también con Maps delante",
             "El micrófono sigue abierto fuera de la app. Las preguntas se contestan sin quitar el mapa; «abre la radio» o «vuelve al inicio» traen la app.",
             listen,
         ) {
@@ -464,7 +495,7 @@ private fun MapsSettings() {
                 com.cockpitf30.nav.MapsGuidanceState.requestAccess(ctx)
             }
         } else {
-            ActionRow("Acceso a notificaciones", "En la lista que se abre, activa Athos.", "Dar acceso ›") {
+            ActionRow("Acceso a notificaciones", "En la lista que se abre, activa Athoox.", "Dar acceso ›") {
                 if (!com.cockpitf30.nav.MapsGuidanceState.requestAccess(ctx)) {
                     android.widget.Toast.makeText(ctx, "Esta radio no tiene esa pantalla de ajustes", android.widget.Toast.LENGTH_LONG).show()
                 }
@@ -491,7 +522,7 @@ private fun SystemSettings(onOpen: (Screen) -> Unit) {
         val isHome = remember { isDefaultHome(ctx) }
         ActionRow(
             "Lanzador de la radio",
-            if (isHome) "Athos es la pantalla de inicio." else "La pantalla de inicio es otra app.",
+            if (isHome) "Athoox es la pantalla de inicio." else "La pantalla de inicio es otra app.",
             "Elegir",
         ) { chooseHome(ctx) }
         ActionRow("Lanzador de serie (BMW)", "Abre el de fábrica sin cambiar el de inicio.", "Abrir") { openStockLauncher(ctx) }
@@ -534,7 +565,7 @@ private fun SystemSettings(onOpen: (Screen) -> Unit) {
         ) { BatteryOptimization.request(ctx) }
     }
     SettingGroup("Acerca de") {
-        ActionRow("Athos ${installedVersion(ctx)}", "Información técnica, datos del CAN e informe para depurar.", "Diagnóstico ›") {
+        ActionRow("Athoox ${installedVersion(ctx)}", "Información técnica, datos del CAN e informe para depurar.", "Diagnóstico ›") {
             onOpen(Screen.DIAGNOSTICS)
         }
     }
@@ -589,13 +620,36 @@ private fun Hint(text: String) {
 /** Opción de sí/no: toda la fila es el botón y a la derecha lleva un interruptor. */
 @Composable
 private fun ToggleRow(title: String, subtitle: String?, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
-    FocusTile(onClick = { onChange(!checked) }, selected = false, modifier = Modifier.fillMaxWidth().heightIn(min = 68.dp)) {
+    val (demo, demoMod) = demoFlip()
+    FocusTile(onClick = { onChange(!checked) }, selected = demo, modifier = demoMod.fillMaxWidth().heightIn(min = 68.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Labels(title, subtitle, enabled, Modifier.weight(1f))
             Spacer(Modifier.width(20.dp))
-            Switch(checked, enabled)
+            Switch(checked != demo, enabled)
         }
     }
+}
+
+/** Filas de la sección en el orden en que se pintan, para que el modo demo las recorra. */
+private class DemoRows { var count = 0; fun next() = count++ }
+private val LocalDemoRows = androidx.compose.runtime.compositionLocalOf<DemoRows?> { null }
+
+/**
+ * ¿Le toca a esta fila enseñar su cambio en el modo demo? Devuelve también el modificador que la
+ * trae a la vista (las secciones largas se desplazan solas) y la resalta.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun demoFlip(): Pair<Boolean, Modifier> {
+    val rows = LocalDemoRows.current ?: return false to Modifier
+    val index = remember { rows.next() }
+    val on = com.cockpitf30.ui.components.DemoTour.settingsFlip == index
+    val req = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+    LaunchedEffect(on) { if (on) runCatching { req.bringIntoView() } }
+    val glow by animateFloatAsState(if (on) 1f else 0f, label = "demoRow")
+    return on to Modifier
+        .bringIntoViewRequester(req)
+        .background(Cockpit.Blue.copy(alpha = 0.16f * glow), androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
 }
 
 /** Interruptor dibujado: pista azul y bola a la derecha cuando está encendido. */
@@ -616,7 +670,11 @@ private fun Switch(on: Boolean, enabled: Boolean) {
 /** Opción con varias posibilidades: texto arriba y botones debajo, el elegido resaltado. */
 @Composable
 private fun ChoiceRow(title: String, subtitle: String?, options: List<String>, selected: Int, onSelect: (Int) -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val (demo, demoMod) = demoFlip()
+    // En el modo demo se ve elegida la opción siguiente (no se guarda).
+    @Suppress("NAME_SHADOWING")
+    val selected = if (demo && options.isNotEmpty()) (selected + 1).mod(options.size) else selected
+    Column(demoMod.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Labels(title, subtitle, true, Modifier)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             options.forEachIndexed { i, label ->
@@ -636,10 +694,11 @@ private fun ChoiceRow(title: String, subtitle: String?, options: List<String>, s
 /** Opción que hace algo (probar, abrir, borrar): texto a la izquierda y botón a la derecha. */
 @Composable
 private fun ActionRow(title: String, subtitle: String?, button: String, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    val (demo, demoMod) = demoFlip()
+    Row(demoMod.fillMaxWidth().padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Labels(title, subtitle, true, Modifier.weight(1f))
         Spacer(Modifier.width(20.dp))
-        FocusTile(onClick = onClick) {
+        FocusTile(onClick = onClick, selected = demo) {
             Text(button, Modifier.padding(horizontal = 24.dp, vertical = 12.dp), style = MaterialTheme.typography.bodyLarge)
         }
     }
@@ -648,10 +707,11 @@ private fun ActionRow(title: String, subtitle: String?, button: String, onClick:
 /** Valor con − y +. */
 @Composable
 private fun StepperRow(title: String, subtitle: String?, value: String, onMinus: () -> Unit, onPlus: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    val (demo, demoMod) = demoFlip()
+    Row(demoMod.fillMaxWidth().padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Labels(title, subtitle, true, Modifier.weight(1f))
         Spacer(Modifier.width(20.dp))
-        FocusTile(onClick = onMinus) {
+        FocusTile(onClick = onMinus, selected = demo) {
             Text("−", Modifier.padding(horizontal = 24.dp, vertical = 8.dp), style = MaterialTheme.typography.titleLarge)
         }
         Text(value, Modifier.width(110.dp), style = numeric(28, FontWeight.Medium), color = Cockpit.Text, textAlign = androidx.compose.ui.text.style.TextAlign.Center)

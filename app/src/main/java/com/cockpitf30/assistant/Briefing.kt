@@ -8,6 +8,8 @@ data class BriefingInput(
     /** «despejado», «lluvia moderada»… */
     val weather: String? = null,
     val rainLater: Boolean = false,
+    /** «Viento de poniente, flojo, a 15 kilómetros por hora, rolando a suroeste por la tarde» (ver Wind.today). */
+    val wind: String? = null,
     val rangeKm: Int? = null,
     /** Radares en el camino al destino habitual (null = no hay destino habitual conocido). */
     val camerasOnRoute: Int? = null,
@@ -27,9 +29,10 @@ object Briefing {
     fun text(b: BriefingInput): String {
         val greet = when (b.hour) { in 6..12 -> "Buenos días"; in 13..20 -> "Buenas tardes"; else -> "Buenas noches" }
         // Se presenta: la app y el asistente se llaman Athos.
-        val parts = mutableListOf(greet + (b.name?.let { ", $it" } ?: "") + ". Aquí Athos.")
+        val parts = mutableListOf(greet + (b.name?.let { ", $it" } ?: "") + ". Aquí Athoox.")
         val w = listOfNotNull(b.tempC?.let { "$it grados" }, b.weather?.lowercase()).joinToString(" y ")
         if (w.isNotEmpty()) parts += "Fuera hay $w" + if (b.rainLater) ", y puede llover más tarde." else "."
+        b.wind?.let { parts += "$it." }
         b.rangeKm?.let { r ->
             parts += when {
                 r < 60 -> "Ojo: solo quedan $r kilómetros de autonomía; conviene repostar pronto."

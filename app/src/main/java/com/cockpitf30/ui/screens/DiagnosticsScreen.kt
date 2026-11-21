@@ -19,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -110,9 +111,11 @@ fun DiagnosticsScreen() {
             }
             item {
                 DiagCard("Modo demo") {
-                    Info("Recorre sola toda la app: cada pantalla, los modos Sport, Night y diurno y las secciones de Ajustes, " +
-                        "con datos de demostración (unos ${com.cockpitf30.ui.components.DemoTour.steps.sumOf { it.seconds } / 60 + 1} minutos). " +
-                        "Abajo se ve qué es cada pantalla; «Detener» o atrás la para. Al acabar todo vuelve a como estaba.", Cockpit.TextDim)
+                    Info("Recorre sola toda la app y la pone a prueba: las vistas del cuadro, el asistente contestando por voz, " +
+                        "gasolineras, resumen del viaje, avisos en ruta, turismo, una salida cronometrada en Rendimiento, los modos " +
+                        "Sport, Night y diurno y un repaso rápido de Ajustes, con datos de demostración (unos " +
+                        "${com.cockpitf30.ui.components.DemoTour.totalSeconds.let { "%d:%02d".format(it / 60, it % 60) }} min). " +
+                        "Arriba se ve qué es cada paso; «Detener» o atrás la para. Nada se guarda: al acabar todo vuelve a como estaba.", Cockpit.TextDim)
                     ChipRow(listOf("Empezar demo"), -1, Modifier.focusRequester(first)) { com.cockpitf30.ui.components.DemoTour.start(context) }
                 }
             }
@@ -144,7 +147,18 @@ fun DiagnosticsScreen() {
                     val gpsSound = carValues.entries.filter { "gps_sound" in it.key || "gps_mix" in it.key }.joinToString(" · ") { "${it.key} = ${it.value}" }
                     Info("En vivo: ${gpsSound.ifBlank { "state.main.gps_sound no aparece" }}", Cockpit.TextDim)
                     Info("Con esta pantalla abierta, deja que Google Maps dé una indicación: si «gps_sound» no cambia, la radio no se entera de que habla el navegador y por eso no baja la FM.", Cockpit.TextDim)
-                    ChipRow(listOf("Volver a leer"), -1) { reads++ }
+                    val navScope = androidx.compose.runtime.rememberCoroutineScope()
+                    val navLog by com.cockpitf30.radio.NavDuck.log.collectAsStateWithLifecycle()
+                    val guiding by com.cockpitf30.radio.NavDuck.guidance.collectAsStateWithLifecycle()
+                    Info("App: ${com.cockpitf30.radio.NavDuck.claimNote}", Cockpit.TextDim)
+                    Info("Indicación sonando ahora: ${if (guiding) "sí" else "no"} · ${com.cockpitf30.radio.NavDuck.detectNote}", Cockpit.TextDim)
+                    navLog.take(6).forEach { Info(it, Cockpit.TextDim) }
+                    ChipRow(listOf("Volver a leer", "Usar Google Maps como navegador"), -1) {
+                        if (it == 1) navScope.launch {
+                            withContext(Dispatchers.IO) { com.cockpitf30.radio.NavDuck.claim(context, force = true) }
+                            reads++
+                        } else reads++
+                    }
                 }
             }
             item {
@@ -255,6 +269,12 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                DiagCard("Fluidez") {
+                    // Se refresca con el reloj de la pantalla (now).
+                    now.let { com.cockpitf30.system.FrameStats.summary().forEach { Info(it) } }
+                }
+            }
+            item {
                 // Para ajustar la interfaz a radios con otra densidad o tamaño de letra.
                 val dm = context.resources.displayMetrics
                 val cfg = context.resources.configuration
@@ -339,7 +359,7 @@ private fun buildReport(
     input: List<String>,
 ): String = buildString {
     val dm = context.resources.displayMetrics
-    appendLine("Athos ${installedVersion(context)} · informe de diagnóstico · ${java.time.LocalDateTime.now()}")
+    appendLine("Athoox ${installedVersion(context)} · informe de diagnóstico · ${java.time.LocalDateTime.now()}")
     appendLine("Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT}) · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · ${android.os.Build.DISPLAY}")
     appendLine("Pantalla ${dm.widthPixels}x${dm.heightPixels} ${dm.densityDpi} dpi")
     appendLine()
@@ -402,7 +422,7 @@ private fun radioReport(values: Map<String, String>, changes: List<String>, vehi
     changes.forEach(::appendLine)
 }
 
-internal fun shareReport(context: android.content.Context, text: String, subject: String = "Athos diagnóstico") {
+internal fun shareReport(context: android.content.Context, text: String, subject: String = "Athoox diagnóstico") {
     val send = android.content.Intent(android.content.Intent.ACTION_SEND)
         .setType("text/plain")
         .putExtra(android.content.Intent.EXTRA_SUBJECT, subject)

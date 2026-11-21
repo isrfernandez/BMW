@@ -56,6 +56,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.runtime.collectAsState
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -156,9 +159,11 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     LaunchedEffect(Unit) {
         if (ClusterIntro.swept) return@LaunchedEffect
         Startup.splashDone.first { it }
-        delay(450)
-        launch { fadeIn.animateTo(1f, tween(650, easing = FastOutSlowInEasing)) }
-        delay(200)
+        // La presentación ya funde desde negro todo el Inicio: el cuadro está desde el principio
+        // (antes se fundía él aparte, después, y se notaba como un segundo salto). El barrido
+        // espera a que se haya ido el negro.
+        fadeIn.snapTo(1f)
+        delay(1_500)
         doSweep()
         ClusterIntro.swept = true
     }
@@ -196,7 +201,6 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     val measurer = rememberTextMeasurer(cacheSize = 96)
     val scaleStyle = numeric(28, FontWeight.SemiBold)
     val smallStyle = numeric(17, FontWeight.SemiBold)
-    val maxStyle = numeric(19, FontWeight.Bold).copy(letterSpacing = 2.sp)
     val captionStyle = numeric(17, FontWeight.Medium)
     val homeRes = cachedBitmap(R.drawable.home_car_scene)
     val trianglesRes = cachedBitmap(R.drawable.bg_triangles)
@@ -232,14 +236,35 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     val scope = rememberCoroutineScope()
     fun choose(to: Int) {
         val t = to.coerceIn(-1, 1)
-        if (t == -1 && target != -1) AthosSound.play(ctx)
         target = t
         ClusterIntro.done = true
         scope.launch { page.animateTo(t.toFloat(), tween(450, easing = FastOutSlowInEasing)) }
     }
-    LaunchedEffect(Unit) {
-        if (ClusterIntro.done) return@LaunchedEffect
-        delay(ClusterIntro.ATHOS_MS)
+    val replayN by ClusterIntro.replay.collectAsState()
+    LaunchedEffect(replayN) {
+        if (replayN > ClusterIntro.replayHandled) {
+            // «Ver la intro»: otra vez la vista Athoox y después coche y mapa, como al arrancar.
+            ClusterIntro.replayHandled = replayN
+            ClusterIntro.done = false
+            target = -1
+            page.snapTo(-1f)
+        } else {
+            if (ClusterIntro.done) return@LaunchedEffect
+            Startup.splashDone.first { it }
+        }
+        // La vista Athoox cuenta desde que se va la presentación (antes contaba desde que se
+        // montaba el Inicio, debajo, y casi no se veía) y se queda mientras habla el asistente
+        // (el saludo de arranque), con un mínimo y un máximo.
+        val since = System.currentTimeMillis()
+        delay(ClusterIntro.ATHOS_MIN_MS)
+        var quietSince = 0L
+        while (!ClusterIntro.done && System.currentTimeMillis() - since < ClusterIntro.ATHOS_MAX_MS) {
+            val now = System.currentTimeMillis()
+            val talking = com.cockpitf30.assistant.VoiceAssistant.state.value.phase == com.cockpitf30.assistant.AssistantPhase.ANSWERING
+            if (talking) quietSince = 0L else if (quietSince == 0L) quietSince = now
+            if (quietSince != 0L && now - quietSince >= ClusterIntro.QUIET_MS) break
+            delay(200)
+        }
         if (ClusterIntro.done) return@LaunchedEffect
         target = 0
         page.animateTo(0f, tween(900, easing = FastOutSlowInEasing))
@@ -250,9 +275,16 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             page.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
         }
     }
+    // Modo demo: enseña cada vista del centro (sin el sonido de la vista Athos).
+    val demoPage = DemoTour.clusterPage
+    LaunchedEffect(demoPage) {
+        val p = demoPage ?: return@LaunchedEffect
+        target = p
+        ClusterIntro.done = true
+        page.animateTo(p.toFloat(), tween(600, easing = FastOutSlowInEasing))
+    }
     val athosFeed = rememberAthosFeed { page.value < 0f }
     val athosText = remember { AthosText() }
-    val athosImage = cachedBitmap(R.drawable.athos_view) // sin el rótulo: solo el triángulo
     var focused by remember { mutableStateOf(false) }
 
     val route by RouteTracker.state.collectAsStateWithLifecycle()
@@ -300,6 +332,12 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         // Redondeada a medio grado: la capa del coche no se repinta por décimas.
         val outsideTemp = state.outsideTempC?.let { t -> String.format(java.util.Locale.US, "%.1f", (t * 2).roundToInt() / 2f).replace('.', ',') }
         val fuelLevel = state.fuelLevel
+        // Mantenimiento más urgente (aceite, neumáticos o ITV), para el marcador bajo el coche.
+        // Se recalcula al cambiar la autonomía (más o menos cada pocos km), no en cada fotograma.
+        val service = remember(rangeKm) {
+            runCatching { com.cockpitf30.vehicle.Maintenance.mostUrgent(com.cockpitf30.ui.screens.serviceStatuses(com.cockpitf30.system.AppSettings(ctx))) }.getOrNull()
+                ?.takeIf { it.level != com.cockpitf30.vehicle.ServiceLevel.UNKNOWN }
+        }
         val scene = remember(homeRes, trianglesRes) { CarScene(homeRes, trianglesRes) }
         // El cuadro se pinta en capas independientes: cada una solo se vuelve a dibujar cuando cambia
         // lo suyo. Antes un único lienzo repintaba todo (coche, mapa, marcos, cifras) en cada
@@ -319,12 +357,14 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             else MapFrame(route, route.position, route.bearing, 17f, 0f)
             drawPanel(geo, scene, rangeKm, outsideTemp, measurer, overlay, pg, map, mapText, focused)
         }
+        // 1a) Vídeo del cristal de Athos, recortado al panel y deslizándose con la página.
+        AthosVideo(g, maxWidth, geoCache) { page.value }
         // 1b) Vista Athos: solo pinta (y anima) mientras se ve, entrando por la izquierda.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
             val pg = page.value
             if (pg >= 0f) return@Canvas
             val geo = geoCache.get(g, this)
-            drawAthosPanel(geo, pg, athosImage, athosFeed, measurer, athosText, focused)
+            drawAthosPanel(geo, pg, athosFeed, measurer, athosText, focused)
         }
         // 2) Franjas vacías de acero: fijas.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
@@ -335,8 +375,10 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         // 3) Relleno de velocidad y rpm: solo cuando se mueve la aguja.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
             val geo = geoCache.get(g, this)
-            drawFrameFill(geo, mirrored = false, fraction = speed, look = SpeedMetal)
-            drawFrameFill(geo, mirrored = true, fraction = rpm, look = RpmMetal)
+            // Velocidad igual que las rpm: el metal cambia de tono con los km/h.
+            drawFrameFill(geo, mirrored = false, fraction = speed, look = speedLook(speed), brushed = true)
+            // rpm: mismo formato que la velocidad; el tono del metal cambia con el régimen.
+            drawFrameFill(geo, mirrored = true, fraction = rpm, look = rpmLook(rpm), brushed = true)
         }
         // 4) Destello que recorre las barras: lo único que se pinta en cada fotograma.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
@@ -354,14 +396,16 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
 
             // El 0 no se rotula (no cabe colgando bajo la última marca); su marca sí se dibuja.
             val sMask = speedEngraved
-            // La cifra de arriba del todo (250 / 8) quedaba bajada y descolocada: se rotula "MAX".
+            val sLook = speedLook(speed)
+            // Arriba del todo (250 / 8) no se rotula nada: quedaba muy justo y nunca se llega ahí.
             SPEED_MARKS.forEachIndexed { i, v ->
-                val top = i == SPEED_MARKS.lastIndex
-                if (i > 0) drawMark(geo, measurer, if (top) "MAX" else "$v", SPEED_FRACTIONS[i], false, if (top) maxStyle else scaleStyle, SpeedLabel, sMask and (1 shl i) != 0, SpeedMetal)
+                if (i > 0 && i < SPEED_MARKS.lastIndex) drawMark(geo, measurer, "$v", SPEED_FRACTIONS[i], false, scaleStyle, SpeedLabel, sMask and (1 shl i) != 0, sLook)
             }
+            // Como en la velocidad: la cifra que cubre el relleno pasa a oscuro, grabada en el metal.
             val rMask = rpmEngraved
-            (1..8).forEach { k ->
-                drawMark(geo, measurer, if (k == 8) "MAX" else "$k", RPM_FRACTIONS[k], true, if (k == 8) maxStyle else scaleStyle, if (k * 1000 >= RPM_RED) RpmRed else RpmLabel, rMask and (1 shl k) != 0, RpmMetal)
+            val rLook = rpmLook(rpm)
+            (1..7).forEach { k ->
+                drawMark(geo, measurer, "$k", RPM_FRACTIONS[k], true, scaleStyle, if (k * 1000 >= RPM_RED) RpmRed else RpmLabel, rMask and (1 shl k) != 0, rLook)
             }
             drawCaption(geo, measurer, "km/h", mirrored = false, captionStyle)
             drawCaption(geo, measurer, "1/min x 1000", mirrored = true, captionStyle)
@@ -376,13 +420,38 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
                 .padding(start = g.contentInset, end = g.contentInset),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Durante el barrido las cifras suben y bajan con las barras.
-            val sw = sweep.value
-            val shownSpeed = if (sw > 0f) maxOf(state.speedKmh ?: 0, speedFromFraction(sw)) else state.speedKmh
-            val shownRpm = if (sw > 0f) maxOf(state.rpm ?: 0, (sw * RPM_MAX).roundToInt() / 50 * 50) else state.rpm
+            // Durante el barrido las cifras suben y bajan con las barras. Solo se recompone cuando
+            // cambia la cifra (antes, en cada fotograma del barrido).
+            val shownSpeed by remember(state.speedKmh) {
+                derivedStateOf { val sw = sweep.value; if (sw > 0f) maxOf(state.speedKmh ?: 0, speedFromFraction(sw)) else state.speedKmh }
+            }
+            val shownRpm by remember(state.rpm) {
+                derivedStateOf { val sw = sweep.value; if (sw > 0f) maxOf(state.rpm ?: 0, (sw * RPM_MAX).roundToInt() / 50 * 50) else state.rpm }
+            }
             TabValue(shownSpeed?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false, glow = SpeedGlow, intensity = speedGlow)
             Spacer(Modifier.weight(1.5f))
-            TabValue(gearText ?: "--", shownRpm?.let { "$it rpm" } ?: "-- rpm", Modifier.weight(1f), alignEnd = true, glow = RpmGlow, intensity = rpmGlow, shift = shift)
+            // Junto a la marcha y las rpm, lo más urgente del mantenimiento (solo en la vista del coche
+            // y Athos; con el mapa se apaga como las fichas de abajo).
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Spacer(Modifier.weight(1f))
+                service?.let { sv ->
+                    val (value, unit) = serviceValue(sv)
+                    val color = when (sv.level) {
+                        com.cockpitf30.vehicle.ServiceLevel.DUE -> Color(0xFFFF5A46)
+                        com.cockpitf30.vehicle.ServiceLevel.SOON -> Color(0xFFFFC94D)
+                        else -> Color(0xFF3DDC97)
+                    }
+                    // Solo en la vista del coche: se apaga tanto hacia el mapa como hacia Athos.
+                    Box(Modifier.graphicsLayer { alpha = (1f - abs(page.value) * 1.6f).coerceIn(0f, 1f) }) {
+                        InfoChip(serviceCaption(sv.item), value, unit, accentColor = color, valueColor = if (sv.level == com.cockpitf30.vehicle.ServiceLevel.OK) null else color)
+                    }
+                }
+                // Ancho fijo: si no, la ficha de al lado bailaba cada vez que cambiaban las cifras de
+                // rpm o aparecía la flecha de cambio (era lo que movía la vista).
+                Box(Modifier.width(300.dp), contentAlignment = Alignment.CenterEnd) {
+                    TabValue(gearText ?: "--", shownRpm?.let { "$it rpm" } ?: "-- rpm", alignEnd = true, glow = RpmGlow, intensity = rpmGlow, shift = shift)
+                }
+            }
         }
         // Datos de apoyo bajo las cifras grandes, solo en la vista del coche (se van con el mapa).
         CarInfoChips(
@@ -390,8 +459,8 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             Modifier.fillMaxWidth().height(g.frameBottom)
                 .graphicsLayer {
                     val p = page.value
+                    // Se quedan quietas al pasar a la vista Athos; con el mapa se apagan.
                     alpha = (1f - p * 1.6f).coerceIn(0f, 1f)
-                    translationY = p * 24.dp.toPx()
                 },
             inset = g.contentInset + 34.dp,
         )
@@ -406,11 +475,17 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
 /** Presentación del Inicio: el coche se ve solo durante los primeros segundos tras arrancar la app. */
 object ClusterIntro {
     /** Vista Athos al arrancar y después el coche, antes de pasar al mapa. */
-    const val ATHOS_MS = 8_000L
+    const val ATHOS_MIN_MS = 10_000L
+    const val ATHOS_MAX_MS = 35_000L
+    /** Callado al menos esto (tras el mínimo) para pasar al coche. */
+    const val QUIET_MS = 1_500L
     const val CAR_MS = 8_000L
     /** Motor parado al menos esto para repetir el barrido al arrancarlo. */
     const val ENGINE_OFF_MS = 5_000L
     @Volatile var done = false
+    /** «Ver la intro»: cada vez que sube, el cuadro vuelve a empezar por la vista Athoox. */
+    val replay = kotlinx.coroutines.flow.MutableStateFlow(0)
+    @Volatile var replayHandled = 0
     /** Ya se hizo el barrido de bienvenida de las agujas. */
     @Volatile var swept = false
 }
@@ -608,12 +683,92 @@ private fun panelShape(g: GeoPx): Triple<Path, Rect, Float> {
     return Triple(roundedPolygon(pts, g.dp(22f)), Rect(g.xv + inset, top, g.w - g.xv - inset, bottom), g.w - 2 * (g.xv + inset))
 }
 
+/**
+ * Vídeo de la vista Athoox: res/raw/athoox_core.mp4, la franja del cristal y sus órbitas del vídeo
+ * de la presentación (sin el rótulo) a 1440×360, H.264 Baseline. Tiene su propio reproductor: se
+ * prepara detrás de la presentación (primer fotograma listo, parado) y arranca al acabar, con la
+ * pantalla en negro. Cubre el panel, recortado a su forma y desplazado con la página igual que
+ * las lecturas que se pintan encima. Solo corre mientras se ve y con la app delante.
+ */
+@Composable
+private fun AthosVideo(g: Geometry, width: Dp, geoCache: GeoCache, page: () -> Float) {
+    val splashDone by Startup.splashDone.collectAsState()
+    val replaying by Startup.replaying.collectAsState()
+    val visible by remember { derivedStateOf { page() < 0f } }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    val lifeState by lifecycle.currentStateFlow.collectAsState()
+    val resumed = lifeState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+    val left = g.scaleWidth + 6.dp + g.band + 14.dp
+    val top = g.frameTop + PANEL_TOP
+    val panelW = width - left * 2
+    val panelH = g.frameBottom - PANEL_BOTTOM - top
+    // Cuando habla el asistente, el propio cristal se ilumina con la voz: el vídeo se pinta con un
+    // filtro de color (más brillo y un punto de azul) que sigue el nivel de la voz, fotograma a
+    // fotograma. Callado o fuera de la vista, sin filtro (coste cero).
+    val texture = remember { arrayOfNulls<android.view.TextureView>(1) }
+    // El fundido del negro al Inicio espera a que el vídeo esté pintado aquí (también tras «Ver la intro»).
+    val firstFrame = remember { androidx.compose.runtime.mutableStateOf(false) }
+    LaunchedEffect(firstFrame.value, replaying) { if (firstFrame.value && !replaying) Startup.clusterVideo.value = true }
+    LaunchedEffect(visible, resumed) {
+        val tv = texture[0]
+        if (!visible || !resumed || tv == null) { tv?.setLayerPaint(null); return@LaunchedEffect }
+        val paint = android.graphics.Paint()
+        val cm = android.graphics.ColorMatrix()
+        var shown = 0f
+        try {
+            while (true) {
+                val speaking = com.cockpitf30.assistant.VoiceAssistant.state.value.phase == com.cockpitf30.assistant.AssistantPhase.ANSWERING
+                // Callado y ya apagado: se mira 5 veces por segundo, sin pedir fotogramas.
+                if (!speaking && shown < 0.02f) { delay(200); continue }
+                androidx.compose.runtime.withFrameMillis { }
+                val lvl = if (speaking) com.cockpitf30.assistant.SpeechPulse.level(System.currentTimeMillis()) else 0f
+                // Sube rápido con cada sílaba y cae algo más despacio, como un destello.
+                val next = if (lvl > shown) shown + (lvl - shown) * 0.22f else shown + (lvl - shown) * 0.07f
+                if (kotlin.math.abs(next - shown) < 0.01f && !(next < 0.02f && shown >= 0.02f)) continue
+                shown = next
+                if (shown < 0.02f) { tv.setLayerPaint(null); continue }
+                // Más suave que en 0.9.117-0.9.118 (el usuario lo vio demasiado intenso).
+                val k = 1f + 0.30f * shown
+                cm.set(floatArrayOf(
+                    k, 0f, 0f, 0f, 4f * shown,
+                    0f, k, 0f, 0f, 12f * shown,
+                    0f, 0f, k * 1.05f, 0f, 24f * shown,
+                    0f, 0f, 0f, 1f, 0f,
+                ))
+                paint.colorFilter = android.graphics.ColorMatrixColorFilter(cm)
+                tv.setLayerPaint(paint)
+            }
+        } finally { tv.setLayerPaint(null) }
+    }
+    Box(
+        Modifier.fillMaxSize().drawWithContent {
+            if (page() >= 0f) return@drawWithContent
+            val (panel, _, _) = panelShape(geoCache.get(g, this))
+            clipPath(panel) { this@drawWithContent.drawContent() }
+        },
+    ) {
+        Box(
+            Modifier.offset(left, top).size(panelW, panelH)
+                .graphicsLayer { translationX = (-1f - page()) * panelW.toPx() }
+                .background(Color.Black),
+        ) {
+            LoopVideo(
+                R.raw.athoox_core, aspect = CORE_ASPECT, playing = visible && splashDone && !replaying && resumed,
+                modifier = Modifier.fillMaxSize(), focus = CORE_FOCUS,
+                anchor = androidx.compose.ui.geometry.Offset(0.5f, RING_Y),
+                onView = { texture[0] = it },
+                onFirstFrame = { firstFrame.value = true },
+            )
+        }
+    }
+}
+
 /** Vista Athos dentro del panel: entra por la izquierda (página −1). */
-private fun DrawScope.drawAthosPanel(g: GeoPx, page: Float, image: ImageBitmap, feed: AthosFeed, tm: TextMeasurer, st: AthosText, focused: Boolean) {
+private fun DrawScope.drawAthosPanel(g: GeoPx, page: Float, feed: AthosFeed, tm: TextMeasurer, st: AthosText, focused: Boolean) {
     val (panel, bounds, pw) = panelShape(g)
     clipPath(panel) {
         translate(left = (-1f - page) * pw) {
-            clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawAthos(bounds, image, feed, tm, st) }
+            clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) { drawAthos(bounds, feed, tm, st) }
         }
     }
     val edge = if (focused) Cyan.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.10f)
@@ -673,6 +828,21 @@ private fun DrawScope.drawCar(
         // Y en simetría, a la izquierda del coche, la temperatura exterior.
         marker(tm, st, "EXTERIOR", outsideTemp ?: "--", " °C", null, Offset(2 * bounds.center.x - range.x, range.y), alignRight = true)
     }
+}
+
+/** Rótulo corto para la ficha (cabe en 150 dp). */
+private fun serviceCaption(item: com.cockpitf30.vehicle.ServiceItem): String = when (item) {
+    com.cockpitf30.vehicle.ServiceItem.OIL -> "ACEITE"
+    com.cockpitf30.vehicle.ServiceItem.TYRES -> "RUEDAS"
+    com.cockpitf30.vehicle.ServiceItem.ITV -> "ITV"
+}
+
+/** Cifra corta del mantenimiento: km o días que quedan (o «ya» si toca). */
+private fun serviceValue(s: com.cockpitf30.vehicle.ServiceStatus): Pair<String, String> = when {
+    s.level == com.cockpitf30.vehicle.ServiceLevel.DUE -> "YA" to (if (s.item == com.cockpitf30.vehicle.ServiceItem.ITV) " caducada" else " toca")
+    s.kmLeft != null && (s.daysLeft == null || s.kmLeft < s.daysLeft * 40) -> "%,d".format(java.util.Locale("es", "ES"), s.kmLeft).replace(',', '.') to " km"
+    s.daysLeft != null -> s.daysLeft.toString() to if (s.daysLeft == 1) " día" else " días"
+    else -> "--" to ""
 }
 
 /**
@@ -768,6 +938,53 @@ private val SpeedMetal: MetalLook get() = when (DriveModes.current) {
     DriveMode.NIGHT -> AmberMetal
 }
 private val RpmMetal: MetalLook get() = SpeedMetal
+
+/** Acero azulado cepillado: el color de las rpm bajas. */
+private val BrushedSteel = MetalLook(Color(0xFF26313D), Color(0xFF6F8296), Color(0xFFCAD6E2), Color(0xFFF4F8FC), Color(0xFF9DB2C8))
+
+/**
+ * Metal de la barra de rpm según el régimen: acero azulado cepillado en bajas, cobre rosado en
+ * medias y rojo al acercarse al corte. Siempre con el mismo perfil metálico; solo cambia el tono.
+ * Se precalcula en [RPM_LOOK_STEPS] pasos para no crear colores en cada fotograma.
+ */
+private const val RPM_LOOK_STEPS = 32
+private val rpmLooks = HashMap<DriveMode, List<MetalLook>>()
+
+/**
+ * Lo mismo para la velocidad, por km/h: acero hasta unos 80, cobre hacia 115 y rojo desde unos
+ * 135 (por encima del límite de autovía).
+ */
+private fun speedLook(fraction: Float): MetalLook {
+    val kmh = speedFromFraction(fraction.coerceIn(0f, 1f)).toFloat()
+    val f = when {
+        kmh <= 80f -> kmh / 80f * 0.38f
+        kmh <= 115f -> 0.38f + (kmh - 80f) / 35f * 0.24f
+        kmh <= 135f -> 0.62f + (kmh - 115f) / 20f * 0.16f
+        else -> 0.78f + ((kmh - 135f) / 115f).coerceAtMost(1f) * 0.22f
+    }
+    return rpmLook(f)
+}
+
+private fun rpmLook(fraction: Float): MetalLook {
+    val mode = DriveModes.current
+    val list = rpmLooks.getOrPut(mode) {
+        val low = when (mode) { DriveMode.NORMAL -> BrushedSteel; DriveMode.SPORT -> Titanium; DriveMode.NIGHT -> Bronze }
+        val mid = when (mode) { DriveMode.NORMAL -> CopperRose; DriveMode.SPORT -> RedMetal; DriveMode.NIGHT -> AmberMetal }
+        List(RPM_LOOK_STEPS + 1) { i ->
+            val f = i.toFloat() / RPM_LOOK_STEPS
+            // Acero hasta ~3.000 rpm, cobre hacia 5.000 y rojo desde ~6.200.
+            val (a, b, t) = when {
+                f <= 0.38f -> Triple(low, low, 0f)
+                f <= 0.62f -> Triple(low, mid, (f - 0.38f) / 0.24f)
+                f <= 0.78f -> Triple(mid, RedMetal, (f - 0.62f) / 0.16f)
+                else -> Triple(RedMetal, RedMetal, 0f)
+            }
+            fun l(x: Color, y: Color) = androidx.compose.ui.graphics.lerp(x, y, t)
+            MetalLook(l(a.dark, b.dark), l(a.mid, b.mid), l(a.bright, b.bright), l(a.tip, b.tip), l(a.light, b.light))
+        }
+    }
+    return list[(fraction.coerceIn(0f, 1f) * RPM_LOOK_STEPS).roundToInt()]
+}
 private val SteelMetal: MetalLook get() = when (DriveModes.current) {
     DriveMode.NORMAL -> IceSteel
     DriveMode.SPORT -> Titanium
@@ -826,7 +1043,7 @@ private class FramePaths(g: GeoPx, val mirrored: Boolean) {
     val shimmer = Path()
 
     /** Franja entre el borde exterior y el interior, de la altura [yTop] a [yBottom]. */
-    fun band(g: GeoPx, into: Path, yTop: Float, yBottom: Float): Path {
+    fun band(g: GeoPx, into: Path, yTop: Float, yBottom: Float, width: Float = g.band): Path {
         into.rewind()
         val crosses = yTop < g.ym && yBottom > g.ym
         var first = true
@@ -834,9 +1051,9 @@ private class FramePaths(g: GeoPx, val mirrored: Boolean) {
         add(o(g, g.chevronX(yBottom, 0f), yBottom))
         if (crosses) add(o(g, g.xv, g.ym))
         add(o(g, g.chevronX(yTop, 0f), yTop))
-        add(o(g, g.chevronX(yTop, g.band), yTop))
-        if (crosses) add(o(g, g.xv + g.band, g.ym))
-        add(o(g, g.chevronX(yBottom, g.band), yBottom))
+        add(o(g, g.chevronX(yTop, width), yTop))
+        if (crosses) add(o(g, g.xv + width, g.ym))
+        add(o(g, g.chevronX(yBottom, width), yBottom))
         into.close()
         return into
     }
@@ -885,14 +1102,24 @@ private fun DrawScope.drawFrameBase(g: GeoPx, mirrored: Boolean) {
 }
 
 /** Relleno del valor, de abajo arriba, en metal pulido ([look]) con la punta encendida. */
-private fun DrawScope.drawFrameFill(g: GeoPx, mirrored: Boolean, fraction: Float, look: MetalLook) {
+private fun DrawScope.drawFrameFill(g: GeoPx, mirrored: Boolean, fraction: Float, look: MetalLook, width: Float = g.band, brushed: Boolean = false) {
     if (fraction <= 0f) return
     val f = g.frame(mirrored)
     fun o(x: Float, y: Float) = Offset(g.mirror(x, mirrored), y)
     val level = g.y1 - (g.y1 - g.y0) * fraction
     val span = g.y1 - level
-    clipPath(f.band(g, f.filled, level, g.y1)) {
+    clipPath(f.band(g, f.filled, level, g.y1, width)) {
         metal(f, look, 1f)
+        if (brushed) {
+            // Cepillado: rayas finas horizontales de luz y sombra sobre el metal.
+            val step = g.dp(2.2f)
+            var y = level
+            var k = 0
+            while (y < g.y1) {
+                drawLine(if (k % 3 == 0) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.07f), Offset(0f, y), Offset(size.width, y), g.dp(0.8f))
+                y += step; k++
+            }
+        }
         // Calor hacia la punta y algo más de sombra abajo: da volumen a la barra.
         drawRect(
             Brush.verticalGradient(
@@ -917,7 +1144,7 @@ private fun DrawScope.drawFrameFill(g: GeoPx, mirrored: Boolean, fraction: Float
         )
     }
     // Punta: filo blanco cálido y un foco suave.
-    val tip = o(g.chevronX(level, g.band * 0.45f), level)
+    val tip = o(g.chevronX(level, width * 0.45f), level)
     val bloom = g.band * 1.3f
     drawCircle(
         Brush.radialGradient(
@@ -926,16 +1153,16 @@ private fun DrawScope.drawFrameFill(g: GeoPx, mirrored: Boolean, fraction: Float
         ),
         radius = bloom, center = tip, blendMode = BlendMode.Plus,
     )
-    drawLine(look.tip, o(g.chevronX(level, 0f), level), o(g.chevronX(level, g.band), level), g.dp(3f), StrokeCap.Round)
+    drawLine(look.tip, o(g.chevronX(level, 0f), level), o(g.chevronX(level, width), level), g.dp(3f), StrokeCap.Round)
 }
 
 /** Reflejo que recorre la barra hasta el nivel, una y otra vez. */
-private fun DrawScope.drawFrameShimmer(g: GeoPx, mirrored: Boolean, fraction: Float, phase: Float) {
+private fun DrawScope.drawFrameShimmer(g: GeoPx, mirrored: Boolean, fraction: Float, phase: Float, width: Float = g.band) {
     if (fraction <= 0f) return
     val f = g.frame(mirrored)
     val level = g.y1 - (g.y1 - g.y0) * fraction
     val span = g.y1 - level
-    clipPath(f.band(g, f.shimmer, level, g.y1)) {
+    clipPath(f.band(g, f.shimmer, level, g.y1, width)) {
         val sy = g.y1 - (span + g.band) * phase
         drawRect(
             Brush.verticalGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.22f), Color.Transparent), startY = sy - g.band, endY = sy + g.band),
@@ -1206,8 +1433,8 @@ private fun CarInfoChips(avgConsumption: Float?, fuelLevel: Float?, modifier: Mo
 private val ChipShape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
 
 @Composable
-private fun InfoChip(caption: String, value: String, unit: String, warn: Boolean = false) {
-    val accent = if (warn) Color(0xFFFFB347) else Cockpit.OnDarkAccent
+private fun InfoChip(caption: String, value: String, unit: String, warn: Boolean = false, accentColor: Color? = null, valueColor: Color? = null) {
+    val accent = accentColor ?: if (warn) Color(0xFFFFB347) else Cockpit.OnDarkAccent
     Column(
         Modifier
             .width(150.dp)
@@ -1225,7 +1452,7 @@ private fun InfoChip(caption: String, value: String, unit: String, warn: Boolean
             Text(caption, style = MaterialTheme.typography.labelMedium.copy(fontSize = 14.sp, letterSpacing = 1.sp), color = Color.White.copy(alpha = 0.7f), maxLines = 1)
         }
         Row(verticalAlignment = Alignment.Bottom) {
-            Text(value, style = numeric(30, FontWeight.SemiBold), color = if (warn) accent else Cockpit.OnDark, maxLines = 1)
+            Text(value, style = numeric(30, FontWeight.SemiBold), color = valueColor ?: if (warn) accent else Cockpit.OnDark, maxLines = 1)
             Spacer(Modifier.width(4.dp))
             Text(unit, style = numeric(15, FontWeight.Medium), color = Cockpit.OnDarkDim, maxLines = 1, modifier = Modifier.padding(bottom = 5.dp))
         }

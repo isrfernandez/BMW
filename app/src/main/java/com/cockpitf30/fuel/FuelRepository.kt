@@ -79,15 +79,21 @@ object FuelRepository {
     }
 
     /**
-     * Modo Demo (el recorrido de ejemplo es en Múnich, donde el Ministerio no tiene datos):
-     * unas estaciones inventadas alrededor de [center], para ver la tarjeta y el mapa.
+     * Gasolineras del modo Demo: si ya hay precios reales del Ministerio cerca de [center] (el
+     * recorrido de ejemplo es en Madrid), esas; si no (sin Internet), las de [demoStations].
      */
+    fun demoList(real: List<FuelStation>, center: GeoPoint): List<FuelStation> {
+        val near = FuelStations.nearest(real, center, limit = 3)
+        return if (near.size >= 3 && near.last().meters < 8_000) real else demoStations(center)
+    }
+
+    /** Modo Demo sin datos reales: unas estaciones inventadas alrededor de [center] (Madrid). */
     fun demoStations(center: GeoPoint): List<FuelStation> {
-        val brands = listOf("ARAL", "SHELL", "ESSO", "JET", "TOTALENERGIES", "AVIA", "OMV", "AGIP", "ARAL", "SHELL", "ESSO", "JET")
+        val brands = listOf("REPSOL", "CEPSA", "BP", "GALP", "SHELL", "PLENOIL", "BALLENOIL", "PETRONOR", "REPSOL", "CEPSA", "BP", "GALP")
         val streets = listOf(
-            "Leopoldstraße 40", "Ungererstraße 12", "Schleißheimer Str. 101", "Dachauer Str. 77", "Ingolstädter Str. 5",
-            "Belgradstraße 3", "Frankfurter Ring 30", "Lerchenauer Str. 8", "Nymphenburger Str. 140", "Rosenheimer Str. 52",
-            "Landsberger Str. 220", "Wasserburger Landstr. 9",
+            "Paseo de la Castellana 89", "Calle de Serrano 120", "Calle de Velázquez 98", "Calle de Joaquín Costa 12", "Calle de Bravo Murillo 210",
+            "Avenida de América 33", "Calle de Alcalá 300", "Calle de Arturo Soria 150", "Paseo de las Delicias 61", "Calle de Príncipe de Vergara 250",
+            "Avenida de la Albufera 120", "Carretera de Castilla 5",
         )
         return brands.mapIndexed { i, b ->
             // Espiral: la primera a ~600 m, las demás cada vez más lejos.
@@ -96,8 +102,8 @@ object FuelRepository {
             val dLat = r * cos(a) / 111_320.0
             val dLon = r * sin(a) / (111_320.0 * cos(Math.toRadians(center.lat)))
             FuelStation(
-                "demo$i", b, streets[i], "München", center.lat + dLat, center.lon + dLon, "L-D: 24H",
-                1.589 + (i % 5) * 0.02, 1.719 + (i % 4) * 0.03,
+                "demo$i", b, streets[i], "Madrid", center.lat + dLat, center.lon + dLon, "L-D: 24H",
+                1.489 + (i % 5) * 0.02, 1.559 + (i % 4) * 0.03,
             )
         }
     }

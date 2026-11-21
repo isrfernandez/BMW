@@ -68,6 +68,12 @@ object MapTiles {
     /** Servidor en uso: si Esri falla varias veces seguidas se pasa a OpenStreetMap. */
     val provider = MutableStateFlow(TileProvider.ESRI_DARK)
 
+    /**
+     * Servidor para dibujar: con el tema diurno, OpenStreetMap con sus colores claros de siempre;
+     * de noche, el oscuro de Esri (o OpenStreetMap oscurecido si Esri falla).
+     */
+    fun providerFor(light: Boolean): TileProvider = if (light) TileProvider.OSM else provider.value
+
     /** Último error de descarga (p. ej. "HTTP 403"), para mostrarlo en el mapa; null si va bien. */
     val lastError = MutableStateFlow<String?>(null)
     @Volatile private var failuresInRow = 0
@@ -92,11 +98,10 @@ object MapTiles {
     }
 
     /** La tesela si ya está en memoria; si no, la pide (disco o red) y devuelve null de momento. */
-    fun get(z: Int, x: Int, y: Int): ImageBitmap? {
+    fun get(z: Int, x: Int, y: Int, p: TileProvider = provider.value): ImageBitmap? {
         val n = 1 shl z
         if (y !in 0 until n) return null
         val wx = ((x % n) + n) % n
-        val p = provider.value
         val key = key(p, z, wx, y)
         memory.get(key)?.let { return it }
         val failed = failedAt[key]
@@ -106,10 +111,10 @@ object MapTiles {
     }
 
     /** Solo lo que ya está en memoria, sin pedir nada (para rellenar con teselas de otro zoom). */
-    fun peek(z: Int, x: Int, y: Int): ImageBitmap? {
+    fun peek(z: Int, x: Int, y: Int, p: TileProvider = provider.value): ImageBitmap? {
         val n = 1 shl z
         if (y !in 0 until n) return null
-        return memory.get(key(provider.value, z, ((x % n) + n) % n, y))
+        return memory.get(key(p, z, ((x % n) + n) % n, y))
     }
 
     /** Servidor (4 bits), zoom (5) y x, y (24 cada uno) en un solo número. */

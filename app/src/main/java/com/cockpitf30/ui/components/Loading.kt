@@ -1,6 +1,7 @@
 package com.cockpitf30.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import kotlinx.coroutines.flow.first
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
@@ -95,78 +96,112 @@ object Startup {
     val ready = kotlinx.coroutines.flow.MutableStateFlow(false)
     /** La pantalla de arranque ya se ha ido (empieza la bienvenida del cuadro y el saludo). */
     val splashDone = kotlinx.coroutines.flow.MutableStateFlow(false)
+    /** El vídeo ya se está pintando en el panel del cuadro (para retirar el negro de la presentación). */
+    val clusterVideo = kotlinx.coroutines.flow.MutableStateFlow(false)
+    /** «Ver la intro» (Ajustes): cada vez que sube se vuelve a poner la presentación. */
+    val replay = kotlinx.coroutines.flow.MutableStateFlow(0)
+    /** Se está viendo otra vez la presentación: el cuadro le cede el vídeo. */
+    val replaying = kotlinx.coroutines.flow.MutableStateFlow(false)
 }
 
 /**
- * Pantalla de arranque: la imagen de Athos (triángulo de cristal y rótulo «Athos UI»).
- * Antes era un vídeo: tardaba en salir (el sonido se oía antes que la imagen) y se entrecortaba
- * mientras la app cargaba detrás. Ahora la imagen se decodifica aparte y, cuando está lista,
- * aparece desde negro a la vez que empieza el sonido del logo. Se queda [HOLD_MS], espera a la precarga (como mucho [maxMs]), funde a negro, avisa con
- * [Startup.splashDone] (barrido de agujas y saludo) y el negro se retira dejando ver la app.
+ * Pantalla de arranque: el vídeo de Athoox en bucle (cristal vivo, órbitas y rótulo).
+ *
+ * El vídeo va en un SurfaceView: sus fotogramas llegan a la pantalla sin pasar por el hilo
+ * principal, que en el arranque está muy ocupado (precarga de imágenes, Inicio, servicios); con un
+ * TextureView daba tirones. Los fundidos son un velo negro encima ([veil]).
+ *
+ * Orden: el reproductor se prepara en negro; con el primer fotograma (o como mucho
+ * [FIRST_FRAME_MAX_MS]) arranca, suena el logo y el velo se retira. Se queda [HOLD_MS], espera a la
+ * precarga (como mucho [maxMs]) dando vueltas al bucle, el velo vuelve a negro y se avisa con
+ * [Startup.splashDone]: el mismo reproductor pasa al panel del cuadro (vista Athoox) y, cuando ya
+ * ha pintado allí ([Startup.clusterVideo], como mucho [HANDOVER_MAX_MS]), el negro se funde
+ * despacio ([REVEAL_MS]) dejando ver el Inicio.
  */
 @Composable
-fun StartupSplash(maxMs: Long = 9_000) {
-    // Si la actividad se recrea, el arranque ya pasó: no se repite.
-    if (remember { Startup.splashDone.value }) return
+fun StartupSplash(maxMs: Long = 9_000, replay: Boolean = false) {
+    // Si la actividad se recrea, el arranque ya pasó: no se repite (salvo «Ver la intro»).
+    if (!replay && remember { Startup.splashDone.value }) return
     val ctx = androidx.compose.ui.platform.LocalContext.current
-    val shown = remember { androidx.compose.animation.core.Animatable(0f) }
-    var gone by remember { mutableIntStateOf(0) } // 1 = el negro se retira
-    var image by remember { androidx.compose.runtime.mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    val veil = remember { androidx.compose.animation.core.Animatable(1f) }
+    var gone by remember { mutableIntStateOf(0) } // 1 = terminado
+    var handedOver by remember { androidx.compose.runtime.mutableStateOf(false) }
+    var playing by remember { androidx.compose.runtime.mutableStateOf(false) }
+    val firstFrame = remember { kotlinx.coroutines.CompletableDeferred<Unit>() }
+    val windowInfo = androidx.compose.ui.platform.LocalWindowInfo.current
     LaunchedEffect(Unit) {
         val started = System.currentTimeMillis()
-        // Imagen y sonido se preparan a la vez, fuera del hilo principal.
-        val sound = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            image = runCatching {
-                android.graphics.BitmapFactory.decodeResource(ctx.resources, R.drawable.splash_cockpit)?.asImageBitmapCompat()
-            }.getOrNull()
-            if (com.cockpitf30.system.AppSettings(ctx).startSound) runCatching { logoPlayer(ctx) }.getOrNull() else null
+        if (replay) { Startup.replaying.value = true; Startup.clusterVideo.value = false }
+        // El sonido se prepara fuera del hilo principal mientras el vídeo prepara su primer fotograma.
+        val enabled = com.cockpitf30.system.AppSettings(ctx).startSound
+        val sound = if (!enabled) null else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { logoPlayer(ctx) }.onFailure { com.cockpitf30.assistant.VoiceAssistant.note("sonido de inicio: no se pudo preparar (${it.javaClass.simpleName}: ${it.message})") }.getOrNull()
         }
-        // Mismo fotograma: empieza el fundido desde negro y suena el logo.
+        sound?.setOnErrorListener { _, what, extra -> com.cockpitf30.assistant.VoiceAssistant.note("sonido de inicio: error $what/$extra"); true }
+        kotlinx.coroutines.withTimeoutOrNull(FIRST_FRAME_MAX_MS) { firstFrame.await() }
+        // Al encender, la radio a veces tarda en enseñar la app (su propia pantalla de arranque va
+        // encima): el sonido sonaba sin imagen. Ahora sonido y vídeo esperan a que la ventana de la
+        // app esté de verdad delante (con el foco) y la pantalla encendida; como mucho [SCREEN_WAIT_MAX_MS].
+        val waitFrom = System.currentTimeMillis()
+        val shown = kotlinx.coroutines.withTimeoutOrNull(SCREEN_WAIT_MAX_MS) {
+            androidx.compose.runtime.snapshotFlow { windowInfo.isWindowFocused }.first { it }
+            while (!displayOn(ctx)) delay(100)
+            true
+        } != null
+        val waited = System.currentTimeMillis() - waitFrom
+        if (waited > 150 || !shown) com.cockpitf30.assistant.VoiceAssistant.note(
+            if (shown) "inicio: la radio enseñó la app tras $waited ms" else "inicio: la app no llegó a tener el foco en ${SCREEN_WAIT_MAX_MS / 1000} s (sigo)",
+        )
+        runCatching { sound?.start() }.onFailure { com.cockpitf30.assistant.VoiceAssistant.note("sonido de inicio: no arranca (${it.message})") }
+        com.cockpitf30.assistant.VoiceAssistant.note(
+            if (!enabled) "sonido de inicio: desactivado en Ajustes"
+            else if (sound?.isPlaying == true) "sonido de inicio: sonando (volumen multimedia ${mediaVolume(ctx)})" else "sonido de inicio: no suena",
+        )
+        // Arranca el vídeo y se retira el velo a la vez que el sonido (su subida acompaña el fundido).
+        playing = true
         withFrameNanos { }
-        runCatching { sound?.start() }
-        shown.animateTo(1f, androidx.compose.animation.core.tween(FADE_IN_MS, easing = androidx.compose.animation.core.LinearOutSlowInEasing))
+        veil.animateTo(0f, androidx.compose.animation.core.tween(FADE_IN_MS, easing = androidx.compose.animation.core.LinearOutSlowInEasing))
         delay(HOLD_MS)
-        // Si la app aún no ha terminado de cargar, la imagen sigue (como mucho hasta maxMs).
+        // Si la app aún no ha terminado de cargar, el vídeo sigue en bucle (como mucho hasta maxMs).
         while (!Startup.ready.value && System.currentTimeMillis() - started < maxMs) delay(50)
-        shown.animateTo(0f, androidx.compose.animation.core.tween(FADE_OUT_MS, easing = androidx.compose.animation.core.LinearEasing))
-        Startup.splashDone.value = true
+        veil.animateTo(1f, androidx.compose.animation.core.tween(FADE_OUT_MS, easing = androidx.compose.animation.core.LinearEasing))
+        // En negro: el vídeo pasa al cuadro y, cuando ya se ve allí, el negro se funde al Inicio.
+        handedOver = true
+        if (replay) {
+            // «Ver la intro»: vuelve al Inicio con la vista Athoox, como al arrancar.
+            DemoTour.navigator?.invoke(com.cockpitf30.ui.screens.Screen.HOME)
+            ClusterIntro.replay.value++
+            Startup.replaying.value = false
+        } else Startup.splashDone.value = true
+        kotlinx.coroutines.withTimeoutOrNull(HANDOVER_MAX_MS) { Startup.clusterVideo.first { v -> v } }
+        veil.animateTo(0f, androidx.compose.animation.core.tween(REVEAL_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing))
         gone = 1
-        delay(1_500)
+        delay(4_000)
         runCatching { sound?.release() }
     }
-    AnimatedVisibility(gone == 0, enter = androidx.compose.animation.EnterTransition.None, exit = fadeOut(androidx.compose.animation.core.tween(400))) {
-        Box(
-            Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { } },
-            contentAlignment = Alignment.Center,
-        ) {
-            image?.let {
-                androidx.compose.foundation.Image(
-                    it, contentDescription = "Athos",
-                    modifier = Modifier.fillMaxSize().graphicsLayer { alpha = shown.value },
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                )
-            }
+    if (gone == 1) return
+    Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { } }) {
+        if (!handedOver) {
+            LoopVideo(
+                com.cockpitf30.R.raw.athos_intro, aspect = 1920f / 720f, playing = playing, surface = true,
+                modifier = Modifier.fillMaxSize(),
+                onFirstFrame = { firstFrame.complete(Unit) },
+            )
         }
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = veil.value }.background(Color.Black))
     }
 }
 
-private fun android.graphics.Bitmap.asImageBitmapCompat(): androidx.compose.ui.graphics.ImageBitmap = asImageBitmap()
+/** ¿Está encendida la pantalla principal? */
+private fun displayOn(ctx: android.content.Context): Boolean = runCatching {
+    val dm = ctx.getSystemService(android.hardware.display.DisplayManager::class.java)
+    dm.getDisplay(android.view.Display.DEFAULT_DISPLAY)?.state != android.view.Display.STATE_OFF
+}.getOrDefault(true)
 
-/** Sonido de Athos para la vista del Inicio: suena una vez y se libera solo (si está activado). */
-object AthosSound {
-    private var player: android.media.MediaPlayer? = null
-
-    fun play(ctx: android.content.Context) {
-        if (!com.cockpitf30.system.AppSettings(ctx).athosViewSound) return
-        stop()
-        player = runCatching { logoPlayer(ctx) }.getOrNull()?.apply {
-            setOnCompletionListener { it.release(); if (player === it) player = null }
-            start()
-        }
-    }
-
-    fun stop() { player?.let { runCatching { it.release() } }; player = null }
-}
+private fun mediaVolume(ctx: android.content.Context): String = runCatching {
+    val am = ctx.getSystemService(android.media.AudioManager::class.java)
+    "${am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)}/${am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)}"
+}.getOrDefault("?")
 
 /** Sonido del logo como multimedia sin pedir el foco de audio: suena encima de la radio sin pararla. */
 internal fun logoPlayer(ctx: android.content.Context): android.media.MediaPlayer {
@@ -184,13 +219,18 @@ internal fun logoPlayer(ctx: android.content.Context): android.media.MediaPlayer
     }
 }
 
-// res/drawable-nodpi/splash_cockpit.webp: la imagen de inicio de Athos a 1920×720 (la franja con
-// el triángulo y el rótulo, con los laterales prolongados y fundidos). res/raw/logo_sound.ogg: el
+// res/raw/athos_intro.mp4: la segunda versión del vídeo del usuario (1920×720 a 60 fps), pasada a 30 fps (el
+// decodificador de la radio no llega a 60 a esta resolución), 4,6 s en bucle sin
+// salto (H.264 Main sin fotogramas B, sin audio, 1,7 MB). res/raw/logo_sound.ogg: el
 // «cinematic boom» del usuario recortado a 5,65 s; la subida acompaña al fundido de entrada y el
 // golpe (~2,8 s) cae con la imagen ya entera; la app entra mientras se apaga.
 private const val FADE_IN_MS = 900
 private const val HOLD_MS = 3_500L
 private const val FADE_OUT_MS = 500
+private const val FIRST_FRAME_MAX_MS = 2_000L
+private const val SCREEN_WAIT_MAX_MS = 8_000L
+private const val HANDOVER_MAX_MS = 800L
+private const val REVEAL_MS = 1_100
 
 /**
  * «COCKPIT F30»: COCKPIT fino y muy espaciado en plata, F30 en cobre pulido, con un filo de luz

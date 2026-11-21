@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableStateOf
@@ -89,6 +90,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         hideSystemBars()
+        com.cockpitf30.system.FrameStats.install(this)
         IDriveInput.learned = AppSettings(this).knobKeys
         com.cockpitf30.ui.theme.DriveModes.load(this)
         com.cockpitf30.ui.components.DemoTour.recover(this)
@@ -113,6 +115,9 @@ class MainActivity : ComponentActivity() {
                 Box(Modifier.fillMaxSize()) {
                     CockpitRoot(navActions)
                     com.cockpitf30.ui.components.StartupSplash()
+                    // «Ver la intro» (Ajustes): la presentación otra vez, con su sonido.
+                    val replay by com.cockpitf30.ui.components.Startup.replay.collectAsState()
+                    if (replay > 0) androidx.compose.runtime.key(replay) { com.cockpitf30.ui.components.StartupSplash(replay = true) }
                 }
             }
         }
@@ -242,7 +247,8 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
     LaunchedEffect(navActions) {
         navActions.collect {
             if (it == NavAction.LONG_PRESS) {
-                Reorder.longPress.tryEmit(Unit)
+                // Con el foco en la barra lateral se mueve su botón; si no, la tarjeta o app enfocada.
+                if (!com.cockpitf30.ui.components.SidebarMove.longPress()) Reorder.longPress.tryEmit(Unit)
                 return@collect
             }
             // Tras tocar la pantalla Android entra en modo táctil y nada es enfocable:
@@ -261,7 +267,12 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 NavAction.NEXT -> 1 to null
                 else -> -1 to null
             }
-            // En modo mover, la ruleta desplaza la tarjeta en vez del foco.
+            // En modo mover, la ruleta desplaza el botón de la barra lateral o la tarjeta en vez del foco.
+            val sideStep = com.cockpitf30.ui.components.SidebarMove.step
+            if (com.cockpitf30.ui.components.SidebarMove.moving.value != null && sideStep != null) {
+                sideStep(dir)
+                return@collect
+            }
             val step = Reorder.step
             if (Reorder.moving.value != null && step != null) {
                 step(dir)
@@ -466,7 +477,8 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
             com.cockpitf30.ui.components.AmbientGlow()
             TripSummaryOverlay()
             AssistantOverlay()
-            com.cockpitf30.ui.components.DemoTourBanner(Modifier.align(androidx.compose.ui.Alignment.BottomCenter).padding(bottom = 18.dp))
+            // Arriba a la izquierda: abajo van los subtítulos del asistente y arriba a la derecha los avisos en ruta.
+            com.cockpitf30.ui.components.DemoTourBanner(Modifier.align(androidx.compose.ui.Alignment.TopStart).padding(start = 150.dp, top = 10.dp))
         }
     }
     }

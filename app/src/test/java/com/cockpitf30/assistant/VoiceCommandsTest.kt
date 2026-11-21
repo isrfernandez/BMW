@@ -74,6 +74,12 @@ class VoiceCommandsTest {
         assertEquals(Command.Info(InfoTopic.FUEL_NEAR), VoiceCommands.parse("llévame a la gasolinera más cercana"))
         assertEquals(Command.AskGoogle("cuanto mide la torre eiffel"), VoiceCommands.parse("pregunta a Google cuánto mide la torre Eiffel"))
         assertEquals(Command.AskGoogle(null), VoiceCommands.parse("abre Google"))
+        assertEquals(Command.Intro, VoiceCommands.parse("Intro"))
+        assertEquals(Command.Intro, VoiceCommands.parse("muestra la intro"))
+        assertEquals(Command.Intro, VoiceCommands.parse("ponme la presentación otra vez"))
+        // Antes acababa en restaurantes cercanos («cenar»).
+        assertEquals(Command.AskGoogle("ideas para cenar"), VoiceCommands.parse("pregúntale a Google ideas para cenar"))
+        assertEquals(Command.AskGoogle("donde comer bien en madrid"), VoiceCommands.parse("busca en google dónde comer bien en Madrid"))
         assertEquals(Command.Cancel, VoiceCommands.parse("nada"))
         assertEquals(Command.Help, VoiceCommands.parse("qué puedes hacer"))
         assertEquals(Command.Joke, VoiceCommands.parse("cuéntame un chiste"))
@@ -135,5 +141,22 @@ class VoiceCommandsTest {
         // Lo de antes sigue igual.
         assertEquals(Command.Info(InfoTopic.TIME), VoiceCommands.parse("¿qué hora es?"))
         assertEquals(Command.Info(InfoTopic.RANGE), VoiceCommands.parse("¿cuánto queda de autonomía?"))
+    }
+
+    @Test
+    fun closeMapsEndsNavigation() {
+        listOf("cierra el mapa", "cierra google maps", "cierra maps", "quita la navegación", "cancela la ruta", "termina la navegación", "sal de google maps")
+            .forEach { assertEquals(it, Command.CloseMaps, VoiceCommands.parse(it)) }
+        assertEquals(Command.Maps, VoiceCommands.parse("abre el mapa"))
+        assertEquals(Command.Cancel, VoiceCommands.parse("cancela"))
+    }
+
+    @Test
+    fun cancelHeardInItsManyFormsStopsTheAssistant() {
+        listOf("cancela", "cancele", "cancelo", "cansela", "cancelar", "cancélalo", "vale cancela").forEach {
+            val hit = VoiceCommands.bargePhraseAtEnd(it) ?: VoiceCommands.fuzzyStop(it)
+            assertEquals(it, VoiceCommands.Barge.STOP, hit?.let(VoiceCommands::bargeAction))
+        }
+        assertNull(VoiceCommands.fuzzyStop("el castillo de alcalá"))
     }
 }

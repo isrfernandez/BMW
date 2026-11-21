@@ -4,40 +4,63 @@ import java.time.LocalTime
 import kotlin.random.Random
 
 /**
- * Lo último que ha dicho el asistente, para no repetirse: al elegir una frase se descartan las
- * usadas hace poco y, si ya se han dicho todas, se toma la que lleva más tiempo sin decirse.
- * Se guarda en Ajustes ([save]/[load]) para que tampoco se repita al reiniciar la app.
+ * Memoria de frases ya dichas, para no repetirse: de cada lista se eligen primero las que aún no se
+ * han dicho nunca (como una bolsa de la que se saca sin devolver); cuando ya han salido todas, una
+ * al azar del tercio que más tiempo lleva sin decirse, así nunca se oye la misma dos veces seguidas
+ * y tampoco suenan siempre en el mismo orden.
+ *
+ * Recuerda cada frase por una huella corta (no el texto), para poder guardar miles en Ajustes
+ * ([save]/[load]) y que tampoco se repita al reiniciar la app.
  */
-class RecentLines(private val capacity: Int = 150) {
-    private val used = ArrayDeque<String>()
+class RecentLines(private val capacity: Int = 4000) {
+    /** Huella de cada frase dicha → orden en que se dijo (más alto = más reciente). */
+    private val used = LinkedHashMap<Int, Long>()
+    private var seq = 0L
 
     fun choose(candidates: List<String>, random: Random = Random.Default): String? {
-        if (candidates.isEmpty()) return null
-        val fresh = candidates.filter { it !in used }
+        val unique = candidates.distinct()
+        if (unique.isEmpty()) return null
+        val fresh = unique.filter { key(it) !in used }
         val pick = if (fresh.isNotEmpty()) fresh[random.nextInt(fresh.size)]
-        else candidates.minBy { used.indexOf(it) } // la más antigua de las ya dichas
+        else {
+            val oldest = unique.sortedBy { used[key(it)] ?: 0L }
+            val window = if (oldest.size <= 2) 1 else maxOf(1, oldest.size / 3)
+            oldest[random.nextInt(window)]
+        }
         mark(pick)
         return pick
     }
 
     fun mark(line: String) {
-        used.remove(line)
-        used.addLast(line)
-        while (used.size > capacity) used.removeFirst()
+        val k = key(line)
+        used.remove(k)
+        used[k] = ++seq
+        while (used.size > capacity) used.remove(used.keys.first())
     }
 
-    fun contains(line: String) = line in used
+    fun contains(line: String) = key(line) in used
 
-    fun save(): String = used.joinToString(SEP)
+    /** Cuántas de [candidates] se han dicho ya (para Diagnóstico y pruebas). */
+    fun usedCount(candidates: List<String>) = candidates.distinct().count { key(it) in used }
+
+    fun save(): String = V2 + used.keys.joinToString(",") { it.toString(36) }
 
     fun load(saved: String?) {
-        used.clear()
-        saved?.split(SEP)?.filter { it.isNotBlank() }?.takeLast(capacity)?.forEach { used.addLast(it) }
+        used.clear(); seq = 0
+        if (saved.isNullOrBlank()) return
+        val keys = if (saved.startsWith(V2)) saved.removePrefix(V2).split(',').mapNotNull { it.toIntOrNull(36) }
+        else saved.split(OLD_SEP).filter { it.isNotBlank() }.map { key(it) } // formato antiguo: el texto entero
+        keys.takeLast(capacity).forEach { used.remove(it); used[it] = ++seq }
     }
 
-    fun clear() = used.clear()
+    fun clear() { used.clear(); seq = 0 }
 
-    private companion object { const val SEP = "\u0001" }
+    private fun key(line: String) = line.hashCode()
+
+    private companion object {
+        const val OLD_SEP = "\u0001"
+        const val V2 = "v2:"
+    }
 }
 
 /**
@@ -90,8 +113,28 @@ object Personality {
         return choose(list, humor, random) ?: key
     }
 
-    /** Un chiste que no se haya contado hace poco. */
-    fun joke(random: Random = Random.Default): String = choose(Lines.JOKES, random = random)!!
+    /** Un chiste que no se haya contado aún (o el que más tiempo lleva sin contarse); a veces con entradilla. */
+    fun joke(random: Random = Random.Default): String {
+        val j = choose(Lines.JOKES, random = random)!!
+        return if (random.nextDouble() < INTRO_SHARE) "${line("joke.intro", random)} $j" else j
+    }
+
+    /** Una curiosidad que no se haya contado aún; a veces con entradilla. */
+    fun fact(random: Random = Random.Default): String {
+        val f = choose(Lines.FACTS, random = random)!!
+        return if (random.nextDouble() < INTRO_SHARE) "${line("fact.intro", random)} $f" else f
+    }
+
+    /** Un refrán o frase célebre que no se haya dicho aún. */
+    fun saying(random: Random = Random.Default): String = choose(LinesExtra.SAYINGS, random = random)!!
+
+    /** Una adivinanza que no se haya puesto aún (se recuerda por su pregunta). */
+    fun riddle(random: Random = Random.Default): Riddle {
+        val q = recent.choose(LinesExtra.RIDDLES.map { it.question }, random)!!
+        return LinesExtra.RIDDLES.first { it.question == q }
+    }
+
+    private const val INTRO_SHARE = 0.3
 
     /**
      * Con humor, añade a [plain] una broma de la clave [key] de [Lines.QUIPS] (más [extra]); a veces,
@@ -113,8 +156,8 @@ object Personality {
             "Humor al cero por ciento. Seré tan divertido como un manual de instrucciones.",
             "Humor al cero por ciento. A partir de ahora, solo datos.",
         ), random = random)!!
-        level < 40 -> "Humor al $level por ciento. " + choose(listOf("Modo serio.", "Poca broma.", "Seré breve."), random = random)
-        level < 90 -> "Humor al $level por ciento. " + choose(listOf("Confirmado.", "Ajustado.", "Me parece razonable."), random = random)
-        else -> "Humor al $level por ciento. " + choose(listOf("Abróchate el cinturón.", "Tú lo has querido.", "Esto va a ser largo."), random = random)
+        level < 40 -> "Humor al $level por ciento. " + choose(listOf("Modo serio.", "Poca broma.", "Seré breve.", "Más datos y menos risas.", "Me pongo la corbata."), random = random)
+        level < 90 -> "Humor al $level por ciento. " + choose(listOf("Confirmado.", "Ajustado.", "Me parece razonable.", "Equilibrio perfecto.", "Ni mucho ni poco."), random = random)
+        else -> "Humor al $level por ciento. " + choose(listOf("Abróchate el cinturón.", "Tú lo has querido.", "Esto va a ser largo.", "Luego no te quejes.", "Que empiece el espectáculo."), random = random)
     }
 }
