@@ -7,6 +7,7 @@ import android.app.NotificationManager
 class CockpitApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        com.cockpitf30.system.CrashLog.install(this)
         // IMPORTANCE_MIN oculta el icono de la barra de estado en la mayoría de ROMs.
         val channel = NotificationChannel(CHANNEL_VEHICLE, getString(R.string.channel_name), NotificationManager.IMPORTANCE_MIN)
             .apply { setShowBadge(false) }

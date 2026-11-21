@@ -90,7 +90,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         hideSystemBars()
-        com.cockpitf30.system.FrameStats.install(this)
+        // Fluidez: en depuración se mide desde el arranque; en la versión de uso, solo si se pide en Diagnóstico.
+        if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) com.cockpitf30.system.FrameStats.install(this)
         IDriveInput.learned = AppSettings(this).knobKeys
         com.cockpitf30.ui.theme.DriveModes.load(this)
         com.cockpitf30.ui.components.DemoTour.recover(this)
