@@ -201,7 +201,6 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
     val measurer = rememberTextMeasurer(cacheSize = 96)
     val scaleStyle = numeric(28, FontWeight.SemiBold)
     val smallStyle = numeric(17, FontWeight.SemiBold)
-    val captionStyle = numeric(17, FontWeight.Medium)
     val homeRes = cachedBitmap(R.drawable.home_car_scene)
     val trianglesRes = cachedBitmap(R.drawable.bg_triangles)
     // Presiones y autonomía en grande para leerlas de un vistazo conduciendo.
@@ -407,8 +406,6 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             (1..7).forEach { k ->
                 drawMark(geo, measurer, "$k", RPM_FRACTIONS[k], true, scaleStyle, if (k * 1000 >= RPM_RED) RpmRed else RpmLabel, rMask and (1 shl k) != 0, rLook)
             }
-            drawCaption(geo, measurer, "km/h", mirrored = false, captionStyle)
-            drawCaption(geo, measurer, "1/min x 1000", mirrored = true, captionStyle)
 
             // Solo combustible: la temperatura del aceite no llega por ninguna vía (ni CAN ni radio).
             drawMiniBar(geo, measurer, fuelLevel, listOf("1", "1/2", "0"), mirrored = false, smallStyle)
@@ -540,7 +537,8 @@ private val PANEL_BOTTOM = 10.dp
 
 /** Medidas del cuadro en dp, compartidas entre el dibujo y los textos. */
 private class Geometry(val width: Dp, val height: Dp) {
-    val frameTop = 30.dp
+    /** Margen de arriba: sin los rótulos «km/h» y «1/min x 1000» (1.0) basta un respiro hasta el borde. */
+    val frameTop = 12.dp
     val statusHeight = 50.dp
     val frameBottom = height - statusHeight
     /** Margen exterior: las cifras van ya dentro de la franja, así que basta un respiro. */
@@ -1232,13 +1230,6 @@ private fun DrawScope.drawMark(
     val topLeft = Offset(center - label.size.width / 2f, cy - label.size.height / 2f)
     if (engraved) drawText(label, color = look.dark.copy(alpha = 0.92f), topLeft = topLeft, shadow = EngraveLight)
     else drawText(label, color = color, topLeft = topLeft, shadow = LabelShadow)
-}
-
-private fun DrawScope.drawCaption(g: GeoPx, tm: TextMeasurer, text: String, mirrored: Boolean, style: TextStyle) {
-    val label = tm.measure(text, style)
-    val x = g.chevronX(g.y0, 0f) + g.w * 0.17f - label.size.width
-    val left = if (mirrored) g.w - x - label.size.width else x
-    drawText(label, color = Cockpit.Ink.copy(alpha = 0.85f), topLeft = Offset(left, g.y0 - label.size.height - g.dp(2f)))
 }
 
 /** Barra inclinada de segmentos blancos (combustible o aceite) junto al tramo inferior del chevron. */
