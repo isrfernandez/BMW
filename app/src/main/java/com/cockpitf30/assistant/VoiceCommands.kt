@@ -54,6 +54,10 @@ sealed interface Command {
     data class SetName(val name: String) : Command
     /** «¿Cómo me llamo?». */
     data object AskName : Command
+    /** «Borra el usuario Luis»; [confirmed] tras el «sí». */
+    data class DeleteUser(val name: String, val confirmed: Boolean = false) : Command
+    /** «¿Qué usuarios hay?». */
+    data object ListUsers : Command
     /** «¿De qué hablábamos?», «¿qué te he preguntado?». */
     data object Recap : Command
     /** Charla: [key] de [Lines.CHAT] («hello», «howareyou», «tired»…). */
@@ -367,6 +371,14 @@ object VoiceCommands {
         // Conversación: repetir, resumir, nombre del conductor, chistes, copiloto.
         if (has("repite", "repitelo", "que has dicho", "que dices", "no te he oido", "como dices", "como has dicho")) return Command.Repeat
         if (has("de que hablabamos", "que te he preguntado", "que te he pedido", "de que hemos hablado", "que hemos hablado")) return Command.Recap
+        // Usuarios: borrar uno y la lista.
+        Regex("^(?:borra|borrar|elimina|eliminar|quita|quitar) (?:(?:el|al) )?(?:usuario|perfil|conductor)? ?(?:de |a )?([a-zñ ]{2,30})$").find(t)
+            ?.takeIf { Regex("\\b(?:usuario|perfil|conductor)\\b").containsMatchIn(t) || Regex("^(?:borra|elimina) a ").containsMatchIn(t) }
+            ?.let { m ->
+                val name = m.groupValues[1].trim().removePrefix("de ").removePrefix("a ").trim()
+                if (name.isNotBlank()) return Command.DeleteUser(name.split(' ').joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } })
+            }
+        if (has("que usuarios hay", "que usuarios tienes", "lista de usuarios", "que conductores hay", "quien conduce", "cuantos usuarios")) return Command.ListUsers
         // «Soy Luis», «me llamo Luis», «cambia de conductor a Luis»: pasa a su perfil (o lo crea).
         (Regex("^(?:hola )?(?:yo )?(?:me llamo|mi nombre es|llamame|soy) ([a-zñ ]{2,30})$").find(t)
             ?: Regex("^cambia(?:r)? (?:de )?(?:usuario|conductor|perfil) a ([a-zñ ]{2,30})$").find(t))?.let { m ->

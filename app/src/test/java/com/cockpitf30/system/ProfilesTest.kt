@@ -39,5 +39,24 @@ class ProfilesTest {
         assertEquals(Command.SetName("Luis"), VoiceCommands.parse("hola soy luis"))
         assertEquals(Command.SetName("Ana Maria"), VoiceCommands.parse("cambia de conductor a ana maria"))
         assertEquals(false, VoiceCommands.parse("soy de madrid") is Command.SetName)
+        assertEquals(Command.DeleteUser("Luis"), VoiceCommands.parse("borra el usuario luis"))
+        assertEquals(Command.DeleteUser("Luis"), VoiceCommands.parse("elimina el perfil de luis"))
+        assertEquals(Command.DeleteUser("Luis"), VoiceCommands.parse("borra a luis"))
+        assertEquals(Command.ListUsers, VoiceCommands.parse("que usuarios hay"))
+    }
+
+    @Test fun summaryAndDelete() {
+        prefs.edit().clear().commit()
+        Profiles.switchTo(ctx, "Israel")
+        prefs.edit().putInt("assistant_humor", 30).putBoolean("alert_tourism", false).commit()
+        Profiles.switchTo(ctx, "Luis")
+        val israel = Profiles.find(ctx, "israel")!!
+        val s = Profiles.summary(Profiles.values(ctx, israel.id)).toMap()
+        assertEquals("30 %", s["Humor"])
+        assertEquals("Todos menos turismo", s["Avisos en ruta"])
+        assertEquals("75 %", Profiles.summary(Profiles.values(ctx, Profiles.current(ctx).id)).toMap()["Humor"])
+        assertEquals(false, Profiles.delete(ctx, Profiles.current(ctx).id))
+        assertEquals(true, Profiles.delete(ctx, israel.id))
+        assertEquals(1, Profiles.list(ctx).size)
     }
 }

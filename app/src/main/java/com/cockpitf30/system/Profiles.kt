@@ -101,6 +101,51 @@ object Profiles {
         return true
     }
 
+    /** Ajustes personales guardados de un perfil (los del actual, en vivo). */
+    fun values(ctx: Context, id: String): Map<String, Any?> {
+        val p = prefs(ctx)
+        val (_, cur) = ensure(p)
+        if (id == cur) return p.all.filterKeys { isPersonal(it) }
+        val o = p.getString(KEY_DATA + id, null)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return emptyMap()
+        return o.keys().asSequence().associateWith { k -> o.optJSONObject(k)?.opt("v") }
+    }
+
+    /** Busca un perfil por nombre (sin tildes ni mayúsculas). */
+    fun find(ctx: Context, name: String): Profile? = list(ctx).firstOrNull { norm(it.name) == norm(name) }
+
+    /**
+     * Las preferencias de un perfil en palabras, para la pantalla de usuarios: (qué, valor). Lo que
+     * no esté guardado vale lo de fábrica (los mismos valores por defecto que [AppSettings]).
+     */
+    fun summary(v: Map<String, Any?>): List<Pair<String, String>> {
+        fun b(k: String, def: Boolean) = (v[k] as? Boolean) ?: def
+        fun i(k: String, def: Int) = (v[k] as? Number)?.toInt() ?: def
+        fun s(k: String) = v[k] as? String
+        fun count(k: String) = s(k)?.let { runCatching { JSONArray(it).length() }.getOrNull() } ?: 0
+        val alertsOff = com.cockpitf30.nav.AlertCategory.entries.filter { c ->
+            if (c == com.cockpitf30.nav.AlertCategory.RADAR) !b("radar_voice", true) else !b("alert_" + c.name.lowercase(), true)
+        }
+        val alerts = when {
+            !b("route_alerts", true) -> "Desactivados"
+            alertsOff.isEmpty() -> "Todos"
+            else -> "Todos menos " + alertsOff.joinToString(", ") { it.label.lowercase() }
+        }
+        val theme = when (s("day_theme")) { "ON" -> "Diurno"; "OFF" -> "Oscuro"; else -> "Automático" }
+        val text = when (s("text_size")) { "NORMAL" -> "Normal"; "XLARGE" -> "Muy grande"; else -> "Grande" }
+        val copilot = if (b("copilot_enabled", true)) "Cada ${i("copilot_minutes", com.cockpitf30.assistant.Copilot.DEFAULT_MINUTES)} min" else "Desactivado"
+        val voice = if (b("assistant_robot_voice", true)) "Robot" else "Natural"
+        val radio = count("radio_favorites") + count("radio_fm_favorites")
+        return listOf(
+            "Humor" to "${i("assistant_humor", com.cockpitf30.assistant.Personality.DEFAULT_HUMOR)} %",
+            "Copiloto" to copilot,
+            "Voz" to "$voice · volumen ${i("assistant_volume", 100)} %",
+            "Briefing al arrancar" to if (b("briefing", true)) "Sí" else "No",
+            "Avisos en ruta" to alerts,
+            "Pantalla" to "$theme · letra $text",
+            "Emisoras favoritas" to if (radio == 0) "Ninguna" else "$radio",
+        )
+    }
+
     private fun ensure(p: SharedPreferences): Pair<List<Profile>, String> {
         val raw = p.getString(KEY_LIST, null)
         val all = raw?.let { s ->

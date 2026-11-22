@@ -994,6 +994,40 @@ object VoiceAssistant {
         }
     }
 
+    private fun deleteUser(c: Command.DeleteUser, now: Long): String {
+        val p = com.cockpitf30.system.Profiles.find(app, c.name) ?: return "No tengo ningún usuario que se llame ${c.name}."
+        if (p.id == com.cockpitf30.system.Profiles.current(app).id) {
+            return "No puedo borrar a ${p.name} mientras conduce. Cambia antes de usuario: di soy, y otro nombre."
+        }
+        if (!c.confirmed) {
+            conversation.ask(Pending.Confirm(Command.DeleteUser(p.name, confirmed = true)), now)
+            return "¿Seguro que borro a ${p.name} y todos sus ajustes? Di sí para confirmar."
+        }
+        com.cockpitf30.system.Profiles.delete(app, p.id)
+        profileVersion.value++
+        return "Hecho. He borrado a ${p.name}."
+    }
+
+    private fun listUsers(): String {
+        val all = com.cockpitf30.system.Profiles.list(app).filter { it.name.isNotBlank() }
+        val cur = com.cockpitf30.system.Profiles.current(app)
+        if (all.isEmpty()) return "Aún no hay usuarios. Preséntate: di soy, y tu nombre."
+        if (all.size == 1) return "Solo te conozco a ti, ${all[0].name}."
+        val names = all.map { it.name }
+        val list = names.dropLast(1).joinToString(", ") + " y " + names.last()
+        return "Hay ${all.size} usuarios: $list. Ahora conduce ${cur.name.ifBlank { "alguien sin nombre" }}."
+    }
+
+    /** Ajustes › Usuarios: borra un perfil y lo dice. */
+    fun deleteUserFromSettings(context: Context, id: String) {
+        app = context.applicationContext
+        val name = com.cockpitf30.system.Profiles.list(app).firstOrNull { it.id == id }?.name
+        if (com.cockpitf30.system.Profiles.delete(app, id)) {
+            profileVersion.value++
+            name?.takeIf { it.isNotBlank() }?.let { announceIfFree("He borrado a $it.") }
+        }
+    }
+
     /** Sube al cambiar de conductor: Ajustes se vuelve a leer. */
     val profileVersion = MutableStateFlow(0)
 
@@ -1309,6 +1343,8 @@ object VoiceAssistant {
             "$r ${Personality.line("offer.riddle")}"
         }
         is Command.SetName -> switchUser(c.name)
+        is Command.DeleteUser -> deleteUser(c, now)
+        Command.ListUsers -> listUsers()
         Command.AskName -> Personality.chat(if (Personality.userName.isNullOrBlank()) "name.unknown" else "name.ask", humor())
         is Command.Copilot -> {
             val on = c.on ?: true

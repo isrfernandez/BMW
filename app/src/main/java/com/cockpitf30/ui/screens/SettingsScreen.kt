@@ -76,6 +76,7 @@ import com.cockpitf30.vehicle.trip.TripComputer
 enum class SettingsSection(val title: String, val hint: String) {
     DISPLAY("Pantalla e iluminación", "Modo diurno, tamaño de letra, Night y luz ambiente"),
     ASSISTANT("Asistente de voz", "«Hola Athoox», voz y personalidad"),
+    USERS("Usuarios", "Conductores, sus preferencias y borrar"),
     DRIVING("Conducción", "Copiloto, briefing, resumen y cambio"),
     ALERTS("Avisos en ruta", "Radares, peligros, descanso, turismo, comer y dormir"),
     RADIO("Radio", "Fuente, volumen y atenuación"),
@@ -145,6 +146,7 @@ fun SettingsScreen(onOpen: (Screen) -> Unit = {}, initialSection: SettingsSectio
                         when (section) {
                             SettingsSection.DISPLAY -> DisplaySettings()
                             SettingsSection.ASSISTANT -> AssistantSettings()
+                            SettingsSection.USERS -> UserSettings()
                             SettingsSection.DRIVING -> DrivingSettings(onOpen)
                             SettingsSection.ALERTS -> AlertSettings()
                             SettingsSection.RADIO -> RadioSettings(onOpen)
@@ -331,6 +333,51 @@ private fun AssistantSettings() {
         ) {
             assistant.forgetMemory(ctx)
             name = null
+        }
+    }
+}
+
+/**
+ * Usuarios: cada conductor con sus preferencias guardadas; se puede pasar a otro o borrarlo (el
+ * borrado pide confirmar con un segundo toque). Por voz: «soy Luis», «borra el usuario Luis»,
+ * «¿qué usuarios hay?».
+ */
+@Composable
+private fun UserSettings() {
+    val ctx = LocalContext.current
+    val profiles = remember { com.cockpitf30.system.Profiles.list(ctx) }
+    val current = remember { com.cockpitf30.system.Profiles.current(ctx) }
+    SettingGroup("Conductores") {
+        Labels(
+            "Cada conductor tiene sus propios ajustes y Athoox recuerda quién condujo el último.",
+            "Por voz: «Hola Athoox, soy Luis» cambia de usuario (si no existe, crea su perfil), «borra el usuario Luis» y «¿qué usuarios hay?».",
+            true, Modifier.fillMaxWidth(),
+        )
+    }
+    (listOf(current) + profiles.filter { it.id != current.id }).forEach { p ->
+        val isCurrent = p.id == current.id
+        val title = p.name.ifBlank { "Sin nombre" } + if (isCurrent) " · conduce ahora" else ""
+        SettingGroup(title) {
+            val prefs = remember(p.id) { com.cockpitf30.system.Profiles.summary(com.cockpitf30.system.Profiles.values(ctx, p.id)) }
+            prefs.forEach { (k, v) ->
+                Row(Modifier.fillMaxWidth().padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(k, style = MaterialTheme.typography.bodyLarge, color = Cockpit.TextDim, modifier = Modifier.width(300.dp))
+                    Text(v, style = MaterialTheme.typography.bodyLarge, color = Cockpit.Text)
+                }
+            }
+            if (!isCurrent) {
+                if (p.name.isNotBlank()) ActionRow("Usar este perfil", "Carga sus ajustes, como decir «soy ${p.name}».", "Usar") {
+                    VoiceAssistant.selectUser(ctx, p.name)
+                }
+                var confirm by remember(p.id) { mutableStateOf(false) }
+                ActionRow(
+                    "Borrar usuario",
+                    if (confirm) "Se borrarán sus ajustes. Pulsa otra vez para confirmar." else "Borra el perfil y todos sus ajustes. Los viajes y el mantenimiento del coche no se tocan.",
+                    if (confirm) "Confirmar" else "Borrar",
+                ) { if (confirm) VoiceAssistant.deleteUserFromSettings(ctx, p.id) else confirm = true }
+            } else if (profiles.size > 1) {
+                Labels("Para borrar este perfil, cambia antes a otro conductor.", null, false, Modifier.fillMaxWidth())
+            }
         }
     }
 }
