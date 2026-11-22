@@ -27,6 +27,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -356,7 +357,7 @@ private fun UserSettings() {
     }
     (listOf(current) + profiles.filter { it.id != current.id }).forEach { p ->
         val isCurrent = p.id == current.id
-        val title = p.name.ifBlank { "Sin nombre" } + if (isCurrent) " · conduce ahora" else ""
+        val title = p.name.ifBlank { "Sin nombre" } + (if (p.capi) " · Capi" else "") + if (isCurrent) " · conduce ahora" else ""
         SettingGroup(title) {
             val prefs = remember(p.id) { com.cockpitf30.system.Profiles.summary(com.cockpitf30.system.Profiles.values(ctx, p.id)) }
             prefs.forEach { (k, v) ->
@@ -365,7 +366,16 @@ private fun UserSettings() {
                     Text(v, style = MaterialTheme.typography.bodyLarge, color = Cockpit.Text)
                 }
             }
-            if (!isCurrent) {
+            if (p.capi && isCurrent) {
+                CapiControls(ctx)
+            } else if (p.capi) {
+                if (p.name.isNotBlank()) ActionRow("Usar este perfil", "Carga sus ajustes, como decir «soy ${p.name}».", "Usar") {
+                    VoiceAssistant.selectUser(ctx, p.name)
+                }
+                ActionRow("Borrar usuario", "Cuenta protegida: solo el propio Capi puede borrarla, con su PIN.", "Borrar") {
+                    VoiceAssistant.refuseCapiDelete(ctx)
+                }
+            } else if (!isCurrent) {
                 if (p.name.isNotBlank()) ActionRow("Usar este perfil", "Carga sus ajustes, como decir «soy ${p.name}».", "Usar") {
                     VoiceAssistant.selectUser(ctx, p.name)
                 }
@@ -380,6 +390,81 @@ private fun UserSettings() {
             }
         }
     }
+}
+
+/** El Capi conduciendo: su PIN y el borrado de su propia cuenta. */
+@Composable
+private fun CapiControls(ctx: android.content.Context) {
+    var dialog by remember { mutableStateOf<String?>(null) }
+    val hasPin = remember(dialog) { com.cockpitf30.system.Profiles.hasPin(ctx) }
+    ActionRow(
+        "PIN del Capi",
+        if (hasPin) "Protege tu cuenta: hace falta para borrarla. Se teclea aquí, nunca en voz alta." else "Aún no tienes PIN. Sin él nadie puede borrar tu cuenta, ni siquiera tú.",
+        if (hasPin) "Cambiar" else "Crear",
+    ) { dialog = "pin" }
+    ActionRow("Borrar mi cuenta", "Pide tu PIN. El rol de Capi pasa al conductor más antiguo, o al primero que se presente si no queda nadie.", "Borrar") {
+        dialog = if (hasPin) "delete" else "pin"
+    }
+    when (dialog) {
+        "pin" -> PinDialog(
+            title = if (hasPin) "Cambiar el PIN" else "Crear el PIN del Capi",
+            fields = if (hasPin) listOf("PIN actual", "PIN nuevo (4 a 8 cifras)", "Repite el PIN nuevo") else listOf("PIN (4 a 8 cifras)", "Repite el PIN"),
+            onDismiss = { dialog = null },
+        ) { v ->
+            val (old, new, again) = if (hasPin) Triple(v[0], v[1], v[2]) else Triple(null, v[0], v[1])
+            when {
+                !com.cockpitf30.system.Profiles.validPin(new) -> "El PIN tiene que tener de 4 a 8 cifras."
+                new != again -> "Los dos PIN no coinciden."
+                hasPin && com.cockpitf30.system.Profiles.lockLeftMs(ctx) > 0 -> "Demasiados intentos. Espera unos minutos."
+                !com.cockpitf30.system.Profiles.setPin(ctx, new, old) -> "El PIN actual no es correcto."
+                else -> { dialog = null; null }
+            }
+        }
+        "delete" -> PinDialog(
+            title = "Borrar la cuenta del Capi",
+            fields = listOf("Tu PIN"),
+            onDismiss = { dialog = null },
+        ) { v ->
+            when (com.cockpitf30.system.Profiles.deleteCapi(ctx, v[0])) {
+                com.cockpitf30.system.CapiDelete.OK -> { dialog = null; VoiceAssistant.capiDeleted(ctx); null }
+                com.cockpitf30.system.CapiDelete.LOCKED -> {
+                    com.cockpitf30.ui.components.AmbientLight.alarm()
+                    "Demasiados intentos. Bloqueado ${(com.cockpitf30.system.Profiles.lockLeftMs(ctx) / 60_000 + 1)} min."
+                }
+                com.cockpitf30.system.CapiDelete.WRONG_PIN -> { com.cockpitf30.ui.components.AmbientLight.alarm(2_500); "PIN incorrecto." }
+                com.cockpitf30.system.CapiDelete.NO_PIN -> "Crea antes tu PIN."
+                com.cockpitf30.system.CapiDelete.NOT_CAPI -> "Solo el Capi puede hacer esto."
+            }
+        }
+    }
+}
+
+/** Diálogo con [fields] casillas de PIN (cifras ocultas). [onConfirm] devuelve el error o null si vale. */
+@Composable
+private fun PinDialog(title: String, fields: List<String>, onDismiss: () -> Unit, onConfirm: (List<String>) -> String?) {
+    val values = remember { mutableStateListOf(*Array(fields.size) { "" }) }
+    var error by remember { mutableStateOf<String?>(null) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                fields.forEachIndexed { i, label ->
+                    androidx.compose.material3.OutlinedTextField(
+                        value = values[i],
+                        onValueChange = { v -> values[i] = v.filter { it.isDigit() }.take(8) },
+                        label = { Text(label) },
+                        singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword),
+                    )
+                }
+                error?.let { Text(it, color = Cockpit.Alert, style = MaterialTheme.typography.labelLarge) }
+            }
+        },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = { error = onConfirm(values.toList()) }) { Text("Aceptar") } },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancelar") } },
+    )
 }
 
 @Composable

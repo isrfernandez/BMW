@@ -995,7 +995,14 @@ object VoiceAssistant {
     }
 
     private fun deleteUser(c: Command.DeleteUser, now: Long): String {
-        val p = com.cockpitf30.system.Profiles.find(app, c.name) ?: return "No tengo ningún usuario que se llame ${c.name}."
+        // «Borra al Capi» también vale aunque no se diga su nombre.
+        val p = com.cockpitf30.system.Profiles.find(app, c.name)
+            ?: com.cockpitf30.system.Profiles.capi(app).takeIf { com.cockpitf30.system.Profiles.norm(c.name) in setOf("capi", "el capi", "creador", "tu creador") }
+            ?: return "No tengo ningún usuario que se llame ${c.name}."
+        if (p.capi) {
+            com.cockpitf30.ui.components.AmbientLight.alarm()
+            return if (p.id == com.cockpitf30.system.Profiles.current(app).id) CapiLines.SELF else CapiLines.refusal(humor())
+        }
         if (p.id == com.cockpitf30.system.Profiles.current(app).id) {
             return "No puedo borrar a ${p.name} mientras conduce. Cambia antes de usuario: di soy, y otro nombre."
         }
@@ -1016,6 +1023,29 @@ object VoiceAssistant {
         val names = all.map { it.name }
         val list = names.dropLast(1).joinToString(", ") + " y " + names.last()
         return "Hay ${all.size} usuarios: $list. Ahora conduce ${cur.name.ifBlank { "alguien sin nombre" }}."
+    }
+
+    /** Ajustes › Usuarios: alguien ha pulsado «Borrar» en el Capi. */
+    fun refuseCapiDelete(context: Context) {
+        app = context.applicationContext
+        com.cockpitf30.ui.components.AmbientLight.alarm()
+        announceIfFree(CapiLines.refusal(humor()))
+    }
+
+    /** Ajustes › Usuarios: el Capi ha borrado su cuenta con el PIN. */
+    fun capiDeleted(context: Context) {
+        app = context.applicationContext
+        val now = com.cockpitf30.system.Profiles.current(app)
+        Personality.userName = now.name.ifBlank { null }
+        _humor.value = settings().assistantHumor
+        Personality.recent.load(settings().assistantRecentLines)
+        com.cockpitf30.ui.theme.DriveModes.load(app)
+        com.cockpitf30.radio.Radio.reloadProfile()
+        profileVersion.value++
+        announceIfFree(
+            if (now.name.isBlank()) "Cuenta del Capi borrada. Empiezo de cero: el primero que me diga su nombre será el nuevo Capi."
+            else "Cuenta borrada. Ahora el Capi es ${now.name}. Ha sido un honor."
+        )
     }
 
     /** Ajustes › Usuarios: borra un perfil y lo dice. */

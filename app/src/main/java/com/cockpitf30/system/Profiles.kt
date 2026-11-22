@@ -8,7 +8,15 @@ import java.text.Normalizer
 import java.util.UUID
 
 /** Un conductor con sus ajustes guardados. */
-data class Profile(val id: String, val name: String)
+data class Profile(
+    val id: String,
+    val name: String,
+    /** El Capi: el primer usuario, el creador. Nadie puede borrarlo salvo él mismo con su PIN. */
+    val capi: Boolean = false,
+)
+
+/** Resultado de intentar borrar la cuenta del Capi. */
+enum class CapiDelete { OK, NOT_CAPI, NO_PIN, WRONG_PIN, LOCKED }
 
 /** Qué pasó al decir «soy Luis». */
 enum class ProfileSwitch {
@@ -91,15 +99,90 @@ object Profiles {
         }
     }
 
-    /** Borra un perfil que no sea el actual. */
+    /** Borra un perfil que no sea el actual ni el del Capi. */
     fun delete(ctx: Context, id: String): Boolean {
         val p = prefs(ctx)
         val (all, cur) = ensure(p)
-        if (id == cur || all.none { it.id == id }) return false
+        if (id == cur || all.none { it.id == id } || all.first { it.id == id }.capi) return false
         p.edit().remove(KEY_DATA + id).apply()
         save(p, all.filter { it.id != id }, cur)
         return true
     }
+
+    fun capi(ctx: Context): Profile = list(ctx).first { it.capi }
+
+    // ── PIN del Capi ─────────────────────────────────────────────────────
+    // Se teclea en pantalla (nunca en voz alta). Se guarda con sal y PBKDF2, no el número. Tras
+    // [MAX_FAILS] fallos se bloquea un rato, cada vez más largo.
+
+    private const val KEY_PIN = "capi_pin"
+    private const val KEY_FAILS = "capi_pin_fails"
+    private const val KEY_LOCK = "capi_pin_lock_until"
+    const val MAX_FAILS = 5
+    private const val LOCK_MS = 5 * 60_000L
+
+    fun hasPin(ctx: Context) = prefs(ctx).getString(KEY_PIN, null) != null
+
+    fun validPin(pin: String) = pin.length in 4..8 && pin.all { it.isDigit() }
+
+    /** Pone o cambia el PIN; solo el Capi y, si ya tenía uno, sabiendo el anterior. */
+    fun setPin(ctx: Context, pin: String, oldPin: String? = null): Boolean {
+        if (!current(ctx).capi || !validPin(pin)) return false
+        if (hasPin(ctx) && (oldPin == null || checkPin(ctx, oldPin) != null)) return false
+        val salt = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }
+        prefs(ctx).edit().putString(KEY_PIN, b64(salt) + ":" + b64(hash(pin, salt))).putInt(KEY_FAILS, 0).apply()
+        return true
+    }
+
+    /** Milisegundos de bloqueo que quedan (0 si se puede probar). */
+    fun lockLeftMs(ctx: Context) = (prefs(ctx).getLong(KEY_LOCK, 0L) - System.currentTimeMillis()).coerceAtLeast(0L)
+
+    /** null si el PIN es bueno; si no, por qué no. */
+    fun checkPin(ctx: Context, pin: String): CapiDelete? {
+        val p = prefs(ctx)
+        val stored = p.getString(KEY_PIN, null) ?: return CapiDelete.NO_PIN
+        if (lockLeftMs(ctx) > 0) return CapiDelete.LOCKED
+        val (salt, h) = stored.split(':').let { b64d(it[0]) to b64d(it[1]) }
+        if (java.security.MessageDigest.isEqual(hash(pin, salt), h)) { p.edit().putInt(KEY_FAILS, 0).apply(); return null }
+        val fails = p.getInt(KEY_FAILS, 0) + 1
+        val e = p.edit().putInt(KEY_FAILS, fails)
+        if (fails % MAX_FAILS == 0) e.putLong(KEY_LOCK, System.currentTimeMillis() + LOCK_MS * (fails / MAX_FAILS))
+        e.apply()
+        return if (fails % MAX_FAILS == 0) CapiDelete.LOCKED else CapiDelete.WRONG_PIN
+    }
+
+    /**
+     * El Capi borra su propia cuenta con su PIN. Si quedan otros conductores, el rol pasa al más
+     * antiguo y se carga su perfil; si no queda nadie, se empieza de cero y el próximo que diga su
+     * nombre será el Capi.
+     */
+    fun deleteCapi(ctx: Context, pin: String): CapiDelete {
+        val p = prefs(ctx)
+        val (all, cur) = ensure(p)
+        val me = all.first { it.id == cur }
+        if (!me.capi) return CapiDelete.NOT_CAPI
+        checkPin(ctx, pin)?.let { return it }
+        val rest = all.filter { it.id != cur }
+        p.edit().remove(KEY_DATA + cur).remove(KEY_PIN).remove(KEY_FAILS).remove(KEY_LOCK).apply()
+        if (rest.isEmpty()) {
+            restore(p, JSONObject())
+            save(p, listOf(Profile("p" + UUID.randomUUID().toString().take(6), "", capi = true)), "")
+            ensure(p)
+        } else {
+            val heir = rest.first()
+            restore(p, p.getString(KEY_DATA + heir.id, null)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject())
+            p.edit().putString(KEY_NAME, heir.name).remove(KEY_DATA + heir.id).apply()
+            save(p, rest.map { it.copy(capi = it.id == heir.id) }, heir.id)
+        }
+        return CapiDelete.OK
+    }
+
+    private fun hash(pin: String, salt: ByteArray): ByteArray {
+        val spec = javax.crypto.spec.PBEKeySpec(pin.toCharArray(), salt, 20_000, 256)
+        return javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
+    }
+    private fun b64(b: ByteArray) = java.util.Base64.getEncoder().encodeToString(b)
+    private fun b64d(s: String) = java.util.Base64.getDecoder().decode(s)
 
     /** Ajustes personales guardados de un perfil (los del actual, en vivo). */
     fun values(ctx: Context, id: String): Map<String, Any?> {
@@ -151,21 +234,24 @@ object Profiles {
         val all = raw?.let { s ->
             runCatching {
                 val a = JSONArray(s)
-                (0 until a.length()).map { a.getJSONObject(it).let { o -> Profile(o.getString("id"), o.optString("name")) } }
+                (0 until a.length()).map { a.getJSONObject(it).let { o -> Profile(o.getString("id"), o.optString("name"), o.optBoolean("capi")) } }
             }.getOrNull()
-        }.orEmpty()
+        }.orEmpty().let { list ->
+            // Siempre hay un Capi: el primer usuario (también en los perfiles de antes de existir el rol).
+            if (list.isNotEmpty() && list.none { it.capi }) list.mapIndexed { i, pr -> pr.copy(capi = i == 0) }.also { save(p, it, p.getString(KEY_CURRENT, null) ?: it.first().id) } else list
+        }
         val cur = p.getString(KEY_CURRENT, null)
         if (all.isNotEmpty() && all.any { it.id == cur }) return all to cur!!
         if (all.isNotEmpty()) { save(p, all, all.first().id); return all to all.first().id }
-        // Primera vez: el perfil de quien ya usaba la app, con el nombre que hubiera dicho.
-        val first = Profile("p1", p.getString(KEY_NAME, null).orEmpty())
+        // Primera vez: el perfil de quien ya usaba la app, con el nombre que hubiera dicho. Es el Capi.
+        val first = Profile("p1", p.getString(KEY_NAME, null).orEmpty(), capi = true)
         save(p, listOf(first), first.id)
         return listOf(first) to first.id
     }
 
     private fun save(p: SharedPreferences, all: List<Profile>, current: String) {
         val a = JSONArray()
-        all.forEach { a.put(JSONObject().put("id", it.id).put("name", it.name)) }
+        all.forEach { a.put(JSONObject().put("id", it.id).put("name", it.name).put("capi", it.capi)) }
         p.edit().putString(KEY_LIST, a.toString()).putString(KEY_CURRENT, current).apply()
     }
 

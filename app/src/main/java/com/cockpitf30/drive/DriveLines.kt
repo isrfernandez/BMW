@@ -1,6 +1,7 @@
 package com.cockpitf30.drive
 
 import com.cockpitf30.assistant.Personality
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.random.Random
 
@@ -57,6 +58,35 @@ object DriveLines {
             "Si no llevas nada encima, culpa al viento.",
             "No es un reproche al maletero, es física.",
         )
+    }
+
+    // ── Carretera por delante ───────────────────────────────────────────
+
+    fun curveTitle(c: com.cockpitf30.nav.CurveAhead): String =
+        (if (c.chained) "Curvas enlazadas" else if (c.minRadiusM < 40f) "Curva muy cerrada" else "Curva cerrada") +
+            if (c.right) " a la derecha" else " a la izquierda"
+
+    fun curve(c: com.cockpitf30.nav.CurveAhead, inM: Int, humor: Int, random: Random = Random.Default): String {
+        val side = if (c.right) "a la derecha" else "a la izquierda"
+        val what = when {
+            c.chained -> "Curvas enlazadas, la primera $side,"
+            c.minRadiusM < 40f -> "Curva muy cerrada $side"
+            else -> "Curva cerrada $side"
+        }
+        val plain = "$what en $inM metros. Mejor a unos ${c.adviceKmh}."
+        // Aviso de seguridad: la broma solo con mucho humor y casi nunca.
+        return spice(plain, humor / 3, random, "Las curvas, con cariño.", "Que no se derrame el café.", "Despacio, que la carretera no se va a ir.")
+    }
+
+    fun gradeTitle(g: com.cockpitf30.nav.GradeAhead): String =
+        (if (g.pct > 0) "Subida fuerte " else "Bajada pronunciada ") + "${abs(g.pct).roundToInt()} %"
+
+    fun grade(g: com.cockpitf30.nav.GradeAhead, inM: Int, humor: Int, random: Random = Random.Default): String {
+        val p = abs(g.pct).roundToInt()
+        val len = ((g.lengthM / 100f).roundToInt() * 100).coerceAtLeast(300)
+        val plain = if (g.pct < 0) "Bajada pronunciada del $p por ciento en $inM metros, durante unos $len metros. Usa el freno motor."
+        else "Subida fuerte del $p por ciento en $inM metros, durante unos $len metros. Quizá toque reducir una marcha."
+        return spice(plain, humor / 3, random, "La gravedad avisa.", "Nada que el diésel no pueda con su par.")
     }
 
     // ── Ritmo de viaje ──────────────────────────────────────────────────

@@ -15,8 +15,8 @@ android {
         // Las unidades TopWay/ZQ suelen venir con Android 10–13.
         minSdk = 26
         targetSdk = 34
-        versionCode = 136
-        versionName = "1.0.1"
+        versionCode = 137
+        versionName = "1.0.2"
         // Vosk trae su librería nativa para cada arquitectura (~9 MB cada una): la radio y la tablet
         // son ARM. La de x86_64 (emulador del PC) solo va en la de depuración (ver buildTypes).
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }

@@ -373,7 +373,7 @@ object VoiceCommands {
         if (has("de que hablabamos", "que te he preguntado", "que te he pedido", "de que hemos hablado", "que hemos hablado")) return Command.Recap
         // Usuarios: borrar uno y la lista.
         Regex("^(?:borra|borrar|elimina|eliminar|quita|quitar) (?:(?:el|al) )?(?:usuario|perfil|conductor)? ?(?:de |a )?([a-zñ ]{2,30})$").find(t)
-            ?.takeIf { Regex("\\b(?:usuario|perfil|conductor)\\b").containsMatchIn(t) || Regex("^(?:borra|elimina) a ").containsMatchIn(t) }
+            ?.takeIf { Regex("\\b(?:usuario|perfil|conductor|capi|creador)\\b").containsMatchIn(t) || Regex("^(?:borra|elimina) a ").containsMatchIn(t) }
             ?.let { m ->
                 val name = m.groupValues[1].trim().removePrefix("de ").removePrefix("a ").trim()
                 if (name.isNotBlank()) return Command.DeleteUser(name.split(' ').joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } })

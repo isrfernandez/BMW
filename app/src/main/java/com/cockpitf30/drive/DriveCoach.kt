@@ -58,6 +58,7 @@ object DriveCoach {
     private val road = RoadWatch()
     private val coverage = CoverageWatch()
     private val rhythmSaid = HashSet<Rhythm>()
+    private val ahead = AheadWatch()
     private var pending: RouteAlert? = null
     private var tripActive = false
     private var lastGpsAt: Long? = null
@@ -106,7 +107,7 @@ object DriveCoach {
         val active = TripComputer.state.value.current != null
         if (active != tripActive) {
             tripActive = active
-            if (!active) { meter.reset(); coast.reset(); road.reset(); rhythmSaid.clear() }
+            if (!active) { meter.reset(); coast.reset(); road.reset(); rhythmSaid.clear(); ahead.reset() }
         }
 
         // ── Ritmo ──
@@ -191,6 +192,26 @@ object DriveCoach {
             null -> if (netOk && coverage.dataPending && !coverage.blind) refresh(ctx, scope)
         }
 
+        // ── Carretera por delante: curvas cerradas y pendientes fuertes ──
+        val pos = route.position
+        if (pos != null && speed != null && speed >= 30f && !coverage.blind && st.alertOn(AlertCategory.SAFETY)) {
+            val (path, curves) = com.cockpitf30.nav.RoadAhead.update(scope, pos, route.bearing, netOk)
+            ahead.tick(now, speed, path, curves, com.cockpitf30.nav.RoadAhead.gradesNow(pos))?.let { e ->
+                queue(when (e) {
+                    is AheadEvent.Curve -> RouteAlert(
+                        id = "ahead.curve.$now", category = AlertCategory.SAFETY,
+                        title = DriveLines.curveTitle(e.c), subtitle = "En ${e.inM} m · mejor a ${e.c.adviceKmh} km/h",
+                        speech = DriveLines.curve(e.c, e.inM, h),
+                    )
+                    is AheadEvent.Grade -> RouteAlert(
+                        id = "ahead.grade.$now", category = AlertCategory.SAFETY,
+                        title = DriveLines.gradeTitle(e.g), subtitle = "En ${e.inM} m · unos ${e.g.lengthM.roundToInt()} m",
+                        speech = DriveLines.grade(e.g, e.inM, h),
+                    )
+                })
+            }
+        }
+
         _state.value = DriveState(
             road = reading, rhythm = meter.rhythm, stats = meter.stats,
             blind = coverage.blind, netOk = netOk, coastSegments = coast.segments,
@@ -198,14 +219,15 @@ object DriveCoach {
 
         // Lo que está esperando a que el asistente quede libre (como mucho 30 s).
         pending?.let { p ->
-            if (now - p.at > 30_000L) pending = null
+            // Lo de la carretera por delante solo vale unos segundos: luego ya no está delante.
+            if (now - p.at > (if (p.id.startsWith("ahead.")) 8_000L else 30_000L)) pending = null
             else if (now >= RouteAlerts.holdUntil && RouteAlerts.deliverNow(p)) pending = null
         }
     }
 
     private fun queue(a: RouteAlert) {
         // Lo de la cobertura pasa por delante de lo demás.
-        if (pending == null || a.id.startsWith("cover.")) pending = a
+        if (pending == null || a.id.startsWith("cover.") || a.id.startsWith("ahead.")) pending = a
     }
 
     private fun refresh(ctx: Context, scope: CoroutineScope) {

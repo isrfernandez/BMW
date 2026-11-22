@@ -43,6 +43,7 @@ class ProfilesTest {
         assertEquals(Command.DeleteUser("Luis"), VoiceCommands.parse("elimina el perfil de luis"))
         assertEquals(Command.DeleteUser("Luis"), VoiceCommands.parse("borra a luis"))
         assertEquals(Command.ListUsers, VoiceCommands.parse("que usuarios hay"))
+        assertEquals(Command.DeleteUser("Capi"), VoiceCommands.parse("borra al capi"))
     }
 
     @Test fun summaryAndDelete() {
@@ -56,7 +57,51 @@ class ProfilesTest {
         assertEquals("Todos menos turismo", s["Avisos en ruta"])
         assertEquals("75 %", Profiles.summary(Profiles.values(ctx, Profiles.current(ctx).id)).toMap()["Humor"])
         assertEquals(false, Profiles.delete(ctx, Profiles.current(ctx).id))
-        assertEquals(true, Profiles.delete(ctx, israel.id))
+        // Israel fue el primero: es el Capi y no se puede borrar.
+        assertEquals(true, israel.capi)
+        assertEquals(false, Profiles.delete(ctx, israel.id))
+        Profiles.switchTo(ctx, "Israel")
+        assertEquals(true, Profiles.delete(ctx, Profiles.find(ctx, "luis")!!.id))
         assertEquals(1, Profiles.list(ctx).size)
+    }
+
+    @Test fun capiPinAndSelfDelete() {
+        prefs.edit().clear().commit()
+        Profiles.switchTo(ctx, "Israel")
+        Profiles.switchTo(ctx, "Luis")
+        // Luis no es el Capi: ni PIN ni borrado.
+        assertEquals(false, Profiles.setPin(ctx, "1234"))
+        assertEquals(CapiDelete.NOT_CAPI, Profiles.deleteCapi(ctx, "1234"))
+        Profiles.switchTo(ctx, "Israel")
+        assertEquals(CapiDelete.NO_PIN, Profiles.deleteCapi(ctx, "1234"))
+        assertEquals(false, Profiles.setPin(ctx, "12"))
+        assertEquals(true, Profiles.setPin(ctx, "2468"))
+        assertEquals(false, Profiles.setPin(ctx, "1111", oldPin = "0000"))
+        assertEquals(CapiDelete.WRONG_PIN, Profiles.deleteCapi(ctx, "1357"))
+        assertEquals(CapiDelete.OK, Profiles.deleteCapi(ctx, "2468"))
+        val now = Profiles.list(ctx)
+        assertEquals(listOf("Luis"), now.map { it.name })
+        assertEquals(true, now.single().capi)
+        assertEquals("Luis", Profiles.current(ctx).name)
+    }
+
+    @Test fun pinLocksAfterFails() {
+        prefs.edit().clear().commit()
+        Profiles.switchTo(ctx, "Israel")
+        Profiles.setPin(ctx, "2468")
+        repeat(Profiles.MAX_FAILS - 1) { assertEquals(CapiDelete.WRONG_PIN, Profiles.deleteCapi(ctx, "0000")) }
+        assertEquals(CapiDelete.LOCKED, Profiles.deleteCapi(ctx, "0000"))
+        assertEquals(CapiDelete.LOCKED, Profiles.deleteCapi(ctx, "2468"))
+    }
+
+    @Test fun firstUserIsCapiAndAloneStartsOver() {
+        prefs.edit().clear().commit()
+        Profiles.switchTo(ctx, "Ana")
+        assertEquals(true, Profiles.current(ctx).capi)
+        Profiles.setPin(ctx, "9999")
+        assertEquals(CapiDelete.OK, Profiles.deleteCapi(ctx, "9999"))
+        assertEquals("", Profiles.current(ctx).name)
+        assertEquals(ProfileSwitch.NAMED, Profiles.switchTo(ctx, "Pepe"))
+        assertEquals(true, Profiles.current(ctx).capi)
     }
 }
