@@ -374,9 +374,9 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
             val geo = geoCache.get(g, this)
             // Velocidad igual que las rpm: el metal cambia de tono con los km/h.
-            drawFrameFill(geo, mirrored = false, fraction = speed, look = speedLook(speed), brushed = true)
+            drawFrameFill(geo, mirrored = false, fraction = speed, look = speedLook(speed))
             // rpm: mismo formato que la velocidad; el tono del metal cambia con el régimen.
-            drawFrameFill(geo, mirrored = true, fraction = rpm, look = rpmLook(rpm), brushed = true)
+            drawFrameFill(geo, mirrored = true, fraction = rpm, look = rpmLook(rpm))
         }
         // 4) Destello que recorre las barras: lo único que se pinta en cada fotograma.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
@@ -1030,10 +1030,10 @@ private class GeoCache {
     }
 }
 
-private const val METAL_STEPS = 24
+private const val METAL_STEPS = 56
 /** Cuánto más ancha es la franja arriba (y más estrecha abajo) que a media altura. */
-private const val BAND_TAPER = 0.28f
-private const val RIM_STEPS = 8
+private const val BAND_TAPER = 0.16f
+private const val RIM_STEPS = 16
 
 /** Trazados de un marco (izquierdo o reflejado) que no dependen del valor. */
 private class FramePaths(g: GeoPx, val mirrored: Boolean) {
@@ -1243,6 +1243,13 @@ private fun DrawScope.drawFrameShimmer(g: GeoPx, mirrored: Boolean, fraction: Fl
 /** Marcas de escala grabadas en la franja y bisel cromado por fuera. */
 private fun DrawScope.drawFrameTop(g: GeoPx, mirrored: Boolean, look: MetalLook, marks: List<Float>) {
     val f = g.frame(mirrored)
+    // Las puntas de arriba y abajo se oscurecen un poco (barra y bisel), como metal que se aleja de la luz.
+    val ends = Brush.verticalGradient(
+        0f to Color.Black.copy(alpha = 0.42f), 0.09f to Color.Transparent, 0.91f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.42f),
+        startY = g.y0, endY = g.y1,
+    )
+    drawPath(f.full, ends)
+    drawPath(f.rim, ends)
     fun o(x: Float, y: Float) = Offset(g.mirror(x, mirrored), y)
     // Marcas de escala grabadas en la franja: largas en cada cifra, cortas a mitad de camino.
     val ticks = marks + marks.zipWithNext { a, b -> (a + b) / 2 }
@@ -1261,7 +1268,9 @@ private fun DrawScope.drawFrameTop(g: GeoPx, mirrored: Boolean, look: MetalLook,
     val topEnd = x0 + g.w * 0.17f
     val bottomEnd = g.w * 0.5f - g.dp(40f)
     val silver = Color(0xFFC9D6E4)
-    val fade = if (mirrored) listOf(Color.Transparent, silver) else listOf(silver, Color.Transparent)
+    // Brillante junto a la barra y apagándose hacia el centro, igual a los dos lados (el degradado
+    // empieza en la barra también en el lado reflejado).
+    val fade = listOf(silver, Color.Transparent)
     drawLine(Brush.horizontalGradient(fade, o(x0, 0f).x, o(topEnd, 0f).x), o(x0, g.y0), o(topEnd, g.y0), g.dp(2f))
     drawLine(Brush.horizontalGradient(fade, o(x0, 0f).x, o(bottomEnd, 0f).x), o(g.chevronX(g.y1, -g.rimSide), g.y1), o(bottomEnd, g.y1), g.dp(2.5f))
 
