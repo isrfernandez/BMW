@@ -159,6 +159,33 @@ object Wind {
             (turn?.let { ", rolando a ${name(it)} por la tarde" } ?: "")
     }
 
+    /** Viento de un tramo del día en la ficha de la previsión: «Mañana», de dónde, media y máxima. */
+    data class DayPart(val label: String, val fromDeg: Int, val kmh: Int, val maxKmh: Int) {
+        val calm: Boolean get() = maxKmh < CALM_KMH
+    }
+
+    private val PARTS = listOf("Madrugada" to 0..5, "Mañana" to 6..11, "Tarde" to 12..17, "Noche" to 18..23)
+
+    /**
+     * Viento de un día en cuatro tramos (madrugada, mañana, tarde y noche). Si en todo el día apenas
+     * cambia (dirección parecida y fuerza parecida) o está en calma, un solo tramo para todo el día.
+     */
+    fun dayParts(hours: List<HourForecast>): List<DayPart> {
+        if (hours.isEmpty()) return emptyList()
+        val parts = PARTS.mapNotNull { (label, range) ->
+            val hs = hours.filter { it.time.hour in range }
+            if (hs.isEmpty()) null
+            else DayPart(label, mean(hs), hs.sumOf { it.windKmh } / hs.size, hs.maxOf { it.windKmh })
+        }
+        val all = DayPart("Todo el día", mean(hours), hours.sumOf { it.windKmh } / hours.size, hours.maxOf { it.windKmh })
+        if (parts.size <= 1 || all.calm) return listOf(all)
+        val windy = parts.filter { !it.calm }
+        val sameDir = windy.all { diff(it.fromDeg, all.fromDeg) < 45 }
+        val sameForce = parts.maxOf { it.kmh } - parts.minOf { it.kmh } < 8
+        val sameCalm = parts.all { it.calm } || windy.size == parts.size
+        return if (sameDir && sameForce && sameCalm) listOf(all) else parts
+    }
+
     /** Dirección media de varias horas, pesando por la fuerza (media de vectores, no de grados). */
     fun mean(hours: List<HourForecast>): Int {
         var x = 0.0

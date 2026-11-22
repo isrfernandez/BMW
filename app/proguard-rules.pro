@@ -24,3 +24,11 @@
 
 # Trazas de error legibles en el Diagnóstico.
 -keepattributes SourceFile,LineNumberTable
+
+# Versión de uso: fuera los registros de depuración de logcat (Log.v/d/i). Los avisos y errores
+# (Log.w/e) se quedan. Lo que enseña Diagnóstico no pasa por aquí y sigue igual.
+-assumenosideeffects class android.util.Log {
+    public static int v(...);
+    public static int d(...);
+    public static int i(...);
+}

@@ -72,7 +72,7 @@ import com.cockpitf30.weather.WeatherRepository
 import com.cockpitf30.weather.wmoCondition
 import kotlinx.coroutines.launch
 
-/** Previsión de 4 días y selección de la localidad: GPS o búsqueda por nombre. */
+/** Previsión de 7 días (con el viento de cada uno) y selección de la localidad: GPS o búsqueda por nombre. */
 @Composable
 fun WeatherScreen() {
     val context = LocalContext.current
@@ -197,16 +197,18 @@ fun WeatherScreen() {
                     val tileW = ((maxWidth - gap * 6) / 7).coerceIn(96.dp, 150.dp)
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(gap)) {
                         days.forEach { d ->
-                            FocusTile(onClick = { selectedDay = d.date }, modifier = Modifier.width(tileW).height(200.dp)) {
+                            val wind = remember(f, d.date) { com.cockpitf30.weather.Wind.dayParts(f!!.hoursOf(d.date)) }
+                            FocusTile(onClick = { selectedDay = d.date }, modifier = Modifier.width(tileW).height(TILE_H)) {
                                 Column(
                                     Modifier.fillMaxSize().padding(vertical = 10.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.SpaceBetween,
                                 ) {
                                     Text(dayLabel(d.date), style = MaterialTheme.typography.labelLarge, color = Cockpit.TextDim)
-                                    WeatherIcon(wmoCondition(d.code).kind, true, Modifier.size(64.dp))
+                                    WeatherIcon(wmoCondition(d.code).kind, true, Modifier.size(56.dp))
                                     Text("${d.minC}° / ${d.maxC}°", style = numeric(24, FontWeight.Medium), maxLines = 1)
                                     Text(d.precipProbMax?.let { "$it% lluvia" } ?: wmoCondition(d.code).text, style = MaterialTheme.typography.labelMedium, color = Cockpit.TextDim, maxLines = 1)
+                                    DayWind(wind)
                                 }
                             }
                         }
@@ -260,6 +262,48 @@ fun WeatherScreen() {
             }
         }
         com.cockpitf30.ui.components.LoadingOverlay(weather.loading && weather.forecast == null, "Cargando el tiempo…")
+    }
+}
+
+private val TILE_H = 276.dp
+private val WIND_H = 62.dp
+
+/**
+ * Viento del día en la ficha: hasta cuatro tramos (madrugada, mañana, tarde y noche) con flecha
+ * hacia donde sopla y km/h medios; si no cambia en todo el día, uno solo con el rumbo.
+ */
+@Composable
+private fun DayWind(parts: List<com.cockpitf30.weather.Wind.DayPart>) {
+    if (parts.isEmpty()) { Spacer(Modifier.height(WIND_H)); return }
+    val dim = Cockpit.TextDim
+    if (parts.size == 1) {
+        val p = parts[0]
+        Column(Modifier.height(WIND_H), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            if (p.calm) {
+                Text("Viento en calma", style = MaterialTheme.typography.labelMedium, color = dim, maxLines = 1)
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    com.cockpitf30.ui.components.WindArrow(p.fromDeg, Modifier.size(18.dp), Cockpit.Text)
+                    Spacer(Modifier.width(6.dp))
+                    Text("${p.kmh}", style = numeric(20, FontWeight.Medium), maxLines = 1)
+                    Text(" km/h", style = MaterialTheme.typography.labelSmall, color = dim, maxLines = 1)
+                }
+                Text("${com.cockpitf30.weather.Wind.short(p.fromDeg)} · todo el día", style = MaterialTheme.typography.labelSmall, color = dim, maxLines = 1)
+            }
+        }
+        return
+    }
+    Row(Modifier.fillMaxWidth().height(WIND_H).padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+        parts.forEach { p ->
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(p.label.take(3), style = MaterialTheme.typography.labelSmall, color = dim, maxLines = 1)
+                if (p.calm) Text("–", style = numeric(16), color = dim)
+                else {
+                    com.cockpitf30.ui.components.WindArrow(p.fromDeg, Modifier.size(13.dp), Cockpit.Text)
+                    Text("${p.kmh}", style = numeric(15, FontWeight.Medium), maxLines = 1)
+                }
+            }
+        }
     }
 }
 

@@ -178,6 +178,17 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                var crash by remember { mutableStateOf(com.cockpitf30.system.CrashLog.last(context)) }
+                DiagCard("Cierres inesperados") {
+                    val c = crash
+                    if (c == null) Info("Ninguno guardado", Cockpit.TextDim)
+                    else {
+                        c.lineSequence().take(12).forEach { Mono(it) }
+                        ChipRow(listOf("Borrar"), -1) { com.cockpitf30.system.CrashLog.clear(context); crash = null }
+                    }
+                }
+            }
+            item {
                 val tripLog by com.cockpitf30.vehicle.trip.TripComputer.summaryLog.collectAsStateWithLifecycle()
                 DiagCard("Resumen al apagar el motor") {
                     Info("Se enseña al apagar el motor (rpm a cero o ACC apagado) si el trayecto pasa de ${com.cockpitf30.vehicle.trip.TripComputer.SUMMARY_MIN_KM} km; si la radio se apaga antes, al volver a arrancar.", Cockpit.TextDim)
@@ -271,7 +282,13 @@ fun DiagnosticsScreen() {
             item {
                 DiagCard("Fluidez") {
                     // Se refresca con el reloj de la pantalla (now).
-                    now.let { com.cockpitf30.system.FrameStats.summary().forEach { Info(it) } }
+                    // En la versión de uso no se mide hasta pedirlo (cuesta una llamada por fotograma).
+                    if (com.cockpitf30.system.FrameStats.installed) now.let { com.cockpitf30.system.FrameStats.summary().forEach { Info(it) } }
+                    else {
+                        Info("Sin medir. Al pulsar, se cuentan los fotogramas lentos hasta que se cierre la app.", Cockpit.TextDim)
+                        val act = context as? android.app.Activity
+                        ChipRow(listOf("Empezar a medir"), -1) { act?.let { com.cockpitf30.system.FrameStats.install(it) } }
+                    }
                 }
             }
             item {

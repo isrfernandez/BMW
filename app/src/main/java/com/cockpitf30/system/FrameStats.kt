@@ -19,7 +19,7 @@ object FrameStats {
     @Volatile var frozen = 0L; private set // > 100 ms (tirón claro)
     @Volatile var worstMs = 0L; private set
     private val minute = ArrayDeque<Pair<Long, Long>>() // (hora, duración ms) de los lentos
-    private var installed = false
+    @Volatile var installed = false; private set
 
     fun install(activity: Activity) {
         if (installed) return
