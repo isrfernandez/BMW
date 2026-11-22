@@ -44,8 +44,8 @@ object VoiceModel {
         if (sideload == null) zip.delete()
     }
 
-    private suspend fun download(out: File, progress: (Float) -> Unit) {
-        var url = URL(URL_ZIP)
+    internal suspend fun download(out: File, progress: (Float) -> Unit, from: String = URL_ZIP, sizeMb: Int = SIZE_MB) {
+        var url = URL(from)
         var conn: HttpURLConnection
         var redirects = 0
         while (true) {
@@ -63,7 +63,7 @@ object VoiceModel {
             if (code != 200) error("HTTP $code")
             break
         }
-        val total = conn.contentLengthLong.takeIf { it > 0 } ?: (SIZE_MB * 1_000_000L)
+        val total = conn.contentLengthLong.takeIf { it > 0 } ?: (sizeMb * 1_000_000L)
         conn.inputStream.use { input ->
             out.outputStream().use { output ->
                 val buf = ByteArray(64 * 1024)
@@ -85,7 +85,7 @@ object VoiceModel {
         conn.disconnect()
     }
 
-    private fun unzip(zip: File, into: File) {
+    internal fun unzip(zip: File, into: File) {
         into.mkdirs()
         val base = into.canonicalPath + File.separator
         ZipInputStream(zip.inputStream().buffered()).use { zin ->
@@ -102,5 +102,34 @@ object VoiceModel {
                 }
             }
         }
+    }
+}
+
+/**
+ * Modelo de huella de voz de Vosk (~13 MB): saca de cada frase un vector que identifica a quien
+ * habla. Solo se descarga si alguien enseña su voz a Athoox. También vale copiado a mano en
+ * `Android/data/com.cockpitf30/files/vosk-model-spk-0.4.zip`.
+ */
+object SpeakerVoiceModel {
+    const val NAME = "vosk-model-spk-0.4"
+    private const val URL_ZIP = "https://alphacephei.com/vosk/models/$NAME.zip"
+    const val SIZE_MB = 13
+
+    fun dir(context: Context) = File(context.filesDir, NAME)
+    fun isReady(context: Context) = File(dir(context), ".ready").exists()
+
+    suspend fun install(context: Context, progress: (Float) -> Unit = {}) = withContext(Dispatchers.IO) {
+        val target = dir(context)
+        val tmp = File(context.filesDir, "$NAME.tmp")
+        tmp.deleteRecursively()
+        val sideload = context.getExternalFilesDir(null)?.let { File(it, "$NAME.zip") }?.takeIf { it.isFile && it.length() > 1_000_000 }
+        val zip = sideload ?: File(context.cacheDir, "$NAME.zip").also { VoiceModel.download(it, progress, URL_ZIP, SIZE_MB) }
+        VoiceModel.unzip(zip, tmp)
+        val root = tmp.listFiles()?.singleOrNull { it.isDirectory } ?: tmp
+        target.deleteRecursively()
+        if (!root.renameTo(target)) error("No se pudo guardar el modelo de voz")
+        tmp.deleteRecursively()
+        File(target, ".ready").writeText(NAME)
+        if (sideload == null) zip.delete()
     }
 }

@@ -477,6 +477,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
             }
         }
             com.cockpitf30.ui.components.MapsGuidanceBanner(Modifier.align(androidx.compose.ui.Alignment.TopCenter).padding(top = 14.dp))
+            com.cockpitf30.ui.components.DriverBanner(Modifier.align(androidx.compose.ui.Alignment.TopCenter).padding(top = 14.dp))
             com.cockpitf30.ui.components.RouteAlertPopup(Modifier.align(androidx.compose.ui.Alignment.TopEnd).padding(top = 20.dp, end = 24.dp))
             com.cockpitf30.ui.components.AmbientGlow()
             TripSummaryOverlay()

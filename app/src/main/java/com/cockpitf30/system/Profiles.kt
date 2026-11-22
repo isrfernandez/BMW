@@ -99,12 +99,27 @@ object Profiles {
         }
     }
 
+    /** Cómo le llama Athoox: el Capi es «Capi» (se llame como se llame su perfil); los demás, por su nombre. */
+    fun callName(p: Profile): String? = if (p.capi) CAPI_CALL else p.name.ifBlank { null }
+    const val CAPI_CALL = "Capi"
+
+    /** Cambia el nombre del perfil actual (false si ya hay otro con ese nombre). */
+    fun rename(ctx: Context, name: String): Boolean {
+        val p = prefs(ctx)
+        val (all, curId) = ensure(p)
+        if (all.any { it.id != curId && norm(it.name) == norm(name) }) return false
+        save(p, all.map { if (it.id == curId) it.copy(name = name) else it }, curId)
+        p.edit().putString(KEY_NAME, name).apply()
+        return true
+    }
+
     /** Borra un perfil que no sea el actual ni el del Capi. */
     fun delete(ctx: Context, id: String): Boolean {
         val p = prefs(ctx)
         val (all, cur) = ensure(p)
         if (id == cur || all.none { it.id == id } || all.first { it.id == id }.capi) return false
         p.edit().remove(KEY_DATA + id).apply()
+        VoicePrint.forget(ctx, id); DriverId.setWifi(ctx, id, null)
         save(p, all.filter { it.id != id }, cur)
         return true
     }
@@ -165,6 +180,7 @@ object Profiles {
         val rest = all.filter { it.id != cur }
         p.edit().remove(KEY_DATA + cur).remove(KEY_PIN).remove(KEY_FAILS).remove(KEY_LOCK).apply()
         PhoneKey.forget(ctx)
+        VoicePrint.forget(ctx, cur); DriverId.setWifi(ctx, cur, null)
         if (rest.isEmpty()) {
             restore(p, JSONObject())
             save(p, listOf(Profile("p" + UUID.randomUUID().toString().take(6), "", capi = true)), "")

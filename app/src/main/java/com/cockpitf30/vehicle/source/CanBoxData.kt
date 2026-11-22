@@ -66,5 +66,8 @@ object CanBoxData {
         if (bad.get() > 0) add("suma incorrecta ×${bad.get()}")
     }
 
+    /** Última trama de ese tipo en hex, o null. */
+    fun last(type: Int): String? = stats[type]?.last
+
     fun framesTotal(): Long = stats.values.sumOf { it.count }
 }

@@ -74,6 +74,9 @@ object DriveCoach {
     fun start(context: Context, scope: CoroutineScope) {
         if (job != null) return
         val ctx = context.applicationContext
+        com.cockpitf30.system.DriverId.onStart(ctx, scope) { p, how ->
+            scope.launch(kotlinx.coroutines.Dispatchers.Main) { com.cockpitf30.assistant.VoiceAssistant.identified(ctx, p, how) }
+        }
         job = scope.launch {
             while (isActive) {
                 runCatching { tick(ctx, scope) }

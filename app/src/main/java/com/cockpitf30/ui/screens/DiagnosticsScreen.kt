@@ -130,6 +130,18 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                DiagCard("Quién conduce") {
+                    val wifi = remember { com.cockpitf30.system.DriverId.visibleSsids(context) }
+                    val score by com.cockpitf30.system.VoicePrint.lastScore.collectAsStateWithLifecycle()
+                    Info("Redes Wi-Fi a la vista: ${wifi.joinToString(", ").ifBlank { "ninguna (¿ubicación apagada?)" }}")
+                    Info("Huella de voz: " + (score?.let { (id, s) -> "${com.cockpitf30.system.Profiles.list(context).firstOrNull { it.id == id }?.name ?: id} %.2f".format(s) } ?: "sin comparar aún") +
+                        " · coincide desde %.2f".format(com.cockpitf30.system.VoicePrint.MATCH))
+                    Info("Huella de arranque (arranca con cada llave y mira si cambia algún byte):")
+                    com.cockpitf30.system.DriverId.starts(context).ifEmpty { listOf("Aún ninguna: se guarda 20 s después de arrancar, si llegan tramas de la caja.") }
+                        .forEach { Info(it) }
+                }
+            }
+            item {
                 // Google Maps baja la FM con la «mezcla de navegación» de la propia radio (no pasa por la app).
                 val carValues by com.cockpitf30.vehicle.source.RadioCarData.values.collectAsStateWithLifecycle()
                 var mix by remember { mutableStateOf<String?>(null) }

@@ -356,6 +356,17 @@ private fun UserSettings() {
             true, Modifier.fillMaxWidth(),
         )
     }
+    if (current.name.isNotBlank()) RecognizeMe(ctx, current)
+    var pinFor by remember { mutableStateOf<com.cockpitf30.system.Profile?>(null) }
+    pinFor?.let { target ->
+        PinDialog("PIN del Capi para usar su perfil", listOf("PIN"), onDismiss = { pinFor = null }) { v ->
+            when (com.cockpitf30.system.Profiles.checkPin(ctx, v[0])) {
+                null -> { pinFor = null; VoiceAssistant.selectUser(ctx, target.name); null }
+                com.cockpitf30.system.CapiDelete.LOCKED -> { com.cockpitf30.ui.components.AmbientLight.alarm(); "Demasiados intentos. Bloqueado." }
+                else -> { com.cockpitf30.ui.components.AmbientLight.alarm(2_500); "PIN incorrecto." }
+            }
+        }
+    }
     (listOf(current) + profiles.filter { it.id != current.id }).forEach { p ->
         val isCurrent = p.id == current.id
         val title = p.name.ifBlank { "Sin nombre" } + (if (p.capi) " · Capi" else "") + if (isCurrent) " · conduce ahora" else ""
@@ -370,8 +381,9 @@ private fun UserSettings() {
             if (p.capi && isCurrent) {
                 CapiControls(ctx)
             } else if (p.capi) {
-                if (p.name.isNotBlank()) ActionRow("Usar este perfil", "Carga sus ajustes, como decir «soy ${p.name}».", "Usar") {
-                    VoiceAssistant.selectUser(ctx, p.name)
+                val pin = com.cockpitf30.system.Profiles.hasPin(ctx)
+                if (p.name.isNotBlank()) ActionRow("Usar este perfil", if (pin) "Pide el PIN del Capi." else "Carga sus ajustes, como decir «soy ${p.name}».", "Usar") {
+                    if (pin) pinFor = p else VoiceAssistant.selectUser(ctx, p.name)
                 }
                 ActionRow("Borrar usuario", "Cuenta protegida: solo el propio Capi puede borrarla, con su PIN.", "Borrar") {
                     VoiceAssistant.refuseCapiDelete(ctx)
@@ -394,6 +406,49 @@ private fun UserSettings() {
 }
 
 /** El Capi conduciendo: su PIN y el borrado de su propia cuenta. */
+/** Que Athoox sepa quién eres al arrancar: la red Wi-Fi de tu móvil y tu voz. */
+@Composable
+private fun RecognizeMe(ctx: android.content.Context, me: com.cockpitf30.system.Profile) {
+    val version by VoiceAssistant.profileVersion.collectAsStateWithLifecycle()
+    SettingGroup("Reconocerte al arrancar, ${com.cockpitf30.system.Profiles.callName(me)}") {
+        Labels(
+            "Al encender, Athoox mira si ve la red Wi-Fi de tu móvil (el punto de acceso, aunque no esté emparejado) y escucha tu voz en el primer «Hola Athoox». Si no te reconoce, sigue con el último conductor y te deja cambiar con «No soy yo».",
+            null, true, Modifier.fillMaxWidth(),
+        )
+        var wifi by remember { mutableStateOf(com.cockpitf30.system.DriverId.wifi(ctx, me.id)) }
+        var nets by remember { mutableStateOf<List<String>?>(null) }
+        ActionRow(
+            "Red Wi-Fi de tu móvil",
+            wifi?.let { "«$it». Si la radio la ve al arrancar, sabe que eres tú." } ?: "Ninguna. Enciende el punto de acceso del móvil y pulsa Buscar.",
+            "Buscar",
+        ) { nets = com.cockpitf30.system.DriverId.visibleSsids(ctx, scan = true) }
+        nets?.let { list ->
+            if (list.isEmpty()) Labels("No veo ninguna red. Comprueba que el punto de acceso está encendido y la ubicación activada.", null, true, Modifier.fillMaxWidth())
+            else ChoiceRow("Elige la de tu móvil", null, list + "Ninguna", list.indexOf(wifi).takeIf { it >= 0 } ?: -1) { i ->
+                wifi = list.getOrNull(i)
+                com.cockpitf30.system.DriverId.setWifi(ctx, me.id, wifi)
+                nets = null
+            }
+        }
+        val enrolling by com.cockpitf30.system.VoicePrint.enrolling.collectAsStateWithLifecycle()
+        val hasVoice = remember(version, enrolling) { com.cockpitf30.system.VoicePrint.has(ctx, me.id) }
+        var status by remember { mutableStateOf<String?>(null) }
+        ActionRow(
+            "Tu voz",
+            when {
+                enrolling?.profileId == me.id -> "Di «Hola Athoox»: faltan ${com.cockpitf30.system.VoicePrint.SAMPLES - (enrolling?.got?.size ?: 0)}."
+                status != null && enrolling == null && !hasVoice -> status
+                hasVoice -> "Aprendida. Sirve para saber quién conduce, no como contraseña: con ruido puede fallar."
+                else -> "Sin aprender. Athoox te pedirá decir «Hola Athoox» ${com.cockpitf30.system.VoicePrint.SAMPLES} veces (la primera vez descarga ${com.cockpitf30.assistant.SpeakerVoiceModel.SIZE_MB} MB)."
+            },
+            if (hasVoice) "Repetir" else "Enseñar",
+        ) { VoiceAssistant.teachVoice(ctx) { status = it } }
+        if (hasVoice) ActionRow("Olvidar tu voz", null, "Olvidar") {
+            com.cockpitf30.system.VoicePrint.forget(ctx, me.id); VoiceAssistant.profileVersion.value++
+        }
+    }
+}
+
 @Composable
 private fun CapiControls(ctx: android.content.Context) {
     var dialog by remember { mutableStateOf<String?>(null) }
