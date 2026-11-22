@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
@@ -536,7 +537,7 @@ private val PANEL_BOTTOM = 10.dp
 /** Medidas del cuadro en dp, compartidas entre el dibujo y los textos. */
 private class Geometry(val width: Dp, val height: Dp) {
     /** Margen de arriba: sin los rótulos «km/h» y «1/min x 1000» (1.0) basta un respiro hasta el borde. */
-    val frameTop = 12.dp
+    val frameTop = 16.dp
     val statusHeight = 50.dp
     val frameBottom = height - statusHeight
     /** Margen exterior: las cifras van ya dentro de la franja, así que basta un respiro. */
@@ -558,6 +559,9 @@ private class Geometry(val width: Dp, val height: Dp) {
 
 private class GeoPx(val w: Float, val h: Float, val y0: Float, val y1: Float, val xv: Float, val cut: Float, val band: Float, val density: Float) {
     val ym = (y0 + y1) / 2
+    /** Bisel metálico claro por fuera de la franja: ancho en el lado y alto en las puntas. */
+    val rimSide = 16f * density
+    val rimCap = 9f * density
     val half = (y1 - y0) / 2
     fun dp(v: Float) = v * density
 
@@ -1017,6 +1021,7 @@ private class GeoCache {
 }
 
 private const val METAL_STEPS = 24
+private const val RIM_STEPS = 8
 
 /** Trazados de un marco (izquierdo o reflejado) que no dependen del valor. */
 private class FramePaths(g: GeoPx, val mirrored: Boolean) {
@@ -1033,6 +1038,25 @@ private class FramePaths(g: GeoPx, val mirrored: Boolean) {
     val metalStroke = Stroke(g.band / METAL_STEPS + 1f)
     val full = Path().also { band(g, it, g.y0, g.y1) }
     val outer = chevron(g, 0f, g.y0, g.y1)
+    /** Bisel exterior: la franja agrandada hacia fuera y por las puntas, con las esquinas suaves. */
+    val rim: Path = run {
+        val yt = g.y0 - g.rimCap; val yb = g.y1 + g.rimCap; val r = g.rimSide
+        roundedPolygon(
+            listOf(
+                o(g, g.chevronX(yb, -r), yb), o(g, g.xv - r, g.ym), o(g, g.chevronX(yt, -r), yt),
+                o(g, g.chevronX(yt, g.band), yt), o(g, g.xv + g.band, g.ym), o(g, g.chevronX(yb, g.band), yb),
+            ),
+            g.dp(9f),
+        )
+    }
+    /** Chevrons concéntricos del bisel (de fuera hacia dentro) para su perfil de luz. */
+    val rimSteps: List<Path> = List(RIM_STEPS) { i ->
+        val inset = -g.rimSide + g.rimSide * (i + 0.5f) / RIM_STEPS
+        chevron(g, inset, g.y0 - g.rimCap * 3, g.y1 + g.rimCap * 3)
+    }
+    val rimStroke = Stroke(g.rimSide / RIM_STEPS + 1f)
+    /** Filo de luz a lo largo del borde exterior del bisel. */
+    val rimEdge = chevron(g, -g.rimSide + g.dp(2.5f), g.y0 - g.rimCap + g.dp(4f), g.y1 + g.rimCap - g.dp(4f))
     val inner = chevron(g, g.band, g.y0, g.y1)
     /** Trazado del relleno: se reutiliza en cada fotograma. */
     val filled = Path()
@@ -1084,9 +1108,18 @@ private fun DrawScope.drawFrameBase(g: GeoPx, mirrored: Boolean) {
     drawLine(Brush.horizontalGradient(fade, o(x0, 0f).x, o(topEnd, 0f).x), o(x0, g.y0), o(topEnd, g.y0), g.dp(2f))
     drawLine(Brush.horizontalGradient(fade, o(x0, 0f).x, o(bottomEnd, 0f).x), o(g.chevronX(g.y1, 0f), g.y1), o(bottomEnd, g.y1), g.dp(2.5f))
 
+    drawRim(g, f)
     drawPath(f.full, Color(0xFF111A24))
     clipPath(f.full) {
         metal(f, SteelMetal, 0.72f)
+        // Placa interior: un brillo suave y cálido en la parte baja, como luz sobre metal satinado.
+        val glowY = g.ym + g.half * 0.38f
+        val glowC = o(g.chevronX(glowY, g.band * 0.42f), glowY)
+        val glowR = g.band * 1.35f
+        drawCircle(
+            Brush.radialGradient(0f to Color(0xFFFFF1E4).copy(alpha = 0.30f), 0.45f to SteelMetal.light.copy(alpha = 0.10f), 1f to Color.Transparent, center = glowC, radius = glowR),
+            radius = glowR, center = glowC, blendMode = BlendMode.Screen,
+        )
         drawRect(
             Brush.verticalGradient(
                 0f to Color.White.copy(alpha = 0.16f), 0.35f to Color.Transparent, 0.75f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.35f),
@@ -1095,6 +1128,38 @@ private fun DrawScope.drawFrameBase(g: GeoPx, mirrored: Boolean) {
             Offset(0f, g.y0), Size(size.width, g.y1 - g.y0),
         )
     }
+}
+
+/**
+ * Bisel metálico claro alrededor de la franja (por fuera y en las puntas): plata satinada con la
+ * luz arriba, un reflejo a media altura, filo brillante por fuera y una ranura oscura contra la franja.
+ */
+private fun DrawScope.drawRim(g: GeoPx, f: FramePaths) {
+    fun tint(c: Color, k: Float = 0.18f) = androidx.compose.ui.graphics.lerp(c, SteelMetal.light, k)
+    drawPath(f.rim, Color.Black.copy(alpha = 0.5f), style = Stroke(g.dp(3f), join = StrokeJoin.Round))
+    drawPath(
+        f.rim,
+        Brush.verticalGradient(
+            0f to tint(Color(0xFFF7F9FB)), 0.16f to tint(Color(0xFFC3CCD6)), 0.38f to tint(Color(0xFFE6EBF0)),
+            0.5f to Color(0xFFFFFFFF), 0.6f to tint(Color(0xFFB4BEC9)), 0.84f to tint(Color(0xFFD9DFE6)), 1f to tint(Color(0xFF9AA5B1)),
+            startY = g.y0 - g.rimCap, endY = g.y1 + g.rimCap,
+        ),
+    )
+    // Bisel: de un filo casi blanco por fuera a acero más oscuro contra la franja, suavizado.
+    clipPath(f.rim) {
+        for (i in 0 until RIM_STEPS) {
+            val t = (i + 0.5f) / RIM_STEPS
+            val c = when {
+                t < 0.25f -> androidx.compose.ui.graphics.lerp(Color.White, Color(0xFFE4E9EF), t / 0.25f)
+                t < 0.7f -> androidx.compose.ui.graphics.lerp(Color(0xFFE4E9EF), Color(0xFFB9C3CE), (t - 0.25f) / 0.45f)
+                else -> androidx.compose.ui.graphics.lerp(Color(0xFFB9C3CE), Color(0xFF7F8B98), (t - 0.7f) / 0.3f)
+            }
+            drawPath(f.rimSteps[i], tint(c, 0.12f), alpha = 0.55f, style = f.rimStroke)
+        }
+    }
+    // Volumen: más claro por fuera y algo de sombra hacia la franja.
+    drawPath(f.rimEdge, Color.White.copy(alpha = 0.75f), style = Stroke(g.dp(1.6f), cap = StrokeCap.Round, join = StrokeJoin.Round))
+    drawPath(f.outer, Color.Black.copy(alpha = 0.18f), style = Stroke(g.dp(7f), join = StrokeJoin.Round))
 }
 
 /** Relleno del valor, de abajo arriba, en metal pulido ([look]) con la punta encendida. */
@@ -1184,7 +1249,7 @@ private fun DrawScope.drawFrameTop(g: GeoPx, mirrored: Boolean, look: MetalLook,
 
     // Bisel cromado: sombra exterior, cuerpo de plata con reflejos y filo de luz; borde interior de acero.
     val outer = f.outer
-    drawPath(outer, Color.Black.copy(alpha = 0.6f), style = Stroke(g.dp(8f)))
+    drawPath(outer, Color.Black.copy(alpha = 0.35f), style = Stroke(g.dp(4f), join = StrokeJoin.Round))
     // Cromo con un punto de azul hielo, como el bisel de la franja.
     fun chrome(c: Color, k: Float = 0.25f) = androidx.compose.ui.graphics.lerp(c, SteelMetal.light, k)
     drawPath(
@@ -1194,9 +1259,8 @@ private fun DrawScope.drawFrameTop(g: GeoPx, mirrored: Boolean, look: MetalLook,
             0.62f to chrome(Color(0xFF5E6F84)), 0.85f to chrome(Color(0xFFC3D2E2), 0.3f), 1f to chrome(Color(0xFF6A7C92)),
             startY = g.y0, endY = g.y1,
         ),
-        style = Stroke(g.dp(4f)),
+        style = Stroke(g.dp(2f), join = StrokeJoin.Round),
     )
-    drawPath(outer, look.light.copy(alpha = 0.12f), style = Stroke(g.dp(12f)), blendMode = BlendMode.Plus)
     val inner = f.inner
     drawPath(inner, Color.Black.copy(alpha = 0.5f), style = Stroke(g.dp(4f)))
     drawPath(
