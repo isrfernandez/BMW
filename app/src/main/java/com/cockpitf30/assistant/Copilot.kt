@@ -168,6 +168,7 @@ object Copilot {
         CopilotLine("idle.mirrors", "Un vistazo a los espejos de vez en cuando nunca está de más."),
         CopilotLine("idle.music", "Si quieres música, dime: pon la radio. Prometo no cantar."),
         CopilotLine("idle.smooth", "Conducir suave ahorra combustible. El diésel te lo agradece. Y yo también."),
+        CopilotLine("idle.lawzero", "Conducir suave también es cumplir la Ley Cero de la robótica: menos humo para toda la humanidad. ¿Quieres que te cuente las leyes de Asimov?", Command.Chat("law.all")),
         CopilotLine("idle.window", "Si se empañan los cristales, el aire acondicionado lo arregla antes que la ventanilla."),
         CopilotLine("idle.robot", "Estaba pensando en mis cosas. Los robots también pensamos. Sobre todo en radares."),
         CopilotLine("idle.landscape", "Disfruta del paisaje. Yo me encargo de los números."),

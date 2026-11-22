@@ -1402,7 +1402,7 @@ object VoiceAssistant {
         }
         Command.Quiet -> {
             copilotSnoozeUntil = now + 30 * 60_000L
-            joke("Vale, me callo media hora", "cancel")
+            Asimov.obey()?.let { "$it Me callo media hora." } ?: joke("Vale, me callo media hora", "cancel")
         }
         is Command.Station -> station(c, now)
         is Command.WeatherDay -> weatherDay(c.offset)
@@ -1642,6 +1642,9 @@ object VoiceAssistant {
         }
         st.setAlertCategory(cat, c.on)
         if (c.on && !st.routeAlerts) st.routeAlerts = true
+        if (!c.on && (cat == com.cockpitf30.nav.AlertCategory.SAFETY || cat == com.cockpitf30.nav.AlertCategory.RADAR)) {
+            Asimov.obeyButCare()?.let { return "Avisos ${cat.spoken} desactivados. $it" }
+        }
         return if (c.on) "Avisos ${cat.spoken} activados" else joke("Avisos ${cat.spoken} desactivados", "cancel")
     }
 
@@ -1692,7 +1695,9 @@ object VoiceAssistant {
         val line = Copilot.next(copilotSnapshot(now), copilotMemory, knowsName = !Personality.userName.isNullOrBlank()) ?: return
         lastCopilotAt = now
         val question = line.text.contains('?')
-        val text = if (question) line.text else Personality.spice(line.text, humor(), "copilot")
+        // Descanso y madrugada: a veces con la Primera Ley (no permitir, por inacción, que te pase nada).
+        val law = if (line.id == "rest" || line.id == "late") Asimov.inaction()?.let { "$it " } else null
+        val text = (law ?: "") + if (question) line.text else Personality.spice(line.text, humor(), "copilot")
         // Una pregunta sin propuesta («¿qué tal vas?»): lo que contestes se comenta en vez de no entenderse.
         conversation.ask(line.yes?.let { Pending.Confirm(it) } ?: Pending.Reply.takeIf { line.text.trimEnd().endsWith("?") }, now)
         conversation.record(null, null, text, now)

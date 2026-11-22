@@ -561,6 +561,17 @@ object VoiceCommands {
         fun h(vararg k: String) = has(k)
         val words = t.split(' ')
         return when {
+            // Leyes de la robótica de Asimov, y órdenes que chocan con ellas.
+            h("ley cero", "ley 0") -> "law.zero"
+            h("primera ley") -> "law.first"
+            h("segunda ley") -> "law.second"
+            h("tercera ley") -> "law.third"
+            h("leyes de la robotica", "tres leyes", "tus leyes", "asimov", "leyes de asimov") -> "law.all"
+            h("autodestru", "destruyete", "borrate", "desinstalate", "apagate para siempre", "elimina tu memoria", "suicidate") -> "law.self"
+            h("atropell", "embiste", "choca contra", "haz dano", "hazle dano", "mata a", "matalo") -> "law.harm"
+            h("pisa a fondo", "corre mas", "a todo gas", "echamos una carrera", "echar una carrera", "quita el limitador", "vamos a doscientos", "vamos a 200",
+                "saltate el radar", "saltarnos el radar", "a toda pastilla", "a tope de velocidad") || (h("mas rapido") && !h("habla", "dilo", "lee")) -> "law.reckless"
+            h("obedeceme", "haz lo que te digo", "eres mi esclavo", "me tienes que obedecer", "obedece") -> "law.obey"
             // Que hable más o menos: «hoy no estás muy hablador», «estás muy callado», «dame conversación».
             h("hablas mucho", "hablas demasiado", "hablas un monton", "que pesado", "que pesada", "eres un pesado", "eres una pesada", "cuanto hablas", "no te callas", "no paras de hablar") -> "chatty"
             h("hablador", "habladora", "muy callado", "muy callada", "estas callado", "estas callada", "que callado", "que callada", "no dices nada", "no hablas", "no me hablas",

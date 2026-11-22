@@ -478,7 +478,7 @@ object Lines {
     )
 
     /** Respuestas de charla («¿qué tal?», «¿quién eres?»…). Las de «.serio» son para humor bajo. */
-    val CHAT: Map<String, List<String>> = LinesExtra.CHAT + mapOf(
+    val CHAT: Map<String, List<String>> = LinesExtra.CHAT + Asimov.CHAT + mapOf(
         "hello" to listOf(
             "{greet}. ¿En qué te ayudo?", "{greet}, {name}. ¿Qué necesitas?", "{greet}. Aquí estoy, como siempre.",
             "{greet}. Tú conduces, yo hablo.", "{greet}. Listo para lo que mandes.",
