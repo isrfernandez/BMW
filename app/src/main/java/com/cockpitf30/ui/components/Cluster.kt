@@ -537,7 +537,7 @@ private val PANEL_BOTTOM = 10.dp
 /** Medidas del cuadro en dp, compartidas entre el dibujo y los textos. */
 private class Geometry(val width: Dp, val height: Dp) {
     /** Margen de arriba: sin los rótulos «km/h» y «1/min x 1000» (1.0) basta un respiro hasta el borde. */
-    val frameTop = 16.dp
+    val frameTop = 12.dp
     val statusHeight = 50.dp
     val frameBottom = height - statusHeight
     /** Margen exterior: las cifras van ya dentro de la franja, así que basta un respiro. */
@@ -561,7 +561,13 @@ private class GeoPx(val w: Float, val h: Float, val y0: Float, val y1: Float, va
     val ym = (y0 + y1) / 2
     /** Bisel metálico claro por fuera de la franja: ancho en el lado y alto en las puntas. */
     val rimSide = 16f * density
-    val rimCap = 9f * density
+    /**
+     * Ancho de la franja a la altura [y]: más estrecha abajo y más ancha arriba (como el cuadro del
+     * iDrive 8.5). A media altura mide [band], así que el panel central queda donde estaba.
+     */
+    fun bandAt(y: Float) = band * (1f + BAND_TAPER * (ym - y) / half)
+    /** x a la altura [y] de la línea que va a la fracción [t] del ancho de la franja (0 = fuera, 1 = dentro), más [extra]. */
+    fun edgeX(y: Float, t: Float, extra: Float = 0f) = chevronX(y, bandAt(y) * t + extra)
     val half = (y1 - y0) / 2
     fun dp(v: Float) = v * density
 
@@ -613,10 +619,12 @@ private fun DrawScope.drawPanel(
     val inset = g.band + g.dp(14f)
     val top = g.y0 + g.dp(PANEL_TOP.value)
     val bottom = g.y1 - g.dp(PANEL_BOTTOM.value)
+    // El panel sigue el borde interior de las franjas, que se estrechan hacia abajo.
+    val xt = g.edgeX(top, 1f, g.dp(14f)); val xb = g.edgeX(bottom, 1f, g.dp(14f))
     val pts = listOf(
-        Offset(g.chevronX(top, inset), top), Offset(g.w - g.chevronX(top, inset), top),
-        Offset(g.w - g.xv - inset, g.ym), Offset(g.w - g.chevronX(bottom, inset), bottom),
-        Offset(g.chevronX(bottom, inset), bottom), Offset(g.xv + inset, g.ym),
+        Offset(xt, top), Offset(g.w - xt, top),
+        Offset(g.w - g.xv - inset, g.ym), Offset(g.w - xb, bottom),
+        Offset(xb, bottom), Offset(g.xv + inset, g.ym),
     )
     val panel = roundedPolygon(pts, g.dp(22f))
 
@@ -675,10 +683,12 @@ private fun panelShape(g: GeoPx): Triple<Path, Rect, Float> {
     val inset = g.band + g.dp(14f)
     val top = g.y0 + g.dp(PANEL_TOP.value)
     val bottom = g.y1 - g.dp(PANEL_BOTTOM.value)
+    // El panel sigue el borde interior de las franjas, que se estrechan hacia abajo.
+    val xt = g.edgeX(top, 1f, g.dp(14f)); val xb = g.edgeX(bottom, 1f, g.dp(14f))
     val pts = listOf(
-        Offset(g.chevronX(top, inset), top), Offset(g.w - g.chevronX(top, inset), top),
-        Offset(g.w - g.xv - inset, g.ym), Offset(g.w - g.chevronX(bottom, inset), bottom),
-        Offset(g.chevronX(bottom, inset), bottom), Offset(g.xv + inset, g.ym),
+        Offset(xt, top), Offset(g.w - xt, top),
+        Offset(g.w - g.xv - inset, g.ym), Offset(g.w - xb, bottom),
+        Offset(xb, bottom), Offset(g.xv + inset, g.ym),
     )
     return Triple(roundedPolygon(pts, g.dp(22f)), Rect(g.xv + inset, top, g.w - g.xv - inset, bottom), g.w - 2 * (g.xv + inset))
 }
@@ -1021,6 +1031,8 @@ private class GeoCache {
 }
 
 private const val METAL_STEPS = 24
+/** Cuánto más ancha es la franja arriba (y más estrecha abajo) que a media altura. */
+private const val BAND_TAPER = 0.28f
 private const val RIM_STEPS = 8
 
 /** Trazados de un marco (izquierdo o reflejado) que no dependen del valor. */
@@ -1031,33 +1043,37 @@ private class FramePaths(g: GeoPx, val mirrored: Boolean) {
         moveTo(a.x, a.y); lineTo(v.x, v.y); lineTo(b.x, b.y)
     }
 
-    /** Chevrons concéntricos con los que se pinta el perfil metálico de la franja. */
-    val metal: List<Path> = (g.band / METAL_STEPS).let { step ->
-        List(METAL_STEPS) { i -> chevron(g, step * (i + 0.5f), g.y0 - g.band, g.y1 + g.band) }
+    /** Como [chevron], pero a la fracción [t] del ancho de la franja (que cambia con la altura). */
+    private fun chevronF(g: GeoPx, t: Float, top: Float, bottom: Float, extra: Float = 0f) = Path().apply {
+        val a = o(g, g.edgeX(bottom, t, extra), bottom); val v = o(g, g.edgeX(g.ym, t, extra), g.ym); val b = o(g, g.edgeX(top, t, extra), top)
+        moveTo(a.x, a.y); lineTo(v.x, v.y); lineTo(b.x, b.y)
     }
-    val metalStroke = Stroke(g.band / METAL_STEPS + 1f)
+
+    /** Chevrons concéntricos con los que se pinta el perfil metálico de la franja. */
+    val metal: List<Path> = List(METAL_STEPS) { i -> chevronF(g, (i + 0.5f) / METAL_STEPS, g.y0 - g.band, g.y1 + g.band) }
+    val metalStroke = Stroke(g.bandAt(g.y0 - g.band) / METAL_STEPS + 1f)
     val full = Path().also { band(g, it, g.y0, g.y1) }
     val outer = chevron(g, 0f, g.y0, g.y1)
-    /** Bisel exterior: la franja agrandada hacia fuera y por las puntas, con las esquinas suaves. */
+    /** Bisel exterior: solo por fuera de la franja; arriba y abajo lo cierran las líneas horizontales. */
     val rim: Path = run {
-        val yt = g.y0 - g.rimCap; val yb = g.y1 + g.rimCap; val r = g.rimSide
+        val r = g.rimSide
         roundedPolygon(
             listOf(
-                o(g, g.chevronX(yb, -r), yb), o(g, g.xv - r, g.ym), o(g, g.chevronX(yt, -r), yt),
-                o(g, g.chevronX(yt, g.band), yt), o(g, g.xv + g.band, g.ym), o(g, g.chevronX(yb, g.band), yb),
+                o(g, g.chevronX(g.y1, -r), g.y1), o(g, g.xv - r, g.ym), o(g, g.chevronX(g.y0, -r), g.y0),
+                o(g, g.chevronX(g.y0, 0f), g.y0), o(g, g.xv, g.ym), o(g, g.chevronX(g.y1, 0f), g.y1),
             ),
-            g.dp(9f),
+            g.dp(2f),
         )
     }
     /** Chevrons concéntricos del bisel (de fuera hacia dentro) para su perfil de luz. */
     val rimSteps: List<Path> = List(RIM_STEPS) { i ->
         val inset = -g.rimSide + g.rimSide * (i + 0.5f) / RIM_STEPS
-        chevron(g, inset, g.y0 - g.rimCap * 3, g.y1 + g.rimCap * 3)
+        chevron(g, inset, g.y0 - g.rimSide, g.y1 + g.rimSide)
     }
     val rimStroke = Stroke(g.rimSide / RIM_STEPS + 1f)
     /** Filo de luz a lo largo del borde exterior del bisel. */
-    val rimEdge = chevron(g, -g.rimSide + g.dp(2.5f), g.y0 - g.rimCap + g.dp(4f), g.y1 + g.rimCap - g.dp(4f))
-    val inner = chevron(g, g.band, g.y0, g.y1)
+    val rimEdge = chevron(g, -g.rimSide + g.dp(2.5f), g.y0, g.y1)
+    val inner = chevronF(g, 1f, g.y0, g.y1)
     /** Trazado del relleno: se reutiliza en cada fotograma. */
     val filled = Path()
     val shimmer = Path()
@@ -1071,9 +1087,10 @@ private class FramePaths(g: GeoPx, val mirrored: Boolean) {
         add(o(g, g.chevronX(yBottom, 0f), yBottom))
         if (crosses) add(o(g, g.xv, g.ym))
         add(o(g, g.chevronX(yTop, 0f), yTop))
-        add(o(g, g.chevronX(yTop, width), yTop))
-        if (crosses) add(o(g, g.xv + width, g.ym))
-        add(o(g, g.chevronX(yBottom, width), yBottom))
+        val t = width / g.band
+        add(o(g, g.edgeX(yTop, t), yTop))
+        if (crosses) add(o(g, g.edgeX(g.ym, t), g.ym))
+        add(o(g, g.edgeX(yBottom, t), yBottom))
         into.close()
         return into
     }
@@ -1099,22 +1116,13 @@ private fun engravedMask(fractions: List<Float>, level: Float): Int {
 private fun DrawScope.drawFrameBase(g: GeoPx, mirrored: Boolean) {
     val f = g.frame(mirrored)
     fun o(x: Float, y: Float) = Offset(g.mirror(x, mirrored), y)
-    // Líneas horizontales arriba y abajo, en plata, que se pierden hacia el centro.
-    val x0 = g.chevronX(g.y0, 0f)
-    val topEnd = x0 + g.w * 0.17f
-    val bottomEnd = g.w * 0.5f - g.dp(40f)
-    val silver = Color(0xFFC9D6E4)
-    val fade = if (mirrored) listOf(Color.Transparent, silver) else listOf(silver, Color.Transparent)
-    drawLine(Brush.horizontalGradient(fade, o(x0, 0f).x, o(topEnd, 0f).x), o(x0, g.y0), o(topEnd, g.y0), g.dp(2f))
-    drawLine(Brush.horizontalGradient(fade, o(x0, 0f).x, o(bottomEnd, 0f).x), o(g.chevronX(g.y1, 0f), g.y1), o(bottomEnd, g.y1), g.dp(2.5f))
-
     drawRim(g, f)
     drawPath(f.full, Color(0xFF111A24))
     clipPath(f.full) {
         metal(f, SteelMetal, 0.72f)
         // Placa interior: un brillo suave y cálido en la parte baja, como luz sobre metal satinado.
         val glowY = g.ym + g.half * 0.38f
-        val glowC = o(g.chevronX(glowY, g.band * 0.42f), glowY)
+        val glowC = o(g.edgeX(glowY, 0.42f), glowY)
         val glowR = g.band * 1.35f
         drawCircle(
             Brush.radialGradient(0f to Color(0xFFFFF1E4).copy(alpha = 0.30f), 0.45f to SteelMetal.light.copy(alpha = 0.10f), 1f to Color.Transparent, center = glowC, radius = glowR),
@@ -1142,7 +1150,7 @@ private fun DrawScope.drawRim(g: GeoPx, f: FramePaths) {
         Brush.verticalGradient(
             0f to tint(Color(0xFFF7F9FB)), 0.16f to tint(Color(0xFFC3CCD6)), 0.38f to tint(Color(0xFFE6EBF0)),
             0.5f to Color(0xFFFFFFFF), 0.6f to tint(Color(0xFFB4BEC9)), 0.84f to tint(Color(0xFFD9DFE6)), 1f to tint(Color(0xFF9AA5B1)),
-            startY = g.y0 - g.rimCap, endY = g.y1 + g.rimCap,
+            startY = g.y0, endY = g.y1,
         ),
     )
     // Bisel: de un filo casi blanco por fuera a acero más oscuro contra la franja, suavizado.
@@ -1191,7 +1199,7 @@ private fun DrawScope.drawFrameFill(g: GeoPx, mirrored: Boolean, fraction: Float
         )
     }
     // Luz que sale de la barra hacia el centro del indicador, más intensa cuanto más alto el valor.
-    val innerX = g.chevronX(level, g.band)
+    val innerX = g.edgeX(level, 1f)
     val clipLeft = if (mirrored) g.w / 2 else 0f
     val clipRight = if (mirrored) g.w else g.w / 2
     val pool = g.band * (3.2f + 2.8f * fraction)
@@ -1205,7 +1213,7 @@ private fun DrawScope.drawFrameFill(g: GeoPx, mirrored: Boolean, fraction: Float
         )
     }
     // Punta: filo blanco cálido y un foco suave.
-    val tip = o(g.chevronX(level, width * 0.45f), level)
+    val tip = o(g.edgeX(level, width / g.band * 0.45f), level)
     val bloom = g.band * 1.3f
     drawCircle(
         Brush.radialGradient(
@@ -1214,7 +1222,7 @@ private fun DrawScope.drawFrameFill(g: GeoPx, mirrored: Boolean, fraction: Float
         ),
         radius = bloom, center = tip, blendMode = BlendMode.Plus,
     )
-    drawLine(look.tip, o(g.chevronX(level, 0f), level), o(g.chevronX(level, width), level), g.dp(3f), StrokeCap.Round)
+    drawLine(look.tip, o(g.chevronX(level, 0f), level), o(g.edgeX(level, width / g.band), level), g.dp(3f), StrokeCap.Round)
 }
 
 /** Reflejo que recorre la barra hasta el nivel, una y otra vez. */
@@ -1241,11 +1249,21 @@ private fun DrawScope.drawFrameTop(g: GeoPx, mirrored: Boolean, look: MetalLook,
     ticks.forEach { fr ->
         val y = g.y1 - (g.y1 - g.y0) * fr
         val major = fr in marks
-        val len = g.band * if (major) 0.26f else 0.14f
+        val len = g.bandAt(y) * if (major) 0.26f else 0.14f
         val a = o(g.chevronX(y, g.dp(3f)), y); val b = o(g.chevronX(y, len), y)
         drawLine(Color.Black.copy(alpha = 0.45f), a + Offset(0f, g.dp(1.5f)), b + Offset(0f, g.dp(1.5f)), g.dp(2f))
         drawLine(Color.White.copy(alpha = if (major) 0.85f else 0.5f), a, b, g.dp(if (major) 2f else 1.4f))
     }
+
+    // Líneas horizontales arriba y abajo, en plata, que se pierden hacia el centro.
+    // Las líneas arrancan del borde de fuera del bisel: son el principio y el fin de la barra.
+    val x0 = g.chevronX(g.y0, -g.rimSide)
+    val topEnd = x0 + g.w * 0.17f
+    val bottomEnd = g.w * 0.5f - g.dp(40f)
+    val silver = Color(0xFFC9D6E4)
+    val fade = if (mirrored) listOf(Color.Transparent, silver) else listOf(silver, Color.Transparent)
+    drawLine(Brush.horizontalGradient(fade, o(x0, 0f).x, o(topEnd, 0f).x), o(x0, g.y0), o(topEnd, g.y0), g.dp(2f))
+    drawLine(Brush.horizontalGradient(fade, o(x0, 0f).x, o(bottomEnd, 0f).x), o(g.chevronX(g.y1, -g.rimSide), g.y1), o(bottomEnd, g.y1), g.dp(2.5f))
 
     // Bisel cromado: sombra exterior, cuerpo de plata con reflejos y filo de luz; borde interior de acero.
     val outer = f.outer
@@ -1287,7 +1305,7 @@ private fun DrawScope.drawMark(
     // La cifra va centrada en la altura de su marca (el 1 en la raya de 1000 rpm), a la derecha
     // de la raya. Solo la de arriba del todo baja lo justo para no salirse de la franja.
     val cy = y.coerceAtLeast(g.y0 + g.dp(3f) + label.size.height / 2f)
-    val cx = g.chevronX(cy, g.band * 0.60f)
+    val cx = g.edgeX(cy, 0.60f)
     val center = g.mirror(cx, mirrored)
     val topLeft = Offset(center - label.size.width / 2f, cy - label.size.height / 2f)
     if (engraved) drawText(label, color = look.dark.copy(alpha = 0.92f), topLeft = topLeft, shadow = EngraveLight)
@@ -1296,13 +1314,13 @@ private fun DrawScope.drawMark(
 
 /** Barra inclinada de segmentos blancos (combustible o aceite) junto al tramo inferior del chevron. */
 private fun DrawScope.drawMiniBar(g: GeoPx, tm: TextMeasurer, fraction: Float?, labels: List<String>, mirrored: Boolean, style: TextStyle) {
-    val inset = g.band + g.dp(34f)
+    val pad = g.dp(34f)
     val yTop = g.ym + g.dp(26f)
     val yBottom = g.y1 - g.dp(22f)
     val bw = g.dp(10f)
     // Franja continua inclinada como el marco; se llena de forma progresiva hasta [fraction].
     fun strip(from: Float, to: Float) = Path().apply {
-        val xa = g.chevronX(from, inset); val xb = g.chevronX(to, inset)
+        val xa = g.edgeX(from, 1f, pad); val xb = g.edgeX(to, 1f, pad)
         moveTo(g.mirror(xa, mirrored), from); lineTo(g.mirror(xa + bw, mirrored), from)
         lineTo(g.mirror(xb + bw, mirrored), to); lineTo(g.mirror(xb, mirrored), to); close()
     }
@@ -1318,19 +1336,19 @@ private fun DrawScope.drawMiniBar(g: GeoPx, tm: TextMeasurer, fraction: Float?, 
             ),
         )
         // Filo de luz en el nivel.
-        val xl = g.chevronX(yFill, inset)
+        val xl = g.edgeX(yFill, 1f, pad)
         drawLine(Color.White, Offset(g.mirror(xl - g.dp(3f), mirrored), yFill), Offset(g.mirror(xl + bw + g.dp(3f), mirrored), yFill), g.dp(2f))
     }
     // Rayas de 1/4 y 3/4 entre las cifras.
     listOf(0.25f, 0.75f).forEach { q ->
         val y = yBottom - (yBottom - yTop) * q
-        val x = g.chevronX(y, inset)
+        val x = g.edgeX(y, 1f, pad)
         drawLine(Color.Black.copy(alpha = 0.5f), Offset(g.mirror(x, mirrored), y), Offset(g.mirror(x + bw, mirrored), y), g.dp(1.5f))
     }
     labels.forEachIndexed { i, text ->
         val y = yTop + (yBottom - yTop) * i / (labels.size - 1)
         val label = tm.measure(text, style)
-        val x = g.chevronX(y, inset) + bw + g.dp(10f)
+        val x = g.edgeX(y, 1f, pad) + bw + g.dp(10f)
         val left = if (mirrored) g.w - x - label.size.width else x
         drawText(label, color = Color.White, topLeft = Offset(left, y - label.size.height / 2f))
     }
