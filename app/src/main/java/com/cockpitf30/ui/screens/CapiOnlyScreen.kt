@@ -25,9 +25,9 @@ fun CapiOnlyScreen() {
             TopBar("Diagnóstico")
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Acceso solo para el Capi", style = MaterialTheme.typography.headlineMedium, color = Cockpit.Alert)
+                    Text("Acceso solo para Zeus", style = MaterialTheme.typography.headlineMedium, color = Cockpit.Alert)
                     Text(
-                        "Diagnóstico y modo demo están reservados al Capi. Si eres tú, di «soy» y tu nombre para cambiar de conductor.",
+                        "Diagnóstico y modo demo están reservados a Zeus. Si eres tú, di «Hola Athoox» con tu voz, o entra con el PIN en Ajustes, Usuarios.",
                         style = MaterialTheme.typography.bodyLarge, color = Cockpit.TextDim, textAlign = TextAlign.Center,
                     )
                 }

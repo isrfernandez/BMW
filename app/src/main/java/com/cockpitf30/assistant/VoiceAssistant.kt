@@ -756,6 +756,13 @@ object VoiceAssistant {
         if (p.id != cur.id) announceIfFree("Hola, ${com.cockpitf30.system.Profiles.callName(p)}. Te he reconocido ${how.text} y he cargado tus ajustes.")
     }
 
+    /** Ajustes › Usuarios: se ha cambiado el nombre del perfil actual. */
+    fun renamed(context: Context) {
+        app = context.applicationContext
+        Personality.userName = com.cockpitf30.system.Profiles.callName(com.cockpitf30.system.Profiles.current(app))
+        profileVersion.value++
+    }
+
     /** «No soy yo» o al arrancar: pregunta quién conduce y escucha (con Vosk, para oír su voz). */
     fun askWho(context: Context, atStart: Boolean = false) {
         app = context.applicationContext
@@ -1099,41 +1106,33 @@ object VoiceAssistant {
      * «Soy Luis»: pasa al perfil de Luis (con sus ajustes) o se lo crea, y desde ahora le llama así.
      * Al que es nuevo le cuenta qué puede personalizar.
      */
-    private fun switchUser(name: String): String {
+    private fun switchUser(name: String, trusted: Boolean = false, confirmed: Boolean = false): String {
         val cur = com.cockpitf30.system.Profiles.current(app)
-        // El Capi cuyo perfil aún se llama «Capi» y dice «soy Isra»: es ponerle nombre, no otro conductor.
-        if (cur.capi && com.cockpitf30.system.Profiles.norm(cur.name) == "capi" && com.cockpitf30.system.Profiles.find(app, name) == null &&
-            com.cockpitf30.system.Profiles.norm(name) != "capi" && com.cockpitf30.system.Profiles.rename(app, name)) {
-            profileVersion.value++
-            return "De acuerdo. Tu perfil se llama ahora $name, y te reconoceré así. Pero para mí sigues siendo el Capi."
+        // Nombre que no existe: antes de crear (o de poner nombre al primero) se confirma, que el
+        // reconocedor se equivoca («Guerra» por «Isra») y cualquiera podría crear perfiles.
+        if (!trusted && !confirmed && com.cockpitf30.system.Profiles.find(app, name) == null) {
+            conversation.ask(Pending.Confirm(Command.SetName(name, confirmed = true)), System.currentTimeMillis())
+            return if (cur.name.isBlank()) "¿Te llamas $name? Di sí para confirmar, o repite tu nombre."
+            else "No conozco a ningún $name. ¿Creo un perfil nuevo para $name? Di sí para confirmar."
         }
         com.cockpitf30.system.DriverId.answered = true
         com.cockpitf30.system.DriverId.voiceChecked = true
         var verified = ""
-        com.cockpitf30.system.Profiles.find(app, name)?.takeIf { it.id != cur.id }?.let { target ->
+        if (!trusted) com.cockpitf30.system.Profiles.find(app, name)?.takeIf { it.id != cur.id }?.let { target ->
             // La voz de la respuesta, o la del «Hola Athoox» de justo antes.
-            val heard = com.cockpitf30.system.VoicePrint.recent(10_000)
-            val s = com.cockpitf30.system.VoicePrint.score(app, target.id, heard)
-            // El alias del Capi solo vale con su voz (si la ha enseñado).
-            if (target.capi && com.cockpitf30.system.VoicePrint.has(app, target.id)) {
-                if (s == null) {
-                    logState("«soy ${target.name}» sin huella de voz que comparar")
-                    return "No he podido oír bien tu voz. Di: Hola Athoox, y luego: soy ${target.name}."
+            val s = com.cockpitf30.system.VoicePrint.score(app, target.id, com.cockpitf30.system.VoicePrint.recent(10_000))
+            // Al admin se entra con su voz («Hola Athoox») o con el PIN en pantalla, no diciendo su nombre.
+            if (target.capi && (com.cockpitf30.system.VoicePrint.has(app, target.id) || com.cockpitf30.system.Profiles.hasPin(app))) {
+                if (s != null && s >= com.cockpitf30.system.VoicePrint.VERIFY) verified = " Te reconozco la voz."
+                else {
+                    if (s != null) com.cockpitf30.ui.components.AmbientLight.alarm(2_500)
+                    logState("«soy ${target.name}» (Zeus) sin voz que coincida: ${s?.let { "%.2f".format(it) } ?: "sin huella"}")
+                    return "Al perfil de ${target.name} se entra con su voz: basta decir Hola Athoox. O con el PIN en Ajustes, Usuarios."
                 }
-                if (s < com.cockpitf30.system.VoicePrint.VERIFY) {
-                    com.cockpitf30.ui.components.AmbientLight.alarm(2_500)
-                    logState("«soy ${target.name}» rechazado: voz ${"%.2f".format(s)}")
-                    return "Esa no es la voz del Capi. Si de verdad eres tú, entra en Ajustes, Usuarios" +
-                        (if (com.cockpitf30.system.Profiles.hasPin(app)) " con el PIN." else ".")
-                }
-                verified = " Te reconozco la voz."
-            }
-            // Los demás: si la voz no se parece nada a la de ese conductor, no se cambia.
-            if (s != null && s < com.cockpitf30.system.VoicePrint.MISMATCH) {
-                if (target.capi) com.cockpitf30.ui.components.AmbientLight.alarm(2_500)
+            } else if (s != null && s < com.cockpitf30.system.VoicePrint.MISMATCH) {
+                // Los demás: si la voz no se parece nada a la de ese conductor, no se cambia.
                 logState("«soy ${target.name}» rechazado por la voz (${"%.2f".format(s)})")
-                return "No suenas a ${target.name}. Si de verdad eres tú, cámbialo en Ajustes, Usuarios" +
-                    (if (target.capi && com.cockpitf30.system.Profiles.hasPin(app)) ", con el PIN." else ".")
+                return "No suenas a ${target.name}. Si de verdad eres tú, cámbialo en Ajustes, Usuarios."
             }
         }
         saveRecent()
@@ -1152,9 +1151,9 @@ object VoiceAssistant {
         return when (r) {
             com.cockpitf30.system.ProfileSwitch.SAME -> Personality.chat("name.ask", humor())
             com.cockpitf30.system.ProfileSwitch.SWITCHED -> profileBack(Personality.userName ?: name) + verified +
-                (if (now.capi && !com.cockpitf30.system.VoicePrint.has(app, now.id)) " Para que nadie más pueda decir que es tú, enséñame tu voz en Ajustes, Usuarios." else "")
+                (if (now.capi && !com.cockpitf30.system.VoicePrint.has(app, now.id)) " Para entrar solo con tu voz, enséñamela en Ajustes, Usuarios." else "")
             com.cockpitf30.system.ProfileSwitch.CREATED -> "Encantado, $name. He creado tu perfil y desde ahora te llamaré $name. ${PROFILE_HINT}"
-            com.cockpitf30.system.ProfileSwitch.NAMED -> if (now.capi) "Encantado, $name. Eres el primero, así que tienes el rol de Capi: desde ahora te llamaré Capi. ${PROFILE_HINT}"
+            com.cockpitf30.system.ProfileSwitch.NAMED -> if (now.capi) "Encantado, $name. Eres el primero, así que tienes el rol Zeus. ${PROFILE_HINT}"
                 else "${Personality.chat("name.set", humor())} Este es tu perfil. ${PROFILE_HINT}"
         }
     }
@@ -1162,7 +1161,7 @@ object VoiceAssistant {
     private fun deleteUser(c: Command.DeleteUser, now: Long): String {
         // «Borra al Capi» también vale aunque no se diga su nombre.
         val p = com.cockpitf30.system.Profiles.find(app, c.name)
-            ?: com.cockpitf30.system.Profiles.capi(app).takeIf { com.cockpitf30.system.Profiles.norm(c.name) in setOf("capi", "el capi", "creador", "tu creador") }
+            ?: com.cockpitf30.system.Profiles.capi(app).takeIf { com.cockpitf30.system.Profiles.norm(c.name) in setOf("capi", "el capi", "Zeus", "Zeus", "Zeusistrador", "Zeusistrador", "creador", "tu creador") }
             ?: return "No tengo ningún usuario que se llame ${c.name}."
         if (p.capi) {
             com.cockpitf30.ui.components.AmbientLight.alarm()
@@ -1192,15 +1191,10 @@ object VoiceAssistant {
 
     private fun whoIsCapi(): String {
         val capi = com.cockpitf30.system.Profiles.capi(app)?.takeIf { it.name.isNotBlank() }
-            ?: return "Aún no hay Capi. El primero que me diga su nombre lo será."
+            ?: return "Aún no hay Zeus. El primero que me diga su nombre lo será."
         val cur = com.cockpitf30.system.Profiles.current(app)
-        // Si se llama Capi (como el rol), sin «el Capi es Capi».
-        val named = com.cockpitf30.system.Profiles.norm(capi.name) != "capi"
-        return when {
-            capi.id == cur.id -> "El Capi eres tú. Mi creador, nada menos."
-            named -> "El Capi es ${capi.name}. Es quien me creó, y su cuenta no se toca."
-            else -> "El Capi, mi creador. Ahora no conduce él, y su cuenta no se toca."
-        }
+        return if (capi.id == cur.id) "El rol Zeus es tuyo, ${capi.name}. Mi creador, nada menos."
+        else "El rol Zeus es de ${capi.name}. Es quien me creó, y su cuenta no se toca."
     }
 
     /** «¿Qué preferencias tiene Luis?»: lo más importante de su perfil, dicho corto. */
@@ -1211,7 +1205,7 @@ object VoiceAssistant {
         val v = com.cockpitf30.system.Profiles.values(app, p.id)
         val s = com.cockpitf30.system.Profiles.summary(v).toMap()
         val who = if (p.id == cur.id) "Tú tienes" else "${p.name.ifBlank { "Ese perfil" }} tiene"
-        val role = if (p.capi) " Y es el Capi." else ""
+        val role = if (p.capi) " Y tiene el rol Zeus." else ""
         return "$who el humor al ${s["Humor"]}, voz ${s["Voz"]?.lowercase()}, copiloto ${s["Copiloto"]?.lowercase()}, " +
             "avisos en ruta: ${s["Avisos en ruta"]?.lowercase()}, y pantalla ${s["Pantalla"]?.lowercase()}.$role " +
             "El detalle está en Ajustes, Usuarios."
@@ -1254,8 +1248,8 @@ object VoiceAssistant {
         com.cockpitf30.radio.Radio.reloadProfile()
         profileVersion.value++
         announceIfFree(
-            if (now.name.isBlank()) "Cuenta del Capi borrada. Empiezo de cero: el primero que me diga su nombre será el nuevo Capi."
-            else "Cuenta borrada. Ahora el Capi es ${now.name}. Ha sido un honor."
+            if (now.name.isBlank()) "Cuenta de Zeus borrada. Empiezo de cero: el primero que me diga su nombre será el nuevo Zeus."
+            else "Cuenta borrada. Ahora Zeus es ${now.name}. Ha sido un honor."
         )
     }
 
@@ -1273,9 +1267,10 @@ object VoiceAssistant {
     val profileVersion = MutableStateFlow(0)
 
     /** Ajustes › Conductor: cambia de usuario y lo dice. */
-    fun selectUser(context: Context, name: String) {
+    /** Ajustes › Usuarios: «Usar este perfil». [trusted] si ya se ha comprobado (PIN del admin). */
+    fun selectUser(context: Context, name: String, trusted: Boolean = false) {
         app = context.applicationContext
-        val text = switchUser(name)
+        val text = switchUser(name, trusted)
         announceIfFree(text)
     }
 
@@ -1497,7 +1492,7 @@ object VoiceAssistant {
     private fun perform(c: Command, now: Long = System.currentTimeMillis()): String = when (c) {
         is Command.Open -> if (c.screen == Screen.DIAGNOSTICS && !com.cockpitf30.system.Profiles.current(app).capi) {
             com.cockpitf30.ui.components.AmbientLight.alarm(3_000)
-            joke("El diagnóstico y el modo demo son solo para el Capi", null)
+            joke("El diagnóstico y el modo demo son solo para Zeus", null)
         } else {
             open(c.screen, force = true)
             when (c.screen) {
@@ -1586,15 +1581,13 @@ object VoiceAssistant {
             conversation.ask(Pending.Confirm(Command.Chat("riddle")), now)
             "$r ${Personality.line("offer.riddle")}"
         }
-        is Command.SetName -> switchUser(c.name)
+        is Command.SetName -> switchUser(c.name, confirmed = c.confirmed)
         is Command.DeleteUser -> deleteUser(c, now)
         Command.ListUsers -> listUsers()
         Command.WhoIsCapi -> whoIsCapi()
         is Command.UserPrefs -> userPrefs(c.name)
         is Command.Parking -> parking(c.send)
-        Command.AskName -> com.cockpitf30.system.Profiles.current(app).takeIf { it.capi && com.cockpitf30.system.Profiles.norm(it.name) != "capi" && it.name.isNotBlank() }
-            ?.let { "Tu perfil se llama ${it.name}, pero para mí eres el Capi." }
-            ?: Personality.chat(if (Personality.userName.isNullOrBlank()) "name.unknown" else "name.ask", humor())
+        Command.AskName -> Personality.chat(if (Personality.userName.isNullOrBlank()) "name.unknown" else "name.ask", humor())
         is Command.Copilot -> {
             val on = c.on ?: true
             settings().copilotEnabled = on

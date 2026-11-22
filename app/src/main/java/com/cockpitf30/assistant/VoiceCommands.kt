@@ -53,7 +53,7 @@ sealed interface Command {
     /** El tiempo de otro día: 1 = mañana, 2 = pasado mañana. */
     data class WeatherDay(val offset: Int) : Command
     /** «Me llamo Israel». */
-    data class SetName(val name: String) : Command
+    data class SetName(val name: String, val confirmed: Boolean = false) : Command
     /** «¿Cómo me llamo?». */
     data object AskName : Command
     /** «Borra el usuario Luis»; [confirmed] tras el «sí». */
@@ -379,7 +379,7 @@ object VoiceCommands {
         if (has("de que hablabamos", "que te he preguntado", "que te he pedido", "de que hemos hablado", "que hemos hablado")) return Command.Recap
         // Usuarios: borrar uno y la lista.
         Regex("^(?:borra|borrar|elimina|eliminar|quita|quitar) (?:(?:el|al) )?(?:usuario|perfil|conductor)? ?(?:de |a )?([a-zñ ]{2,30})$").find(t)
-            ?.takeIf { Regex("\\b(?:usuario|perfil|conductor|capi|creador)\\b").containsMatchIn(t) || Regex("^(?:borra|elimina) a ").containsMatchIn(t) }
+            ?.takeIf { Regex("\\b(?:usuario|perfil|conductor|capi|zeus|admin|administrador|creador)\\b").containsMatchIn(t) || Regex("^(?:borra|elimina) a ").containsMatchIn(t) }
             ?.let { m ->
                 val name = m.groupValues[1].trim().removePrefix("de ").removePrefix("a ").trim()
                 if (name.isNotBlank()) return Command.DeleteUser(name.split(' ').joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } })
@@ -393,7 +393,7 @@ object VoiceCommands {
                 else -> null
             })
         }
-        if (has("quien es el capi", "quien es tu capi", "quien es tu creador", "quien manda aqui", "quien es el jefe")) return Command.WhoIsCapi
+        if (has("quien es el capi", "quien es tu capi", "quien es zeus", "quien es el zeus", "quien es el admin", "quien es el administrador", "quien es tu administrador", "quien es tu creador", "quien manda aqui", "quien es el jefe")) return Command.WhoIsCapi
         // Solo como pregunta: «abre ajustes de conducción» es otra cosa.
         Regex("(?:preferencias|ajustes|configuracion) (?:tiene |de )([a-zñ]{2,20})$").find(t)
             ?.takeIf { Regex("^(?:que|cuales|como|dime|cuentame|sabes)\\b").containsMatchIn(t) }

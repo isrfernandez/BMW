@@ -58,7 +58,9 @@ class DriverIdTest {
         assertEquals("Capi", Profiles.callName(capi))
         assertTrue(Profiles.rename(ctx, "Isra"))
         assertEquals("Isra", Profiles.current(ctx).name)
-        assertEquals("Capi", Profiles.callName(Profiles.current(ctx)))
+        // El rol Zeus no cambia el nombre: le llama como se llame su perfil.
+        assertEquals("Isra", Profiles.callName(Profiles.current(ctx)))
+        assertTrue(Profiles.current(ctx).capi)
         Profiles.switchTo(ctx, "Luis")
         assertEquals("Luis", Profiles.callName(Profiles.current(ctx)))
         DriverId.setWifi(ctx, capi.id, "iPhone de Isra")

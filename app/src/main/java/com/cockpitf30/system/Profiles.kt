@@ -99,9 +99,8 @@ object Profiles {
         }
     }
 
-    /** Cómo le llama Athoox: el Capi es «Capi» (se llame como se llame su perfil); los demás, por su nombre. */
-    fun callName(p: Profile): String? = if (p.capi) CAPI_CALL else p.name.ifBlank { null }
-    const val CAPI_CALL = "Capi"
+    /** Cómo le llama Athoox: por el nombre de su perfil (el admin elige el suyo). */
+    fun callName(p: Profile): String? = p.name.ifBlank { null }
 
     /** Cambia el nombre del perfil actual (false si ya hay otro con ese nombre). */
     fun rename(ctx: Context, name: String): Boolean {

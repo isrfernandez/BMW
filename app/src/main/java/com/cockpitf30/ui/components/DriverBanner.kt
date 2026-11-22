@@ -38,8 +38,7 @@ fun DriverBanner(modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(22.dp),
         ) {
             Column {
-                val call = if (s.capi) Profiles.CAPI_CALL else s.name
-                Text("Conduce $call" + if (s.capi && Profiles.norm(s.name) != "capi") " (${s.name})" else "", style = MaterialTheme.typography.titleMedium, color = Cockpit.Text)
+                Text("Conduce ${s.name}" + if (s.capi) " · Zeus" else "", style = MaterialTheme.typography.titleMedium, color = Cockpit.Text)
                 Text(if (s.how == DriverId.How.LAST) "Último conductor" else "Reconocido ${s.how.text}", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
             }
             FocusTile(onClick = { VoiceAssistant.askWho(ctx) }) {

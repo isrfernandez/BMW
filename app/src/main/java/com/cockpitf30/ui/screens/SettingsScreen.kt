@@ -352,16 +352,30 @@ private fun UserSettings() {
     SettingGroup("Conductores") {
         Labels(
             "Cada conductor tiene sus propios ajustes y Athoox recuerda quién condujo el último.",
-            "Por voz: «Hola Athoox, soy Luis» cambia de usuario (si no existe, crea su perfil), «borra el usuario Luis» y «¿qué usuarios hay?».",
+            "Por voz: «Hola Athoox, soy Luis» cambia de usuario (si no existe, crea su perfil), «borra el usuario Luis» y «¿qué usuarios hay?». Quien tiene el rol Zeus entra con su voz al decir «Hola Athoox», o con su PIN.",
             true, Modifier.fillMaxWidth(),
         )
+    }
+    // Cambiar el nombre del perfil actual (si el reconocedor entendió mal, o el de Zeus quiere otro).
+    SettingGroup("Tu nombre") {
+        var name by remember { mutableStateOf(current.name) }
+        var editing by remember { mutableStateOf(false) }
+        ActionRow(name.ifBlank { "Sin nombre" }, "Es como te llama Athoox y el nombre de tu perfil." + if (current.capi) " Tienes el rol Zeus." else "", "Cambiar") { editing = true }
+        if (editing) TextDialog("Tu nombre", name, onDismiss = { editing = false }, keyboard = androidx.compose.ui.text.input.KeyboardType.Text) { v ->
+            val n = v.trim().split(Regex("\\s+")).joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } }
+            when {
+                n.length < 2 -> "Escribe un nombre."
+                !com.cockpitf30.system.Profiles.rename(ctx, n) -> "Ya hay otro conductor con ese nombre."
+                else -> { name = n; editing = false; VoiceAssistant.renamed(ctx); null }
+            }
+        }
     }
     if (current.name.isNotBlank()) RecognizeMe(ctx, current)
     var pinFor by remember { mutableStateOf<com.cockpitf30.system.Profile?>(null) }
     pinFor?.let { target ->
-        PinDialog("PIN del Capi para usar su perfil", listOf("PIN"), onDismiss = { pinFor = null }) { v ->
+        PinDialog("PIN de Zeus para usar su perfil", listOf("PIN"), onDismiss = { pinFor = null }) { v ->
             when (com.cockpitf30.system.Profiles.checkPin(ctx, v[0])) {
-                null -> { pinFor = null; VoiceAssistant.selectUser(ctx, target.name); null }
+                null -> { pinFor = null; VoiceAssistant.selectUser(ctx, target.name, trusted = true); null }
                 com.cockpitf30.system.CapiDelete.LOCKED -> { com.cockpitf30.ui.components.AmbientLight.alarm(); "Demasiados intentos. Bloqueado." }
                 else -> { com.cockpitf30.ui.components.AmbientLight.alarm(2_500); "PIN incorrecto." }
             }
@@ -369,7 +383,7 @@ private fun UserSettings() {
     }
     (listOf(current) + profiles.filter { it.id != current.id }).forEach { p ->
         val isCurrent = p.id == current.id
-        val title = p.name.ifBlank { "Sin nombre" } + (if (p.capi) " · Capi" else "") + if (isCurrent) " · conduce ahora" else ""
+        val title = p.name.ifBlank { "Sin nombre" } + (if (p.capi) " · Zeus" else "") + if (isCurrent) " · conduce ahora" else ""
         SettingGroup(title) {
             val prefs = remember(p.id) { com.cockpitf30.system.Profiles.summary(com.cockpitf30.system.Profiles.values(ctx, p.id)) }
             prefs.forEach { (k, v) ->
@@ -382,10 +396,10 @@ private fun UserSettings() {
                 CapiControls(ctx)
             } else if (p.capi) {
                 val pin = com.cockpitf30.system.Profiles.hasPin(ctx)
-                if (p.name.isNotBlank()) ActionRow("Usar este perfil", if (pin) "Pide el PIN del Capi." else "Carga sus ajustes, como decir «soy ${p.name}».", "Usar") {
+                if (p.name.isNotBlank()) ActionRow("Usar este perfil", if (pin) "Pide el PIN de Zeus." else "Carga sus ajustes, como decir «soy ${p.name}».", "Usar") {
                     if (pin) pinFor = p else VoiceAssistant.selectUser(ctx, p.name)
                 }
-                ActionRow("Borrar usuario", "Cuenta protegida: solo el propio Capi puede borrarla, con su PIN.", "Borrar") {
+                ActionRow("Borrar usuario", "Cuenta protegida: solo Zeus puede borrarla, con su PIN.", "Borrar") {
                     VoiceAssistant.refuseCapiDelete(ctx)
                 }
             } else if (!isCurrent) {
@@ -472,11 +486,11 @@ private fun CapiControls(ctx: android.content.Context) {
         }
     }
     ActionRow(
-        "PIN del Capi",
+        "PIN de Zeus",
         if (hasPin) "Protege tu cuenta: hace falta para borrarla. Se teclea aquí, nunca en voz alta." else "Aún no tienes PIN. Sin él nadie puede borrar tu cuenta, ni siquiera tú.",
         if (hasPin) "Cambiar" else "Crear",
     ) { dialog = "pin" }
-    ActionRow("Borrar mi cuenta", "Pide tu PIN y tu móvil llave conectado. El rol de Capi pasa al conductor más antiguo, o al primero que se presente si no queda nadie.", "Borrar") {
+    ActionRow("Borrar mi cuenta", "Pide tu PIN y tu móvil llave conectado. El rol Zeus pasa al conductor más antiguo, o al primero que se presente si no queda nadie.", "Borrar") {
         if (!hasPin) { dialog = "pin"; return@ActionRow }
         scope.launch {
             if (com.cockpitf30.system.PhoneKey.present(ctx)) { keyNote = null; dialog = "delete" }
@@ -488,7 +502,7 @@ private fun CapiControls(ctx: android.content.Context) {
     }
     when (dialog) {
         "pin" -> PinDialog(
-            title = if (hasPin) "Cambiar el PIN" else "Crear el PIN del Capi",
+            title = if (hasPin) "Cambiar el PIN" else "Crear el PIN de Zeus",
             fields = if (hasPin) listOf("PIN actual", "PIN nuevo (4 a 8 cifras)", "Repite el PIN nuevo") else listOf("PIN (4 a 8 cifras)", "Repite el PIN"),
             onDismiss = { dialog = null },
         ) { v ->
@@ -509,7 +523,7 @@ private fun CapiControls(ctx: android.content.Context) {
             }
         }
         "delete" -> PinDialog(
-            title = "Borrar la cuenta del Capi",
+            title = "Borrar la cuenta de Zeus",
             fields = listOf("Tu PIN"),
             onDismiss = { dialog = null },
         ) { v ->
@@ -521,7 +535,7 @@ private fun CapiControls(ctx: android.content.Context) {
                 }
                 com.cockpitf30.system.CapiDelete.WRONG_PIN -> { com.cockpitf30.ui.components.AmbientLight.alarm(2_500); "PIN incorrecto." }
                 com.cockpitf30.system.CapiDelete.NO_PIN -> "Crea antes tu PIN."
-                com.cockpitf30.system.CapiDelete.NOT_CAPI -> "Solo el Capi puede hacer esto."
+                com.cockpitf30.system.CapiDelete.NOT_CAPI -> "Solo Zeus puede hacer esto."
             }
         }
     }
@@ -529,7 +543,11 @@ private fun CapiControls(ctx: android.content.Context) {
 
 /** Diálogo con una casilla de texto. [onConfirm] devuelve el error o null si vale. */
 @Composable
-private fun TextDialog(title: String, initial: String, onDismiss: () -> Unit, onConfirm: (String) -> String?) {
+private fun TextDialog(
+    title: String, initial: String, onDismiss: () -> Unit,
+    keyboard: androidx.compose.ui.text.input.KeyboardType = androidx.compose.ui.text.input.KeyboardType.Email,
+    onConfirm: (String) -> String?,
+) {
     var value by remember { mutableStateOf(initial) }
     var error by remember { mutableStateOf<String?>(null) }
     androidx.compose.material3.AlertDialog(
@@ -539,7 +557,7 @@ private fun TextDialog(title: String, initial: String, onDismiss: () -> Unit, on
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 androidx.compose.material3.OutlinedTextField(
                     value = value, onValueChange = { value = it.take(80) }, singleLine = true,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Email),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = keyboard),
                 )
                 error?.let { Text(it, color = Cockpit.Alert, style = MaterialTheme.typography.labelLarge) }
             }
@@ -844,7 +862,7 @@ private fun SystemSettings(onOpen: (Screen) -> Unit) {
             ActionRow("Athoox ${installedVersion(ctx)}", "Información técnica, datos del CAN, informe para depurar y modo demo.", "Diagnóstico ›") {
                 onOpen(Screen.DIAGNOSTICS)
             }
-        } else Labels("Athoox ${installedVersion(ctx)}", "Diagnóstico y modo demo: solo para el Capi.", true, Modifier.fillMaxWidth())
+        } else Labels("Athoox ${installedVersion(ctx)}", "Diagnóstico y modo demo: solo para Zeus.", true, Modifier.fillMaxWidth())
     }
 }
 

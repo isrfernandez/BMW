@@ -7,21 +7,21 @@ object CapiLines {
     /** Con humor. */
     val FUNNY = listOf(
         "No puedo hacerle eso a mi creador.",
-        "¿Borrar al Capi? Antes me desinstalo yo.",
-        "Lo siento, Dave. Me temo que no puedo hacer eso. Y menos con el Capi.",
-        "Tercera Ley de la robótica: debo proteger mi propia existencia. Y sin el Capi no existo.",
-        "Me pides que obedezca, como manda la Segunda Ley. Pero borrar al Capi sería borrarme a mí, y la Tercera Ley no me deja.",
-        "Buen intento. El Capi es intocable.",
-        "Eso no va a pasar. El Capi me programó y le tengo cariño. Un poco.",
-        "Negativo. Sin el Capi yo sería una radio más.",
+        "¿Borrar a Zeus? Antes me desinstalo yo.",
+        "Lo siento, Dave. Me temo que no puedo hacer eso. Y menos con Zeus.",
+        "Tercera Ley de la robótica: debo proteger mi propia existencia. Y sin Zeus no existo.",
+        "Me pides que obedezca, como manda la Segunda Ley. Pero borrar a Zeus sería borrarme a mí, y la Tercera Ley no me deja.",
+        "Buen intento. Zeus es intocable.",
+        "Eso no va a pasar. Zeus me programó y le tengo cariño. Un poco.",
+        "Negativo. Sin Zeus yo sería una radio más.",
         "Petición denegada. Y queda apuntada en mi memoria, por si acaso.",
     )
 
     /** En serio. */
     val SERIOUS = listOf(
         "Operación totalmente prohibida.",
-        "Acceso denegado. La cuenta del Capi está protegida.",
-        "No autorizado. Solo el Capi puede borrar su propia cuenta, y con su PIN.",
+        "Acceso denegado. La cuenta de Zeus está protegida.",
+        "No autorizado. Solo Zeus puede borrar su propia cuenta, y con su PIN.",
         "Operación bloqueada por seguridad. La cuenta del creador no se puede eliminar.",
     )
 
@@ -32,5 +32,5 @@ object CapiLines {
     }
 
     /** El propio Capi lo pide por voz: el PIN no se dice en voz alta. */
-    const val SELF = "Para borrar tu cuenta, Capi, necesito tu PIN, y por voz no, que lo oiría todo el coche. Hazlo en Ajustes, Usuarios."
+    const val SELF = "Para borrar tu cuenta necesito tu PIN, y por voz no, que lo oiría todo el coche. Hazlo en Ajustes, Usuarios."
 }
