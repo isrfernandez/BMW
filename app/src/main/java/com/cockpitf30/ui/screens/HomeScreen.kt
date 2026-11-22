@@ -132,7 +132,10 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
     val weather by WeatherRepository.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val settings = remember { AppSettings(context) }
-    val cards = remember {
+    // Diagnóstico solo para el Capi (se vuelve a mirar al cambiar de conductor).
+    val profileVersion by com.cockpitf30.assistant.VoiceAssistant.profileVersion.collectAsStateWithLifecycle()
+    val capi = remember(profileVersion) { com.cockpitf30.system.Profiles.current(context).capi }
+    val cards = remember(capi) {
         listOf(
             // Antes "Música" (ya está en la barra lateral): ahora el asistente de voz «Hola Athos».
             Card("assistant", "Hola Athoox", "Asistente de voz", CardTheme.ASSIST, { VoiceAssistant.tap(it) }),
@@ -152,10 +155,10 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
             Card("phone", "Teléfono", "Marcador y contactos", CardTheme.PHONE, { onOpen(Screen.PHONE) }),
             Card("service", "Mantenimiento", "Aceite, neumáticos e ITV", CardTheme.SERVICE, { onOpen(Screen.MAINTENANCE) }, Alignment.BottomStart) { ServiceBody() },
             Card("diag", "Diagnóstico", "Información técnica y depuración", CardTheme.DIAG, { onOpen(Screen.DIAGNOSTICS) }),
-        ).associateBy { it.id }
+        ).filter { it.id != "diag" || capi }.associateBy { it.id }
     }
     // Quien tenía guardado el orden con "nav" o "music" encuentra la gasolinera o el asistente en el mismo sitio.
-    var order by remember {
+    var order by remember(capi) {
         mutableStateOf(CardOrder.merge(settings.cardOrder.map { when (it) { "nav" -> "fuel"; "music" -> "assistant"; else -> it } }, cards.keys.toList()))
     }
     val fuel = rememberFuelView()

@@ -1025,6 +1025,47 @@ object VoiceAssistant {
         return "Hay ${all.size} usuarios: $list. Ahora conduce ${cur.name.ifBlank { "alguien sin nombre" }}."
     }
 
+    private fun whoIsCapi(): String {
+        val capi = com.cockpitf30.system.Profiles.capi(app)?.takeIf { it.name.isNotBlank() }
+            ?: return "Aún no hay Capi. El primero que me diga su nombre lo será."
+        val cur = com.cockpitf30.system.Profiles.current(app)
+        return if (capi.id == cur.id) "El Capi eres tú, ${capi.name}. Mi creador, nada menos."
+        else "El Capi es ${capi.name}. Es quien me creó, y su cuenta no se toca."
+    }
+
+    /** «¿Qué preferencias tiene Luis?»: lo más importante de su perfil, dicho corto. */
+    private fun userPrefs(name: String?): String {
+        val cur = com.cockpitf30.system.Profiles.current(app)
+        val p = if (name == null) cur else com.cockpitf30.system.Profiles.find(app, name)
+            ?: return "No tengo ningún usuario que se llame $name."
+        val v = com.cockpitf30.system.Profiles.values(app, p.id)
+        val s = com.cockpitf30.system.Profiles.summary(v).toMap()
+        val who = if (p.id == cur.id) "Tú tienes" else "${p.name.ifBlank { "Ese perfil" }} tiene"
+        val role = if (p.capi) " Y es el Capi." else ""
+        return "$who el humor al ${s["Humor"]}, voz ${s["Voz"]?.lowercase()}, copiloto ${s["Copiloto"]?.lowercase()}, " +
+            "avisos en ruta: ${s["Avisos en ruta"]?.lowercase()}, y pantalla ${s["Pantalla"]?.lowercase()}.$role " +
+            "El detalle está en Ajustes, Usuarios."
+    }
+
+    /** «¿Dónde he aparcado?», «envía la ubicación del coche». */
+    private fun parking(send: ParkingSend?): String {
+        val spot = com.cockpitf30.nav.ParkingSpot.let { it.load(app); it.spot.value }
+            ?: return "Aún no tengo guardado dónde está el coche. Lo guardo cuando llevas unos segundos parado con buena señal de GPS."
+        com.cockpitf30.nav.ParkingSpot.showing.value = true
+        val whenS = "desde el ${spot.day()} a las ${spot.time()}"
+        return when (send) {
+            ParkingSend.EMAIL -> {
+                val to = com.cockpitf30.nav.ParkingSpot.email(app)
+                    ?: return "No tengo ningún correo guardado. Escanea el QR de la pantalla, o añade un correo en Ajustes, Conducción."
+                if (com.cockpitf30.nav.ParkingSpot.sendEmail(app)) "Abro el correo para $to con la ubicación. Solo falta enviarlo."
+                else "En la radio no hay app de correo. Escanea el QR con el móvil y lo tienes en el mapa."
+            }
+            ParkingSend.SHARE -> if (com.cockpitf30.nav.ParkingSpot.share(app)) "Elige con qué app la mando."
+                else "En la radio no hay apps para compartir. Escanea el QR con el móvil."
+            null -> "El coche está aparcado $whenS. Te enseño el QR: escanéalo con el móvil y se abre en el mapa."
+        }
+    }
+
     /** Ajustes › Usuarios: alguien ha pulsado «Borrar» en el Capi. */
     fun refuseCapiDelete(context: Context) {
         app = context.applicationContext
@@ -1284,7 +1325,10 @@ object VoiceAssistant {
     private fun joke(plain: String, key: String?) = Personality.spice(plain, humor(), key)
 
     private fun perform(c: Command, now: Long = System.currentTimeMillis()): String = when (c) {
-        is Command.Open -> {
+        is Command.Open -> if (c.screen == Screen.DIAGNOSTICS && !com.cockpitf30.system.Profiles.current(app).capi) {
+            com.cockpitf30.ui.components.AmbientLight.alarm(3_000)
+            joke("El diagnóstico y el modo demo son solo para el Capi", null)
+        } else {
             open(c.screen, force = true)
             when (c.screen) {
                 Screen.FUEL -> joke("Te enseño las gasolineras", "open.fuel")
@@ -1375,6 +1419,9 @@ object VoiceAssistant {
         is Command.SetName -> switchUser(c.name)
         is Command.DeleteUser -> deleteUser(c, now)
         Command.ListUsers -> listUsers()
+        Command.WhoIsCapi -> whoIsCapi()
+        is Command.UserPrefs -> userPrefs(c.name)
+        is Command.Parking -> parking(c.send)
         Command.AskName -> Personality.chat(if (Personality.userName.isNullOrBlank()) "name.unknown" else "name.ask", humor())
         is Command.Copilot -> {
             val on = c.on ?: true

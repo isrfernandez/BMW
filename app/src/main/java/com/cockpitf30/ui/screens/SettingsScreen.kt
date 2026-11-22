@@ -23,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -397,13 +398,38 @@ private fun UserSettings() {
 private fun CapiControls(ctx: android.content.Context) {
     var dialog by remember { mutableStateOf<String?>(null) }
     val hasPin = remember(dialog) { com.cockpitf30.system.Profiles.hasPin(ctx) }
+    val scope = rememberCoroutineScope()
+    var keyLabel by remember { mutableStateOf(com.cockpitf30.system.PhoneKey.registered(ctx)) }
+    var keyNote by remember { mutableStateOf<String?>(null) }
+    // Segundo factor: el móvil del Capi conectado por Bluetooth.
+    ActionRow(
+        "Móvil llave",
+        keyNote ?: (keyLabel?.let { "$it. Para borrar tu cuenta tiene que estar conectado, además del PIN." }
+            ?: "Ninguno. Conecta tu móvil por Bluetooth y pulsa Registrar: será la llave para borrar tu cuenta."),
+        if (keyLabel == null) "Registrar" else "Cambiar",
+    ) {
+        scope.launch {
+            val phones = com.cockpitf30.system.PhoneKey.connected(ctx)
+            val first = phones.firstOrNull()
+            keyNote = if (first != null && com.cockpitf30.system.PhoneKey.register(ctx, first)) {
+                keyLabel = first.label; null
+            } else "No veo ningún móvil conectado. Si el teléfono está conectado y aun así no sale, esta radio no deja verlo: entonces vale solo el PIN."
+        }
+    }
     ActionRow(
         "PIN del Capi",
         if (hasPin) "Protege tu cuenta: hace falta para borrarla. Se teclea aquí, nunca en voz alta." else "Aún no tienes PIN. Sin él nadie puede borrar tu cuenta, ni siquiera tú.",
         if (hasPin) "Cambiar" else "Crear",
     ) { dialog = "pin" }
-    ActionRow("Borrar mi cuenta", "Pide tu PIN. El rol de Capi pasa al conductor más antiguo, o al primero que se presente si no queda nadie.", "Borrar") {
-        dialog = if (hasPin) "delete" else "pin"
+    ActionRow("Borrar mi cuenta", "Pide tu PIN y tu móvil llave conectado. El rol de Capi pasa al conductor más antiguo, o al primero que se presente si no queda nadie.", "Borrar") {
+        if (!hasPin) { dialog = "pin"; return@ActionRow }
+        scope.launch {
+            if (com.cockpitf30.system.PhoneKey.present(ctx)) { keyNote = null; dialog = "delete" }
+            else {
+                com.cockpitf30.ui.components.AmbientLight.alarm(3_000)
+                keyNote = "Para borrar tu cuenta conecta antes tu móvil llave ($keyLabel) por Bluetooth."
+            }
+        }
     }
     when (dialog) {
         "pin" -> PinDialog(
@@ -417,7 +443,14 @@ private fun CapiControls(ctx: android.content.Context) {
                 new != again -> "Los dos PIN no coinciden."
                 hasPin && com.cockpitf30.system.Profiles.lockLeftMs(ctx) > 0 -> "Demasiados intentos. Espera unos minutos."
                 !com.cockpitf30.system.Profiles.setPin(ctx, new, old) -> "El PIN actual no es correcto."
-                else -> { dialog = null; null }
+                else -> {
+                    dialog = null
+                    // Si aún no hay llave, el móvil conectado ahora se queda como llave.
+                    if (keyLabel == null) scope.launch {
+                        com.cockpitf30.system.PhoneKey.connected(ctx).firstOrNull()?.let { if (com.cockpitf30.system.PhoneKey.register(ctx, it)) keyLabel = it.label }
+                    }
+                    null
+                }
             }
         }
         "delete" -> PinDialog(
@@ -437,6 +470,28 @@ private fun CapiControls(ctx: android.content.Context) {
             }
         }
     }
+}
+
+/** Diálogo con una casilla de texto. [onConfirm] devuelve el error o null si vale. */
+@Composable
+private fun TextDialog(title: String, initial: String, onDismiss: () -> Unit, onConfirm: (String) -> String?) {
+    var value by remember { mutableStateOf(initial) }
+    var error by remember { mutableStateOf<String?>(null) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                androidx.compose.material3.OutlinedTextField(
+                    value = value, onValueChange = { value = it.take(80) }, singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Email),
+                )
+                error?.let { Text(it, color = Cockpit.Alert, style = MaterialTheme.typography.labelLarge) }
+            }
+        },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = { error = onConfirm(value) }) { Text("Guardar") } },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancelar") } },
+    )
 }
 
 /** Diálogo con [fields] casillas de PIN (cifras ocultas). [onConfirm] devuelve el error o null si vale. */
@@ -503,6 +558,25 @@ private fun DrivingSettings(onOpen: (Screen) -> Unit) {
         var noTrip by remember { mutableStateOf(false) }
         ActionRow("Ver el resumen", if (noTrip) "Aún no hay ningún trayecto guardado: sale en cuanto hagas el primero." else "El del trayecto en curso o el último.", "Ver") {
             noTrip = !TripComputer.showSummary(System.currentTimeMillis())
+        }
+    }
+    SettingGroup("Coche aparcado") {
+        val spot by com.cockpitf30.nav.ParkingSpot.spot.collectAsStateWithLifecycle()
+        ActionRow(
+            "Dónde está el coche",
+            spot?.let { "Guardado el ${it.day()} a las ${it.time()}. Sale como QR para el móvil y se puede compartir." }
+                ?: "Se guarda solo al llevar unos segundos parado con buena señal de GPS.",
+            "Ver QR",
+        ) { com.cockpitf30.nav.ParkingSpot.showing.value = true }
+        var email by remember { mutableStateOf(com.cockpitf30.nav.ParkingSpot.email(ctx)) }
+        var editing by remember { mutableStateOf(false) }
+        ActionRow("Correo para la ubicación", email ?: "Ninguno. Con un correo guardado, «Enviar» abre el correo ya escrito.", if (email == null) "Añadir" else "Cambiar") { editing = true }
+        if (editing) TextDialog("Correo para la ubicación del coche", email.orEmpty(), onDismiss = { editing = false }) { v ->
+            when {
+                v.isBlank() -> { com.cockpitf30.nav.ParkingSpot.setEmail(ctx, null); email = null; editing = false; null }
+                !com.cockpitf30.nav.ParkingSpot.validEmail(v) -> "Ese correo no parece válido."
+                else -> { com.cockpitf30.nav.ParkingSpot.setEmail(ctx, v); email = v.trim(); editing = false; null }
+            }
         }
     }
     SettingGroup("Cuadro") {
@@ -711,9 +785,11 @@ private fun SystemSettings(onOpen: (Screen) -> Unit) {
         ) { BatteryOptimization.request(ctx) }
     }
     SettingGroup("Acerca de") {
-        ActionRow("Athoox ${installedVersion(ctx)}", "Información técnica, datos del CAN e informe para depurar.", "Diagnóstico ›") {
-            onOpen(Screen.DIAGNOSTICS)
-        }
+        if (com.cockpitf30.system.Profiles.current(ctx).capi) {
+            ActionRow("Athoox ${installedVersion(ctx)}", "Información técnica, datos del CAN, informe para depurar y modo demo.", "Diagnóstico ›") {
+                onOpen(Screen.DIAGNOSTICS)
+            }
+        } else Labels("Athoox ${installedVersion(ctx)}", "Diagnóstico y modo demo: solo para el Capi.", true, Modifier.fillMaxWidth())
     }
 }
 

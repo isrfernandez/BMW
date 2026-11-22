@@ -7,6 +7,8 @@ import java.text.Normalizer
 enum class InfoTopic { RANGE, FUEL_NEAR, TYRES, WEATHER, TIME, DOORS, TRIP, SPEED, GUIDANCE, WIND }
 
 /** Lo que el usuario ha pedido, ya interpretado. */
+enum class ParkingSend { SHARE, EMAIL }
+
 sealed interface Command {
     data class Open(val screen: Screen) : Command
     data class Info(val topic: InfoTopic) : Command
@@ -58,6 +60,10 @@ sealed interface Command {
     data class DeleteUser(val name: String, val confirmed: Boolean = false) : Command
     /** «¿Qué usuarios hay?». */
     data object ListUsers : Command
+    data object WhoIsCapi : Command
+    data class UserPrefs(val name: String?) : Command
+    /** Coche aparcado: enseñar el QR, compartir o mandarlo al correo guardado. */
+    data class Parking(val send: ParkingSend? = null) : Command
     /** «¿De qué hablábamos?», «¿qué te he preguntado?». */
     data object Recap : Command
     /** Charla: [key] de [Lines.CHAT] («hello», «howareyou», «tired»…). */
@@ -378,6 +384,22 @@ object VoiceCommands {
                 val name = m.groupValues[1].trim().removePrefix("de ").removePrefix("a ").trim()
                 if (name.isNotBlank()) return Command.DeleteUser(name.split(' ').joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } })
             }
+        // Coche aparcado.
+        if (has("donde he aparcado", "donde he dejado el coche", "donde esta el coche", "donde esta aparcado", "donde aparque", "donde deje el coche",
+                "ubicacion del coche", "localizacion del coche", "posicion del coche", "donde he estacionado", "coche aparcado")) {
+            return Command.Parking(when {
+                has("correo", "email", "mail", "e mail") -> ParkingSend.EMAIL
+                has("envia", "enviar", "manda", "mandar", "comparte", "compartir", "pasa", "pasame") -> ParkingSend.SHARE
+                else -> null
+            })
+        }
+        if (has("quien es el capi", "quien es tu capi", "quien es tu creador", "quien manda aqui", "quien es el jefe")) return Command.WhoIsCapi
+        // Solo como pregunta: «abre ajustes de conducción» es otra cosa.
+        Regex("(?:preferencias|ajustes|configuracion) (?:tiene |de )([a-zñ]{2,20})$").find(t)
+            ?.takeIf { Regex("^(?:que|cuales|como|dime|cuentame|sabes)\\b").containsMatchIn(t) }
+            ?.let { m -> m.groupValues[1].takeIf { it !in setOf("radio", "pantalla", "voz", "copiloto", "avisos", "usuario", "usuarios", "fabrica") }?.let { n -> return Command.UserPrefs(n.replaceFirstChar { it.uppercase() }) } }
+        Regex("^como (?:tiene|ha) configurad[oa] (?:el coche |athoox |todo )?([a-zñ]{2,20})").find(t)?.let { m -> return Command.UserPrefs(m.groupValues[1].replaceFirstChar { it.uppercase() }) }
+        if (has("mis preferencias", "mis ajustes", "mi configuracion", "como tengo configurado")) return Command.UserPrefs(null)
         if (has("que usuarios hay", "que usuarios tienes", "lista de usuarios", "que conductores hay", "quien conduce", "cuantos usuarios")) return Command.ListUsers
         // «Soy Luis», «me llamo Luis», «cambia de conductor a Luis»: pasa a su perfil (o lo crea).
         (Regex("^(?:hola )?(?:yo )?(?:me llamo|mi nombre es|llamame|soy) ([a-zñ ]{2,30})$").find(t)

@@ -19,6 +19,7 @@ import android.content.pm.PackageManager
 import androidx.compose.runtime.DisposableEffect
 import androidx.core.content.ContextCompat
 import com.cockpitf30.ui.components.TripSummaryOverlay
+import com.cockpitf30.ui.components.ParkingOverlay
 import com.cockpitf30.assistant.VoiceAssistant
 import com.cockpitf30.ui.components.AssistantOverlay
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -461,7 +462,9 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 Screen.VEHICLE -> HomeScreen(onOpen = go)
                 Screen.TRIP -> TripScreen()
                 Screen.APPS -> AppsScreen()
-                Screen.DIAGNOSTICS -> DiagnosticsScreen()
+                // Diagnóstico (y el modo demo, que se arranca desde ahí) solo para el Capi.
+                Screen.DIAGNOSTICS -> if (com.cockpitf30.system.Profiles.current(androidx.compose.ui.platform.LocalContext.current).capi) DiagnosticsScreen()
+                    else com.cockpitf30.ui.screens.CapiOnlyScreen()
                 Screen.SETTINGS -> com.cockpitf30.ui.screens.SettingsScreen(onOpen = go)
                 Screen.WEATHER -> WeatherScreen()
                 Screen.PHONE -> PhoneScreen()
@@ -477,6 +480,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
             com.cockpitf30.ui.components.RouteAlertPopup(Modifier.align(androidx.compose.ui.Alignment.TopEnd).padding(top = 20.dp, end = 24.dp))
             com.cockpitf30.ui.components.AmbientGlow()
             TripSummaryOverlay()
+            ParkingOverlay()
             AssistantOverlay()
             // Arriba a la izquierda: abajo van los subtítulos del asistente y arriba a la derecha los avisos en ruta.
             com.cockpitf30.ui.components.DemoTourBanner(Modifier.align(androidx.compose.ui.Alignment.TopStart).padding(start = 150.dp, top = 10.dp))

@@ -15,8 +15,8 @@ android {
         // Las unidades TopWay/ZQ suelen venir con Android 10–13.
         minSdk = 26
         targetSdk = 34
-        versionCode = 138
-        versionName = "1.0.3"
+        versionCode = 139
+        versionName = "1.0.4"
         // Vosk trae su librería nativa para cada arquitectura (~9 MB cada una): la radio y la tablet
         // son ARM. La de x86_64 (emulador del PC) solo va en la de depuración (ver buildTypes).
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
@@ -91,6 +91,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // Código QR de la ubicación del coche aparcado (solo el núcleo, sin cámara).
+    implementation("com.google.zxing:core:3.5.3")
     // Reconocimiento de voz sin conexión para «Hola BMW» (el modelo en español se descarga aparte).
     implementation("com.alphacephei:vosk-android:0.3.47")
     implementation("net.java.dev.jna:jna:5.13.0@aar")

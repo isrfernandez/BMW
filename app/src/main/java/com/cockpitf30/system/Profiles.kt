@@ -47,7 +47,7 @@ object Profiles {
 
     /** Ajustes de cada conductor. */
     private val PERSONAL = setOf(
-        KEY_NAME, "assistant_humor", "assistant_voice_name", "assistant_robot_voice", "assistant_voice_style",
+        KEY_NAME, "parking_email", "assistant_humor", "assistant_voice_name", "assistant_robot_voice", "assistant_voice_style",
         "assistant_tts", "assistant_volume", "assistant_follow_up", "assistant_follow_seconds", "assistant_recent_lines",
         "commands_with_google", "wake_sensitivity", "copilot_enabled", "copilot_minutes", "briefing",
         "route_alerts", "radar_voice", "radio_favorites", "radio_fm_favorites", "radio_volume", "radio_last_station",
@@ -164,6 +164,7 @@ object Profiles {
         checkPin(ctx, pin)?.let { return it }
         val rest = all.filter { it.id != cur }
         p.edit().remove(KEY_DATA + cur).remove(KEY_PIN).remove(KEY_FAILS).remove(KEY_LOCK).apply()
+        PhoneKey.forget(ctx)
         if (rest.isEmpty()) {
             restore(p, JSONObject())
             save(p, listOf(Profile("p" + UUID.randomUUID().toString().take(6), "", capi = true)), "")
@@ -226,6 +227,7 @@ object Profiles {
             "Avisos en ruta" to alerts,
             "Pantalla" to "$theme · letra $text",
             "Emisoras favoritas" to if (radio == 0) "Ninguna" else "$radio",
+            "Correo del coche aparcado" to (s("parking_email")?.takeIf { it.isNotBlank() } ?: "Ninguno"),
         )
     }
 
