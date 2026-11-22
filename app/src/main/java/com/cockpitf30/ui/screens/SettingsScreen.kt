@@ -116,7 +116,8 @@ fun SettingsScreen(onOpen: (Screen) -> Unit = {}, initialSection: SettingsSectio
                     }
                 }
                 // Cada sección empieza arriba del todo.
-                key(section) {
+                val profileVersion by VoiceAssistant.profileVersion.collectAsStateWithLifecycle()
+                key(section, profileVersion) {
                     // Modo demo: las filas se resaltan por turnos enseñando el cambio, sin guardarlo.
                     val demoRows = remember { DemoRows() }
                     LaunchedEffect(demoSection) {
@@ -313,6 +314,15 @@ private fun AssistantSettings() {
             onMinus = { assistant.setHumor(ctx, humor - 5) }, onPlus = { assistant.setHumor(ctx, humor + 5) })
         val levels = listOf(0, 25, 50, 75, 100)
         ChoiceRow("Niveles rápidos", null, levels.map { "$it %" }, levels.indexOf(humor)) { assistant.setHumor(ctx, levels[it]) }
+        // Conductores: cada uno con sus ajustes; Athoox recuerda el último. Por voz: «soy Luis».
+        val profiles = remember { com.cockpitf30.system.Profiles.list(ctx) }
+        val current = remember { com.cockpitf30.system.Profiles.current(ctx) }
+        if (profiles.size > 1 || current.name.isNotBlank()) {
+            ChoiceRow(
+                "Conductor", "Cada uno con sus ajustes. Por voz: «soy Luis» (si no existe, crea su perfil).",
+                profiles.map { it.name.ifBlank { "Sin nombre" } }, profiles.indexOfFirst { it.id == current.id },
+            ) { i -> profiles[i].name.takeIf { it.isNotBlank() }?.let { assistant.selectUser(ctx, it) } }
+        }
         var name by remember { mutableStateOf(settings.assistantUserName) }
         ActionRow(
             "Memoria",
@@ -416,6 +426,7 @@ private fun alertHint(c: AlertCategory): String = when (c) {
     AlertCategory.TOURISM -> "Monumentos, miradores y pueblos con artículo en Wikipedia, con foto."
     AlertCategory.FOOD -> "Restaurantes a la hora de comer o cenar, y hoteles y campings por la noche o tras tres horas al volante."
     AlertCategory.WIND -> "Viento de proa, de través o de popa según el rumbo, en términos náuticos, cuando sopla con fuerza."
+    AlertCategory.ROAD -> "Cuestas y viento que se notan en el esfuerzo, el ritmo del viaje y los túneles o zonas sin cobertura."
 }
 
 @Composable

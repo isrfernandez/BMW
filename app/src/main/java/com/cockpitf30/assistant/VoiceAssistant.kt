@@ -971,6 +971,50 @@ object VoiceAssistant {
         Screen.MAINTENANCE, Screen.VEHICLE -> null
     }
 
+    /**
+     * «Soy Luis»: pasa al perfil de Luis (con sus ajustes) o se lo crea, y desde ahora le llama así.
+     * Al que es nuevo le cuenta qué puede personalizar.
+     */
+    private fun switchUser(name: String): String {
+        saveRecent()
+        val r = com.cockpitf30.system.Profiles.switchTo(app, name)
+        // Lo que se guarda en memoria se vuelve a leer del perfil que llega.
+        Personality.userName = name
+        _humor.value = settings().assistantHumor
+        Personality.recent.load(settings().assistantRecentLines)
+        com.cockpitf30.ui.theme.DriveModes.load(app)
+        com.cockpitf30.radio.Radio.reloadProfile()
+        copilotMemory.said.clear()
+        profileVersion.value++
+        return when (r) {
+            com.cockpitf30.system.ProfileSwitch.SAME -> Personality.chat("name.ask", humor())
+            com.cockpitf30.system.ProfileSwitch.SWITCHED -> profileBack(name)
+            com.cockpitf30.system.ProfileSwitch.CREATED -> "Encantado, $name. He creado tu perfil y desde ahora te llamaré $name. ${PROFILE_HINT}"
+            com.cockpitf30.system.ProfileSwitch.NAMED -> "${Personality.chat("name.set", humor())} Este es tu perfil. ${PROFILE_HINT}"
+        }
+    }
+
+    /** Sube al cambiar de conductor: Ajustes se vuelve a leer. */
+    val profileVersion = MutableStateFlow(0)
+
+    /** Ajustes › Conductor: cambia de usuario y lo dice. */
+    fun selectUser(context: Context, name: String) {
+        app = context.applicationContext
+        val text = switchUser(name)
+        announceIfFree(text)
+    }
+
+    private fun profileBack(name: String): String {
+        val st = settings()
+        val copilot = if (st.copilotEnabled) "copiloto activado" else "copiloto desactivado"
+        return "Hola de nuevo, $name. He cargado tus ajustes: humor al ${st.assistantHumor} por ciento y $copilot."
+    }
+
+    private const val PROFILE_HINT =
+        "Puedes personalizar tu experiencia y lo guardaré solo para ti. Por voz: humor al 60 por ciento, activa o desactiva el copiloto, " +
+            "modo sport, modo diurno, o desactiva los avisos de turismo. En Ajustes, además, la voz y su volumen, las emisoras favoritas " +
+            "y el orden de las tarjetas. Para cambiar de conductor, di: soy, y el nombre."
+
     private fun saveRecent() { runCatching { settings().assistantRecentLines = Personality.recent.save() } }
 
     /**
@@ -1169,7 +1213,8 @@ object VoiceAssistant {
     /** La agenda leída (se relee al reanudar la app, por si se conectó otro móvil). */
     @Volatile private var contactsCache: List<com.cockpitf30.system.Contact>? = null
 
-    private fun humor() = settings().assistantHumor
+    /** Humor de ahora: el de Ajustes, ajustado al ritmo del viaje (más de paseo, menos en ciudad). */
+    private fun humor() = com.cockpitf30.drive.DriveCoach.humor(settings().assistantHumor)
 
     /** Respuesta con o sin broma según el nivel de humor; [key] es el tipo de broma de [Lines.QUIPS]. */
     private fun joke(plain: String, key: String?) = Personality.spice(plain, humor(), key)
@@ -1263,11 +1308,7 @@ object VoiceAssistant {
             conversation.ask(Pending.Confirm(Command.Chat("riddle")), now)
             "$r ${Personality.line("offer.riddle")}"
         }
-        is Command.SetName -> {
-            Personality.userName = c.name
-            settings().assistantUserName = c.name
-            Personality.chat("name.set", humor())
-        }
+        is Command.SetName -> switchUser(c.name)
         Command.AskName -> Personality.chat(if (Personality.userName.isNullOrBlank()) "name.unknown" else "name.ask", humor())
         is Command.Copilot -> {
             val on = c.on ?: true
@@ -1300,7 +1341,7 @@ object VoiceAssistant {
         is Command.Station -> station(c, now)
         is Command.WeatherDay -> weatherDay(c.offset)
         is Command.Humor -> {
-            val level = humor()
+            val level = settings().assistantHumor
             if (c.set == null && c.delta == 0) {
                 "Mi nivel de humor está al $level por ciento"
             } else {
@@ -1579,7 +1620,8 @@ object VoiceAssistant {
             val demo = isDemo()
             // Solo con el coche en marcha (en demo, siempre).
             if (!demo && TripComputer.state.value.current == null) return
-            if (now - maxOf(lastActivityAt, lastCopilotAt) < Copilot.intervalMs(st.copilotMinutes, demo)) return
+            val factor = com.cockpitf30.drive.DriveCoach.state.value.rhythm?.intervalFactor ?: 1f
+            if (now - maxOf(lastActivityAt, lastCopilotAt) < (Copilot.intervalMs(st.copilotMinutes, demo) * factor).toLong()) return
         } else if (phase == AssistantPhase.LISTENING || phase == AssistantPhase.ANSWERING) return
         val line = Copilot.next(copilotSnapshot(now), copilotMemory, knowsName = !Personality.userName.isNullOrBlank()) ?: return
         lastCopilotAt = now
@@ -1608,6 +1650,7 @@ object VoiceAssistant {
         return CopilotSnapshot(
             now = now, hour = t.hour, minute = t.minute, demo = isDemo(),
             speedKmh = car.speedKmh,
+            rhythm = com.cockpitf30.drive.DriveCoach.state.value.rhythm,
             movingMs = trip?.movingMillis,
             tripKm = trip?.distanceKm,
             tripAvgKmh = trip?.avgSpeedKmh,

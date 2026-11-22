@@ -367,9 +367,12 @@ object VoiceCommands {
         // Conversación: repetir, resumir, nombre del conductor, chistes, copiloto.
         if (has("repite", "repitelo", "que has dicho", "que dices", "no te he oido", "como dices", "como has dicho")) return Command.Repeat
         if (has("de que hablabamos", "que te he preguntado", "que te he pedido", "de que hemos hablado", "que hemos hablado")) return Command.Recap
-        Regex("^(?:yo )?(?:me llamo|mi nombre es|llamame|soy) ([a-zñ ]{2,30})$").find(t)?.let { m ->
+        // «Soy Luis», «me llamo Luis», «cambia de conductor a Luis»: pasa a su perfil (o lo crea).
+        (Regex("^(?:hola )?(?:yo )?(?:me llamo|mi nombre es|llamame|soy) ([a-zñ ]{2,30})$").find(t)
+            ?: Regex("^cambia(?:r)? (?:de )?(?:usuario|conductor|perfil) a ([a-zñ ]{2,30})$").find(t))?.let { m ->
             val name = m.groupValues[1].trim()
-            if (name !in setOf("tonto", "yo", "tu conductor", "el conductor")) {
+            val first = name.substringBefore(' ')
+            if (name !in setOf("tonto", "yo", "tu conductor", "el conductor") && first !in NOT_NAMES && name.split(' ').size <= 3) {
                 return Command.SetName(name.split(' ').joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } })
             }
         }
@@ -532,6 +535,9 @@ object VoiceCommands {
 
     private val WEATHER_WORDS = arrayOf("tiempo", "temperatura", "llover", "llueve", "lluvia", "clima", "frio", "calor", "sol", "nieve", "nevar", "grados")
     private val YES = setOf("si", "vale", "venga", "claro", "dale", "por favor", "adelante", "de acuerdo", "ok", "okey", "bueno", "vale vale", "si si", "claro que si", "vamos alla", "por supuesto")
+    /** «Soy de Madrid», «soy un desastre»: no son nombres. */
+    private val NOT_NAMES = setOf("de", "del", "un", "una", "el", "la", "muy", "tu", "su", "mas", "nuevo", "nueva", "yo")
+
     private val ANOTHER = setOf("otro", "otra", "otra mas", "otro mas", "siguiente", "la siguiente", "el siguiente", "y otra", "y otro", "uno mas", "una mas", "mas", "cuentame otro", "dime otro", "dime otra")
 
     /** ¿Empieza como una pregunta de verdad («qué es…», «cuándo…», «sabes…»)? */

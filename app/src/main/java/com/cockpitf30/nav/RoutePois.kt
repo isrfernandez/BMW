@@ -28,6 +28,7 @@ enum class AlertCategory(val label: String, val spoken: String) {
     TOURISM("Turismo", "turísticos"),
     FOOD("Comer y dormir", "de restaurantes y alojamientos"),
     WIND("Viento", "de viento"),
+    ROAD("Carretera y cobertura", "de carretera y cobertura"),
 }
 
 /** Un punto de interés de OpenStreetMap. */

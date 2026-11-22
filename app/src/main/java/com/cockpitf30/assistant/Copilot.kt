@@ -11,6 +11,8 @@ data class CopilotSnapshot(
     val minute: Int = 0,
     val demo: Boolean = false,
     val speedKmh: Int? = null,
+    /** Ritmo del viaje: decide cuánta charla se mete entre los datos. */
+    val rhythm: com.cockpitf30.drive.Rhythm? = null,
     /** Tiempo en movimiento del viaje en curso. */
     val movingMs: Long? = null,
     val tripKm: Double? = null,
@@ -173,6 +175,9 @@ object Copilot {
         CopilotLine("idle.humor", "Si mis bromas te parecen pocas, súbeme el humor. Si te parecen muchas, también puedes bajarlo."),
     )
 
+    /** Lo único que se cuenta en ciudad (además de lo urgente). */
+    private val CITY_TOPICS = setOf("dest", "cameras", "time")
+
     /** Cuándo se dijo cada tema por última vez. */
     class Memory {
         val said = HashMap<String, Long>()
@@ -188,11 +193,20 @@ object Copilot {
         ready.firstOrNull { it.first.urgent }?.let { (_, line) -> mem.mark(line.id, s.now); return line }
 
         val info = ready.map { it.second }
+        // En ciudad, nada de charla: solo lo urgente (ya visto arriba) o un dato práctico.
+        if (s.rhythm == com.cockpitf30.drive.Rhythm.CIUDAD) {
+            val practical = info.filter { it.id in CITY_TOPICS }.minByOrNull { mem.said[it.id] ?: 0L } ?: return null
+            mem.mark(practical.id, s.now)
+            return practical
+        }
         val idle = IDLE.filter { mem.ok(it.id, gap(45), s.now) && !(knowsName && it.id == "idle.name") }
-        val pickInfo = info.isNotEmpty() && (idle.isEmpty() || random.nextDouble() < 0.6)
+        // De paseo más charla; en autopista, sobre todo datos (y si hay charla, sin preguntas que corten el hilo).
+        val idleShare = s.rhythm?.idleShare ?: 0.4
+        val calmIdle = if (s.rhythm == com.cockpitf30.drive.Rhythm.AUTOPISTA) idle.filter { '?' !in it.text } else idle
+        val pickInfo = info.isNotEmpty() && (calmIdle.isEmpty() || random.nextDouble() >= idleShare)
         val line = when {
             pickInfo -> info.minBy { mem.said[it.id] ?: 0L } // el que más tiempo lleva sin decirse
-            idle.isNotEmpty() -> idle[random.nextInt(idle.size)]
+            calmIdle.isNotEmpty() -> calmIdle[random.nextInt(calmIdle.size)]
             else -> IDLE.minBy { mem.said[it.id] ?: 0L }
         }
         mem.mark(line.id, s.now)

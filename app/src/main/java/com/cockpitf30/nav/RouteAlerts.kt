@@ -107,7 +107,12 @@ object RouteAlerts {
     /** Cada segundo, desde [RoutePois]. */
     fun tick(ctx: Context, scope: CoroutineScope, pos: GeoPoint, bearing: Float, live: Boolean) {
         val st = AppSettings(ctx)
-        val on = AlertCategory.entries.filter { st.alertOn(it) && it != AlertCategory.RADAR }.toSet()
+        // En ciudad, solo lo práctico: ni turismo ni restaurantes (ver [com.cockpitf30.drive.Rhythm]).
+        val city = com.cockpitf30.drive.DriveCoach.state.value.rhythm == com.cockpitf30.drive.Rhythm.CIUDAD
+        val on = AlertCategory.entries.filter {
+            st.alertOn(it) && it != AlertCategory.RADAR && it != AlertCategory.ROAD &&
+                !(city && (it == AlertCategory.TOURISM || it == AlertCategory.FOOD))
+        }.toSet()
         val now = System.currentTimeMillis()
         if (on.isEmpty()) { pending = null; return }
         if (now < holdUntil) return
@@ -185,6 +190,9 @@ object RouteAlerts {
         memory.markKey(if (v.stay.kind == StayKind.EAT || v.stay.kind == StayKind.DRINK) "food.eat" else "food.stay", now)
         return FoodLodging.alert(v)
     }
+
+    /** Dice y enseña [a] ya (lo usa [com.cockpitf30.drive.DriveCoach]); false si el asistente está ocupado. */
+    fun deliverNow(a: RouteAlert): Boolean = send(a, System.currentTimeMillis())
 
     private fun send(a: RouteAlert, now: Long): Boolean {
         val d = deliver ?: return true

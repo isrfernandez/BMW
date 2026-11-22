@@ -74,6 +74,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.unit.IntOffset
@@ -424,7 +425,7 @@ fun ClusterStrip(state: VehicleState, status: SourceStatus, modifier: Modifier =
             val shownRpm by remember(state.rpm) {
                 derivedStateOf { val sw = sweep.value; if (sw > 0f) maxOf(state.rpm ?: 0, (sw * RPM_MAX).roundToInt() / 50 * 50) else state.rpm }
             }
-            TabValue(shownSpeed?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false, glow = SpeedGlow, intensity = speedGlow)
+            TabValue(shownSpeed?.toString() ?: "--", "km/h", Modifier.weight(1f), alignEnd = false, glow = SpeedGlow, intensity = speedGlow, below = { RoadNote() })
             Spacer(Modifier.weight(1.5f))
             // Junto a la marcha y las rpm, lo más urgente del mantenimiento (solo en la vista del coche
             // y Athos; con el mapa se apaga como las fichas de abajo).
@@ -1367,6 +1368,7 @@ private fun DrawScope.drawMiniBar(g: GeoPx, tm: TextMeasurer, fraction: Float?, 
 private fun TabValue(
     value: String, caption: String, modifier: Modifier = Modifier, alignEnd: Boolean, glow: Color, intensity: Float,
     shift: com.cockpitf30.vehicle.Shift? = null,
+    below: (@Composable () -> Unit)? = null,
 ) {
     Column(modifier, horizontalAlignment = if (alignEnd) Alignment.End else Alignment.Start) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1389,8 +1391,51 @@ private fun TabValue(
             color = glow,
             modifier = Modifier.padding(horizontal = 24.dp),
         )
+        // Lo de debajo no ocupa sitio: si no, al aparecer subiría la cifra de la velocidad.
+        if (below != null) Box(
+            Modifier.layout { m, c ->
+                val pl = m.measure(c.copy(minHeight = 0, maxHeight = androidx.compose.ui.unit.Constraints.Infinity))
+                layout(pl.width, 0) { pl.place(0, 0) }
+            },
+        ) { below() }
     }
 }
+
+/**
+ * Lectura de carretera bajo la velocidad: una línea discreta («Subida 6 % · +45 % esfuerzo») que
+ * solo aparece cuando la cuesta o el viento se notan y se va con un fundido. Lee su propio estado
+ * para no recomponer el cuadro entero cada segundo.
+ */
+@Composable
+private fun RoadNote() {
+    val drive by com.cockpitf30.drive.DriveCoach.state.collectAsStateWithLifecycle()
+    val label = drive.road?.label
+    var last by remember { mutableStateOf("") }
+    if (label != null) last = label
+    androidx.compose.animation.AnimatedVisibility(
+        label != null,
+        enter = androidx.compose.animation.fadeIn(tween(700)),
+        exit = androidx.compose.animation.fadeOut(tween(1200)),
+    ) {
+        val up = drive.road?.load?.let { it.slopePct >= 0f } ?: true
+        Row(Modifier.padding(start = 24.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Canvas(Modifier.size(width = 18.dp, height = 12.dp)) {
+                // Rampa pequeña: hacia arriba en subida o con más esfuerzo, hacia abajo en bajada.
+                val path = Path().apply {
+                    if (up) { moveTo(0f, size.height); lineTo(size.width, 0f); lineTo(size.width, size.height) }
+                    else { moveTo(0f, 0f); lineTo(size.width, size.height); lineTo(0f, size.height) }
+                    close()
+                }
+                drawPath(path, RoadNoteColor.copy(alpha = 0.85f))
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(last, style = numeric(18, FontWeight.Medium).copy(letterSpacing = 0.5.sp), color = RoadNoteColor, maxLines = 1)
+        }
+    }
+}
+
+/** Cobre apagado: se ve sin competir con la velocidad. */
+private val RoadNoteColor = Color(0xFFD9A36B)
 
 private val ShiftUp = Color(0xFF3DDC97)
 private val ShiftDown = Color(0xFFFFB238)
