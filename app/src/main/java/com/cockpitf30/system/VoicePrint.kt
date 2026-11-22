@@ -16,14 +16,16 @@ import kotlin.math.sqrt
 object VoicePrint {
     /** Desde aquí se da por hecho que es esa persona. */
     const val MATCH = 0.62f
+    /** Para aceptar el alias del Capi con una frase corta («soy Isra»): algo menos que [MATCH]. */
+    const val VERIFY = 0.55f
     /** Por debajo de esto, seguro que no es. */
     const val MISMATCH = 0.35f
     /** Ventaja mínima sobre el segundo más parecido. */
     const val MARGIN = 0.08f
     /** Frases para aprender una voz. */
     const val SAMPLES = 4
-    /** Tramas de 10 ms: con menos de ~0,6 s de voz el vector no vale. */
-    const val MIN_FRAMES = 60
+    /** Tramas de 10 ms: con menos de ~0,45 s de voz el vector no vale. */
+    const val MIN_FRAMES = 45
     private const val KEY = "voice_print_"
 
     data class Heard(val vector: FloatArray, val frames: Int, val at: Long)

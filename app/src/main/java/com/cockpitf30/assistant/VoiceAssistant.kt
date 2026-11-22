@@ -671,12 +671,15 @@ object VoiceAssistant {
             AssistantPhase.WAITING -> {
                 val rest = VoiceCommands.afterWakeWord(text) ?: return
                 if (enrollStep()) return
-                identifyByVoice()
+                // Respuesta a «¿quién conduce?» o primer «Hola Athoox»: si ya ha contestado, no se pide orden.
+                if (identifyByVoice() && rest.isBlank()) return
                 // «Hola Athos pon la radio» de un tirón: si Vosk lo ha entendido se hace; si no, se escucha con Google.
                 if (rest.isBlank() || (useGoogle() && VoiceCommands.parse(rest) is Command.Unknown)) wake() else execute(rest)
             }
             AssistantPhase.LISTENING -> {
                 val rest = VoiceCommands.stripWakeWords(VoiceCommands.afterWakeWord(text) ?: text)
+                // Contestando a «¿quién conduce?» con un «Hola Athoox»: basta la voz.
+                if (rest.isBlank() && com.cockpitf30.system.DriverId.asked && !com.cockpitf30.system.DriverId.answered) { answerByVoice(); return }
                 if (rest.isNotBlank()) execute(rest, followUp)
             }
             else -> Unit
@@ -707,15 +710,31 @@ object VoiceAssistant {
         return true
     }
 
-    /** El primer «Hola Athoox» del viaje: si la voz es de otro conductor con huella, se cambia a él. */
-    private fun identifyByVoice() {
-        if (com.cockpitf30.system.DriverId.voiceChecked) return
-        val heard = com.cockpitf30.system.VoicePrint.recent(3_000) ?: return
+    /**
+     * El primer «Hola Athoox» del viaje: si la voz es de un conductor con huella, se pasa a él (al
+     * Capi basta con eso, sin decir su nombre). Si se le había preguntado quién conduce, contesta.
+     */
+    private fun identifyByVoice(): Boolean {
+        if (com.cockpitf30.system.DriverId.voiceChecked) return false
+        val heard = com.cockpitf30.system.VoicePrint.recent(3_000) ?: return false
         com.cockpitf30.system.DriverId.voiceChecked = true
-        val (p, s) = com.cockpitf30.system.VoicePrint.identify(app, heard) ?: return
+        val (p, s) = com.cockpitf30.system.VoicePrint.identify(app, heard) ?: return false
         logState("voz de ${p.name} (${"%.2f".format(s)})")
-        if (p.id != com.cockpitf30.system.Profiles.current(app).id) identified(app, p, com.cockpitf30.system.DriverId.How.VOICE)
-        else com.cockpitf30.system.DriverId.greeting.value = com.cockpitf30.system.DriverId.Greeting(p.id, p.name, p.capi, com.cockpitf30.system.DriverId.How.VOICE)
+        val wasAsked = com.cockpitf30.system.DriverId.asked && !com.cockpitf30.system.DriverId.answered
+        com.cockpitf30.system.DriverId.answered = true
+        if (p.id != com.cockpitf30.system.Profiles.current(app).id) { identified(app, p, com.cockpitf30.system.DriverId.How.VOICE); return true }
+        com.cockpitf30.system.DriverId.greeting.value = com.cockpitf30.system.DriverId.Greeting(p.id, p.name, p.capi, com.cockpitf30.system.DriverId.How.VOICE)
+        if (wasAsked) { say("Hola, ${com.cockpitf30.system.Profiles.callName(p)}. Te reconozco la voz."); return true }
+        return false
+    }
+
+    /** «¿Quién conduce?» → «Hola Athoox»: se mira la voz; si no es de nadie conocido, se pide el nombre. */
+    private fun answerByVoice() {
+        com.cockpitf30.system.DriverId.voiceChecked = false
+        if (identifyByVoice()) return
+        com.cockpitf30.system.DriverId.answered = false
+        voskOnlyUntil = System.currentTimeMillis() + 20_000
+        say("No reconozco tu voz. Di: soy, y tu nombre.", listenAfter = 8_000L)
     }
 
     /** Reconocido al arrancar (móvil o voz): pasa a su perfil si hace falta y lo dice. */
@@ -737,11 +756,23 @@ object VoiceAssistant {
         if (p.id != cur.id) announceIfFree("Hola, ${com.cockpitf30.system.Profiles.callName(p)}. Te he reconocido ${how.text} y he cargado tus ajustes.")
     }
 
-    /** «No soy yo»: pregunta quién conduce y escucha. */
-    fun askWho(context: Context) {
+    /** «No soy yo» o al arrancar: pregunta quién conduce y escucha (con Vosk, para oír su voz). */
+    fun askWho(context: Context, atStart: Boolean = false) {
         app = context.applicationContext
-        com.cockpitf30.system.DriverId.greeting.value = null
-        say("¿Quién conduce? Di: soy, y tu nombre.", listenAfter = 8_000L)
+        if (!atStart) com.cockpitf30.system.DriverId.greeting.value = null
+        scope.launch {
+            // Al arrancar se espera a que el asistente esté listo y callado (saludo, briefing…).
+            var waited = 0L
+            while (atStart && (_state.value.phase != AssistantPhase.WAITING || stillTalking()) && waited < 45_000) { delay(500); waited += 500 }
+            if (atStart && (com.cockpitf30.system.DriverId.answered || _state.value.phase != AssistantPhase.WAITING)) return@launch
+            voskOnlyUntil = System.currentTimeMillis() + 30_000
+            com.cockpitf30.system.DriverId.asked = true
+            com.cockpitf30.system.DriverId.answered = false
+            com.cockpitf30.system.DriverId.voiceChecked = false
+            val anyVoice = com.cockpitf30.system.VoicePrint.all(app).isNotEmpty()
+            say("¿Quién conduce" + (if (atStart) " hoy" else "") + "? " +
+                if (anyVoice) "Di: Hola Athoox, o soy, y tu nombre." else "Di: soy, y tu nombre.", listenAfter = 8_000L)
+        }
     }
 
     /** Ajustes › Usuarios: «Enseñar mi voz». Descarga el modelo si falta y pide cuatro «Hola Athoox». */
@@ -836,7 +867,10 @@ object VoiceAssistant {
     }
 
     /** Ajustes: órdenes con Google, y la radio tiene su reconocedor. */
-    private fun useGoogle(): Boolean = settings().commandsWithGoogle && googleAvailable()
+    private fun useGoogle(): Boolean = System.currentTimeMillis() >= voskOnlyUntil && settings().commandsWithGoogle && googleAvailable()
+
+    /** Hasta entonces se escucha con Vosk aunque esté Google: hace falta la huella de voz de la respuesta. */
+    @Volatile private var voskOnlyUntil = 0L
 
     fun googleAvailable(): Boolean = ::app.isInitialized && runCatching { SpeechRecognizer.isRecognitionAvailable(app) }.getOrDefault(false)
 
@@ -1073,9 +1107,28 @@ object VoiceAssistant {
             profileVersion.value++
             return "De acuerdo. Tu perfil se llama ahora $name, y te reconoceré así. Pero para mí sigues siendo el Capi."
         }
-        // Con huella de voz: si la voz no se parece nada a la de ese conductor, no se cambia.
+        com.cockpitf30.system.DriverId.answered = true
+        com.cockpitf30.system.DriverId.voiceChecked = true
+        var verified = ""
         com.cockpitf30.system.Profiles.find(app, name)?.takeIf { it.id != cur.id }?.let { target ->
-            val s = com.cockpitf30.system.VoicePrint.score(app, target.id)
+            // La voz de la respuesta, o la del «Hola Athoox» de justo antes.
+            val heard = com.cockpitf30.system.VoicePrint.recent(10_000)
+            val s = com.cockpitf30.system.VoicePrint.score(app, target.id, heard)
+            // El alias del Capi solo vale con su voz (si la ha enseñado).
+            if (target.capi && com.cockpitf30.system.VoicePrint.has(app, target.id)) {
+                if (s == null) {
+                    logState("«soy ${target.name}» sin huella de voz que comparar")
+                    return "No he podido oír bien tu voz. Di: Hola Athoox, y luego: soy ${target.name}."
+                }
+                if (s < com.cockpitf30.system.VoicePrint.VERIFY) {
+                    com.cockpitf30.ui.components.AmbientLight.alarm(2_500)
+                    logState("«soy ${target.name}» rechazado: voz ${"%.2f".format(s)}")
+                    return "Esa no es la voz del Capi. Si de verdad eres tú, entra en Ajustes, Usuarios" +
+                        (if (com.cockpitf30.system.Profiles.hasPin(app)) " con el PIN." else ".")
+                }
+                verified = " Te reconozco la voz."
+            }
+            // Los demás: si la voz no se parece nada a la de ese conductor, no se cambia.
             if (s != null && s < com.cockpitf30.system.VoicePrint.MISMATCH) {
                 if (target.capi) com.cockpitf30.ui.components.AmbientLight.alarm(2_500)
                 logState("«soy ${target.name}» rechazado por la voz (${"%.2f".format(s)})")
@@ -1088,6 +1141,8 @@ object VoiceAssistant {
         // Lo que se guarda en memoria se vuelve a leer del perfil que llega.
         val now = com.cockpitf30.system.Profiles.current(app)
         Personality.userName = com.cockpitf30.system.Profiles.callName(now)
+        com.cockpitf30.system.DriverId.greeting.value = com.cockpitf30.system.DriverId.Greeting(now.id, now.name, now.capi,
+            if (verified.isNotEmpty()) com.cockpitf30.system.DriverId.How.VOICE else com.cockpitf30.system.DriverId.How.SAID)
         _humor.value = settings().assistantHumor
         Personality.recent.load(settings().assistantRecentLines)
         com.cockpitf30.ui.theme.DriveModes.load(app)
@@ -1096,7 +1151,8 @@ object VoiceAssistant {
         profileVersion.value++
         return when (r) {
             com.cockpitf30.system.ProfileSwitch.SAME -> Personality.chat("name.ask", humor())
-            com.cockpitf30.system.ProfileSwitch.SWITCHED -> profileBack(Personality.userName ?: name)
+            com.cockpitf30.system.ProfileSwitch.SWITCHED -> profileBack(Personality.userName ?: name) + verified +
+                (if (now.capi && !com.cockpitf30.system.VoicePrint.has(app, now.id)) " Para que nadie más pueda decir que es tú, enséñame tu voz en Ajustes, Usuarios." else "")
             com.cockpitf30.system.ProfileSwitch.CREATED -> "Encantado, $name. He creado tu perfil y desde ahora te llamaré $name. ${PROFILE_HINT}"
             com.cockpitf30.system.ProfileSwitch.NAMED -> if (now.capi) "Encantado, $name. Eres el primero, así que tienes el rol de Capi: desde ahora te llamaré Capi. ${PROFILE_HINT}"
                 else "${Personality.chat("name.set", humor())} Este es tu perfil. ${PROFILE_HINT}"
