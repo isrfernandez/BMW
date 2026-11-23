@@ -25,7 +25,7 @@ import com.cockpitf30.system.Profiles
 import com.cockpitf30.ui.theme.Cockpit
 import kotlinx.coroutines.delay
 
-/** Al arrancar: quién conduce y cómo lo ha sabido, con «No soy yo» para cambiar. */
+/** Al arrancar: quién conduce y cómo lo ha sabido, con «Cambiar» (abre Ajustes › Usuarios). */
 @Composable
 fun DriverBanner(modifier: Modifier = Modifier) {
     val g by DriverId.greeting.collectAsStateWithLifecycle()
@@ -42,7 +42,7 @@ fun DriverBanner(modifier: Modifier = Modifier) {
                 Text(when (s.how) { DriverId.How.LAST -> "Último conductor"; DriverId.How.GUEST -> "Modo invitado, ajustes de fábrica"; else -> "Reconocido ${s.how.text}" }, style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
             }
             FocusTile(onClick = { VoiceAssistant.askWho(ctx) }) {
-                Text("No soy yo", Modifier.padding(horizontal = 20.dp, vertical = 10.dp), style = MaterialTheme.typography.titleMedium)
+                Text("Cambiar", Modifier.padding(horizontal = 20.dp, vertical = 10.dp), style = MaterialTheme.typography.titleMedium)
             }
         }
     }

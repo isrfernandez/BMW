@@ -92,6 +92,15 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean("assistant_follow_up", true)
         set(value) = prefs.edit().putBoolean("assistant_follow_up", value).apply()
 
+    /**
+     * Callarse en cuanto oye a alguien hablar encima de su voz (experimental). Por defecto no: en la
+     * radio su propia voz por los altavoces la cortaba sola. Se corta con «Hola Athoox», «para»,
+     * tocando la tarjeta o con el botón de voz del volante.
+     */
+    var assistantVoiceOver: Boolean
+        get() = prefs.getBoolean("assistant_voice_over", false)
+        set(value) = prefs.edit().putBoolean("assistant_voice_over", value).apply()
+
     /** Las órdenes (lo que va tras «Hola Athos») con el reconocedor de Google, si la radio lo tiene. */
     var commandsWithGoogle: Boolean
         get() = prefs.getBoolean("commands_with_google", true)

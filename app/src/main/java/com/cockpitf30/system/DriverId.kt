@@ -24,7 +24,7 @@ import org.json.JSONObject
  * algún byte cambia.
  */
 object DriverId {
-    enum class How(val text: String) { WIFI("por tu móvil"), VOICE("por tu voz"), SAID("por tu nombre"), LAST("último conductor"), GUEST("modo invitado") }
+    enum class How(val text: String) { KEY("por tu llave"), WIFI("por tu móvil"), VOICE("por tu voz"), SAID("por tu nombre"), LAST("último conductor"), GUEST("modo invitado") }
     data class Greeting(val profileId: String, val name: String, val capi: Boolean, val how: How, val at: Long = System.currentTimeMillis())
 
     /** Aviso en pantalla de quién conduce (unos segundos tras arrancar o al reconocerlo). */
@@ -83,9 +83,9 @@ object DriverId {
     // ── Al arrancar ─────────────────────────────────────────────────────
 
     /**
-     * Una vez por arranque de la app: busca la red del móvil durante medio minuto (la radio tarda
-     * en conectarse al punto de acceso) y, si no la ve, saluda al último conductor.
-     * [identified] cambia de perfil (si hace falta) y lo dice.
+     * Una vez por arranque de la app: saluda al último conductor y, en cuanto llegan las tramas de
+     * la caja, mira la llave ([CarKey]). Si es la de otro conductor, pasa a su perfil y lo dice.
+     * Ya no se pregunta ni se escucha la voz (en la radio cortaba y creaba usuarios por error).
      */
     fun onStart(context: Context, scope: CoroutineScope, ask: () -> Unit, identified: (Profile, How) -> Unit) {
         if (started) return
@@ -93,28 +93,28 @@ object DriverId {
         val ctx = context.applicationContext
         scope.launch {
             delay(3_000)
-            val t0 = System.currentTimeMillis()
-            // Primero el último conductor, al momento; si luego aparece su móvil o el de otro, se corrige.
             Profiles.current(ctx).takeIf { it.name.isNotBlank() }?.let { greeting.value = Greeting(it.id, it.name, it.capi, How.LAST) }
-            // Y se pregunta quién conduce; si nadie contesta, sigue el último (o el de la red del móvil).
-            ask()
-            var found: Profile? = null
-            for (i in 0 until 6) {
-                found = byWifi(ctx, visibleSsids(ctx, scan = i == 0 || i == 3))
-                if (found != null || greeting.value?.how == How.VOICE) break
-                delay(5_000)
+            // Las tramas de ajustes llegan al encender; se espera hasta 25 s y un poco más para tenerlas todas.
+            var w = 0L
+            while (!CarKey.available() && w < 25_000) { delay(500); w += 500 }
+            delay(2_000)
+            keyNote = CarKey.describe()
+            val hit = CarKey.identify(ctx)
+            keyMatch = hit?.let { (p, s) -> "${p.name.ifBlank { "sin nombre" }} (${"%.0f".format(s * 100)} %)" } ?: "ningún conductor"
+            if (hit != null && !answered) {
+                val (p, score) = hit
+                if (score >= 0.999) CarKey.reinforce(ctx, p.id, CarKey.current())
+                if (p.id != Profiles.current(ctx).id) identified(p, How.KEY)
+                else greeting.value = Greeting(p.id, p.name, p.capi, How.KEY)
             }
-            val cur = Profiles.current(ctx)
-            when {
-                found == null || answered || greeting.value?.how == How.VOICE -> Unit
-                found.id != cur.id -> identified(found, How.WIFI)
-                // Era el mismo: solo se cambia el «último conductor» por «por tu móvil» si aún se ve el aviso.
-                System.currentTimeMillis() - t0 < 12_000 -> greeting.value = Greeting(found.id, found.name, found.capi, How.WIFI)
-            }
-            delay(16_000)
+            delay(14_000)
             recordStart(ctx)
         }
     }
+
+    /** Diagnóstico: tramas de la llave de este arranque y a quién se parecen. */
+    @Volatile var keyNote: String? = null
+    @Volatile var keyMatch: String? = null
 
     // ── Huella de arranque (para buscar la llave) ──────────────────────
 

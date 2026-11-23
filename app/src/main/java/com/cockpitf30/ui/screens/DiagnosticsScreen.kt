@@ -80,7 +80,7 @@ fun DiagnosticsScreen() {
     val modes = remember { SourceMode.entries.filter { it != SourceMode.SERIAL || settings.sourceMode == SourceMode.SERIAL } }
 
     // Lo de la radio va al principio: el informe completo pasa de 150 KB y al compartir se recorta.
-    fun report() = buildReport(context, status, input) + radioReport(radioValues, radioChanges, vehicle)
+    fun report() = buildReport(context, status, input) + radioReport(radioValues, radioChanges, vehicle, context)
 
     val first = remember { FocusRequester() }
     InitialFocus(first)
@@ -130,12 +130,9 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
-                DiagCard("Quién conduce") {
-                    val wifi = remember { com.cockpitf30.system.DriverId.visibleSsids(context) }
-                    val score by com.cockpitf30.system.VoicePrint.lastScore.collectAsStateWithLifecycle()
-                    Info("Redes Wi-Fi a la vista: ${wifi.joinToString(", ").ifBlank { "ninguna (¿ubicación apagada?)" }}")
-                    Info("Huella de voz: " + (score?.let { (id, s) -> "${com.cockpitf30.system.Profiles.list(context).firstOrNull { it.id == id }?.name ?: id} %.2f".format(s) } ?: "sin comparar aún") +
-                        " · coincide desde %.2f".format(com.cockpitf30.system.VoicePrint.MATCH))
+                DiagCard("Quién conduce (llave)") {
+                    Info("Tramas de la llave de este arranque: ${com.cockpitf30.system.DriverId.keyNote ?: com.cockpitf30.system.CarKey.describe()}")
+                    Info("Se parece a: ${com.cockpitf30.system.DriverId.keyMatch ?: "aún sin mirar"}")
                     Info("Huella de arranque (arranca con cada llave y mira si cambia algún byte):")
                     com.cockpitf30.system.DriverId.starts(context).ifEmpty { listOf("Aún ninguna: se guarda 20 s después de arrancar, si llegan tramas de la caja.") }
                         .forEach { Info(it) }
@@ -429,7 +426,22 @@ private fun canBoxSummary(values: Map<String, String>): String {
         "d7 (¿temperatura?) ${values["can.d7_raw"] ?: "?"} · d8 ${values["can.d8_raw"] ?: "?"} · velocidad ${values["can.speed"] ?: "?"} · rpm ${values["can.rpm"] ?: "?"}"
 }
 
-private fun radioReport(values: Map<String, String>, changes: List<String>, vehicle: com.cockpitf30.vehicle.VehicleState): String = buildString {
+private fun radioReport(values: Map<String, String>, changes: List<String>, vehicle: com.cockpitf30.vehicle.VehicleState, context: android.content.Context): String = buildString {
+    appendLine()
+    appendLine("== Asistente")
+    val va = com.cockpitf30.assistant.VoiceAssistant
+    appendLine("fase ${va.state.value.phase} · motor ${va.state.value.engine ?: "-"} · Google disponible ${va.googleAvailable()}")
+    va.lastSpeechEnd?.let { appendLine("Última frase dicha: $it") }
+    va.lastCut?.let { appendLine("Último corte: $it") }
+    va.lastFailure?.let { appendLine("Último fallo: $it") }
+    va.stateLog.value.forEach { appendLine(it) }
+    appendLine()
+    appendLine("== Fluidez")
+    com.cockpitf30.system.FrameStats.summary().forEach { appendLine(it) }
+    appendLine()
+    appendLine("== Llave")
+    appendLine("Tramas: ${com.cockpitf30.system.DriverId.keyNote ?: com.cockpitf30.system.CarKey.describe()} · se parece a: ${com.cockpitf30.system.DriverId.keyMatch ?: "?"}")
+    com.cockpitf30.system.DriverId.starts(context).forEach { appendLine(it) }
     appendLine()
     appendLine("== Sintonizador FM")
     com.cockpitf30.radio.FactoryTuner.lastProbe?.let { appendLine("Comprobación: ${it.reason}") }
