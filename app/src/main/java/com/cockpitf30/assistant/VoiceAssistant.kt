@@ -146,12 +146,18 @@ object VoiceAssistant {
     /** Lo mismo cuando lo dicho hasta ahora todavía no se entiende (frase a medias). */
     private const val END_SILENCE_UNSURE_MS = 2_500L
     /** Al empezar a hablar no se atiende a interrupciones (aún se oye el final de lo que dijo el conductor). */
-    private const val BARGE_GRACE_MS = 1_000L
+    private const val BARGE_GRACE_MS = 400L
     /** Voz por encima de la suya: cuánto más fuerte que sus sílabas fuertes y cuántos bloques seguidos. */
     private const val VOICE_OVER_RATIO = 1.9f
     private const val VOICE_OVER_BLOCKS = 3
     private const val VOICE_OVER_MIN_BLOCKS = 20
     private const val VOICE_OVER_GRACE_MS = 2_000L
+    /** Con el eco ya aprendido ([EchoRef]) se puede cortar casi desde el principio. */
+    private const val VOICE_OVER_REF_GRACE_MS = 500L
+    /** Bloques de 100 ms que se guardan para no perder el principio de lo que dices al cortarla. */
+    private const val PREROLL_BLOCKS = 6
+    /** Lo que oye en la escucha seguida y empezó antes de esto tras callarse puede ser su propio eco. */
+    private const val ECHO_WINDOW_MS = 1_500L
     /** Lo que escucha tras callarse por una voz encima; si nadie dice nada, sigue. */
     private const val VOICE_OVER_LISTEN_MS = 4_500L
     /** Tiempo que debe mantenerse en el parcial una orden de interrupción para hacerle caso. */
@@ -197,6 +203,15 @@ object VoiceAssistant {
     private var resumed = false
 
     @Volatile private var muted = false
+    /** Lo que suena por el altavoz frente a lo que oye el micro: para poder cortarla hablando encima. */
+    private val echoRef = EchoRef()
+    /** Formato del audio de cada trozo que sintetiza el motor (para [echoRef]); 0 = no aprovechable. */
+    private val synthRate = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    /** Al cortarla por voz encima: meter en el reconocedor lo último que oyó (el principio de tu frase). */
+    @Volatile private var feedPreroll = false
+    /** Cuándo calló por última vez y cuándo empezó a oírse lo que se está escuchando (para el eco). */
+    @Volatile private var lastSpeechEndAt = 0L
+    @Volatile private var heardBeganAt = 0L
     @Volatile private var resetRecognizer = false
     @Volatile private var listenUntil = 0L
 
@@ -254,6 +269,12 @@ object VoiceAssistant {
         initTts()
         refresh()
         startCopilot()
+        // El reconocedor de Google se prepara ya (conectarse a su servicio tarda): así el pitido tras
+        // «Hola Athoox» suena antes.
+        scope.launch {
+            delay(5_000)
+            if (resumed && settings().commandsWithGoogle && googleAvailable()) recognizer()
+        }
     }
 
     private var recentLoaded = false
@@ -277,7 +298,7 @@ object VoiceAssistant {
         copilotJob?.cancel()
         copilotJob = null
         stopAudio()
-        stopGoogle()
+        dropRecognizer()
         stopSpeaking()
         _state.update { it.copy(phase = AssistantPhase.PAUSED, level = 0f) }
     }
@@ -287,7 +308,7 @@ object VoiceAssistant {
         settings().assistantEnabled = enabled
         if (!enabled) {
             stopAudio()
-            stopGoogle()
+            dropRecognizer()
         }
         refresh()
     }
@@ -409,6 +430,8 @@ object VoiceAssistant {
         val utterance = StringBuilder()
         var utteranceAt = 0L
         var speaking = false
+        /** Lo último que oyó (bloques de 100 ms), para no perder el principio al cortarla. */
+        val preroll = ArrayDeque<ShortArray>()
         try {
             audio.startRecording()
             // Justo después de usar el reconocedor de Google el micrófono puede seguir ocupado unos
@@ -432,6 +455,7 @@ object VoiceAssistant {
                 }
                 badReads = 0
                 val now = System.currentTimeMillis()
+                if (n == buf.size) { preroll.addLast(buf.copyOf()); while (preroll.size > PREROLL_BLOCKS + 1) preroll.removeFirst() }
                 // Ceros exactos durante mucho rato (sin estar callado) = el micrófono se ha quedado mudo.
                 var allZero = true
                 for (i in 0 until n) if (buf[i].toInt() != 0) { allZero = false; break }
@@ -459,6 +483,8 @@ object VoiceAssistant {
                 if (muted) { if (mutedSince == 0L) mutedSince = now else if (now - mutedSince > 30_000 && (now - mutedSince > 180_000 || !stillTalking())) { muted = false; resetRecognizer = true } }
                 else mutedSince = 0L
                 if (muted) {
+                    // El eco conocido aprende también durante la gracia (lo que suena frente a lo que oye).
+                    val overRef = echoRef.mic(buf, n, now)
                     if (mutedSince != 0L && now - mutedSince < BARGE_GRACE_MS) { bargeRec.reset(); freeRec.reset(); echoLevels.clear(); continue }
                     echoLevels.add(rms(buf, n)); if (echoLevels.size > ECHO_WINDOW) echoLevels.removeAt(0)
                     // Dos oídos mientras habla:
@@ -490,6 +516,13 @@ object VoiceAssistant {
                         val ratio = voiceOverEcho(echoLevels).second
                         _state.update { it.copy(lastText = "(hablando) $hit") }
                         withContext(Dispatchers.Main) { safely("interrupción") { logState("oído mientras habla: «$hit» (micro ${"%.1f".format(ratio)}× su eco; libre: «${fRaw.takeLast(40)}»)"); onBargeIn(hit) } }
+                    } else if (hit == null && echoRef.active) {
+                        // Se sabe lo que está sonando y cuánto vuelve al micro: si se oye bastante más de lo
+                        // previsto ~0,3 s (tu voz, sobre todo en los huecos entre sus palabras), se calla.
+                        if (overRef && now - mutedSince > VOICE_OVER_REF_GRACE_MS) {
+                            bargeRec.reset(); freeRec.reset()
+                            withContext(Dispatchers.Main) { safely("voz encima") { onVoiceOver(-1f) } }
+                        }
                     } else if (hit == null && echoLevels.size >= VOICE_OVER_MIN_BLOCKS && now - mutedSince > VOICE_OVER_GRACE_MS) {
                         // Con su voz sonando, el micro apenas entiende las palabras (el eco las tapa):
                         // si se oye a alguien claramente por encima de ella un rato, se calla y escucha
@@ -505,12 +538,21 @@ object VoiceAssistant {
                     }
                     continue
                 }
+                if (_state.value.phase == AssistantPhase.WAITING || _state.value.phase == AssistantPhase.LISTENING) echoRef.idle(buf, n)
                 val wantCmd = _state.value.phase == AssistantPhase.LISTENING
                 if (wantCmd != usingCmd) {
                     usingCmd = wantCmd
                     (if (wantCmd) cmdRec else wakeRec).reset()
                     lastPartial = ""
                     utterance.clear(); speaking = false
+                }
+                if (feedPreroll && usingCmd) {
+                    // Se calló porque hablabas encima: lo que ya habías dicho entra también en la orden.
+                    feedPreroll = false
+                    for (b in preroll.toList().dropLast(1)) if (cmdRec.acceptWaveForm(b, b.size)) {
+                        val t = JSONObject(cmdRec.result).optString("text").replace("[unk]", "").trim()
+                        if (t.isNotBlank()) { if (utterance.isNotEmpty()) utterance.append(' '); utterance.append(t); utteranceAt = now }
+                    }
                 }
                 val rec = if (usingCmd) cmdRec else wakeRec
                 if (rec.acceptWaveForm(buf, n)) {
@@ -661,7 +703,10 @@ object VoiceAssistant {
                 wake()
                 if (rest.isNotBlank()) _state.update { it.copy(heard = rest) }
             }
-            AssistantPhase.LISTENING -> _state.update { it.copy(heard = VoiceCommands.stripWakeWords(VoiceCommands.afterWakeWord(text) ?: text).ifBlank { null }) }
+            AssistantPhase.LISTENING -> {
+                if (heardBeganAt == 0L) heardBeganAt = System.currentTimeMillis()
+                _state.update { it.copy(heard = VoiceCommands.stripWakeWords(VoiceCommands.afterWakeWord(text) ?: text).ifBlank { null }) }
+            }
             else -> Unit
         }
     }
@@ -780,7 +825,8 @@ object VoiceAssistant {
         com.cockpitf30.system.DriverId.answered = false
         val anyVoice = com.cockpitf30.system.VoicePrint.all(app).isNotEmpty()
         voiceFailed = anyVoice
-        voskOnlyUntil = System.currentTimeMillis() + 20_000
+        // La voz ya se ha mirado en el «Hola Athoox»: el nombre lo entiende mucho mejor Google.
+        voskOnlyUntil = 0L
         conversation.ask(Pending.Name, System.currentTimeMillis())
         say(if (anyVoice) "No te reconozco. ¿Cómo te llamas?" else "¿Cómo te llamas?", listenAfter = 8_000L)
     }
@@ -814,7 +860,8 @@ object VoiceAssistant {
             var waited = 0L
             while (atStart && (_state.value.phase != AssistantPhase.WAITING || stillTalking()) && waited < 45_000) { delay(500); waited += 500 }
             if (atStart && (com.cockpitf30.system.DriverId.answered || _state.value.phase != AssistantPhase.WAITING)) return@launch
-            voskOnlyUntil = System.currentTimeMillis() + 30_000
+            // Solo se espera «Hola Athoox» (con Vosk, por la huella) si hay voces aprendidas; un nombre, con Google.
+            voskOnlyUntil = if (com.cockpitf30.system.VoicePrint.all(app).isNotEmpty()) System.currentTimeMillis() + 30_000 else 0L
             com.cockpitf30.system.DriverId.asked = true
             com.cockpitf30.system.DriverId.answered = false
             com.cockpitf30.system.DriverId.voiceChecked = false
@@ -855,6 +902,7 @@ object VoiceAssistant {
             autoResume = false
             val rest = pausedText?.takeIf { System.currentTimeMillis() - pausedAt < 60_000L }
             pausedText = null
+            echoRef.falseAlarm()
             if (rest != null) { logState("nadie dijo nada: sigo"); say(rest); return }
         }
         if (followUp) {
@@ -872,6 +920,7 @@ object VoiceAssistant {
         // solo escucha «Hola Athos» y las interrupciones.
         if (useGoogle()) { listenWithGoogle(); return }
         followUp = false
+        heardBeganAt = 0L
         listenUntil = System.currentTimeMillis() + LISTEN_MS
         _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, reply = null, engine = "Vosk", followUp = false, paused = false) }
         beep()
@@ -882,6 +931,15 @@ object VoiceAssistant {
             val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 70)
             tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 150)
             scope.launch { delay(400); tone.release() }
+        }
+    }
+
+    /** Aviso suave de «ya te escucho» en la conversación seguida (antes no había ninguno y se hablaba antes de tiempo). */
+    private fun cue() {
+        runCatching {
+            val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 35)
+            tone.startTone(ToneGenerator.TONE_PROP_BEEP, 60)
+            scope.launch { delay(300); tone.release() }
         }
     }
 
@@ -918,7 +976,8 @@ object VoiceAssistant {
     }
 
     /** Ajustes: órdenes con Google, y la radio tiene su reconocedor. */
-    private fun useGoogle(): Boolean = System.currentTimeMillis() >= voskOnlyUntil && settings().commandsWithGoogle && googleAvailable()
+    private fun useGoogle(): Boolean = (System.currentTimeMillis() >= voskOnlyUntil || com.cockpitf30.system.DriverId.answered) &&
+        settings().commandsWithGoogle && googleAvailable()
 
     /** Hasta entonces se escucha con Vosk aunque esté Google: hace falta la huella de voz de la respuesta. */
     @Volatile private var voskOnlyUntil = 0L
@@ -938,6 +997,8 @@ object VoiceAssistant {
         }
         this.followUp = followUp
         listenUntil = 0
+        heardBeganAt = 0L
+        googleAskedAt = System.currentTimeMillis()
         _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, reply = if (followUp) it.reply else null, engine = "Google", followUp = followUp, paused = false) }
         val vosk = audioJob
         audioJob = null
@@ -975,13 +1036,21 @@ object VoiceAssistant {
         }
     }
 
-    private fun startGoogle(followUp: Boolean, timeoutMs: Long) {
-        val r = runCatching { SpeechRecognizer.createSpeechRecognizer(app) }.getOrNull()
+    /** Cuándo se pidió escuchar con Google (para medir lo que tarda en estar listo). */
+    private var googleAskedAt = 0L
+    /** Sesión de escucha de Google en curso: los avisos de una anterior se ignoran. */
+    private var googleSession = 0
+
+    private fun startGoogle(followUp: Boolean, timeoutMs: Long, retried: Boolean = false) {
+        val r = recognizer()
         if (r == null) { _state.update { it.copy(engine = "Vosk") }; settingsFallback(); return }
         google = r
+        val session = ++googleSession
         var started = false
+        var ready = false
+        fun live() = google === r && googleSession == session
         fun finish(text: String?, error: Int?) {
-            if (google !== r) return
+            if (!live()) return
             quickJob?.cancel()
             stopGoogle()
             this.followUp = false
@@ -1009,19 +1078,46 @@ object VoiceAssistant {
                 }
             }
         }
+        /** Ya graba: pitido (o aviso suave en la conversación seguida) en ese momento, no antes. */
+        fun onReady() {
+            if (ready || !live()) return
+            ready = true
+            logState("Google listo en ${System.currentTimeMillis() - googleAskedAt} ms")
+            if (followUp) cue() else beep()
+        }
         r.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) { if (!followUp) beep() }
-            override fun onBeginningOfSpeech() { started = true }
+            override fun onReadyForSpeech(params: Bundle?) = onReady()
+            override fun onBeginningOfSpeech() {
+                onReady(); started = true
+                if (heardBeganAt == 0L && live()) heardBeganAt = System.currentTimeMillis()
+            }
             override fun onRmsChanged(rmsdB: Float) {
+                if (!live()) return
+                onReady()
                 val l = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
                 if (kotlin.math.abs(l - _state.value.level) >= 0.04f) _state.update { it.copy(level = l) }
             }
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
-            override fun onError(error: Int) = finish(null, error)
+            override fun onError(error: Int) {
+                // Reutilizar el reconocedor ahorra conectarse cada vez, pero algunas versiones dan «ocupado» o
+                // «error de cliente» al volver a empezar enseguida: se crea uno nuevo y se reintenta una vez.
+                val restartable = error == SpeechRecognizer.ERROR_CLIENT || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
+                    error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED || error == 10 /* ERROR_TOO_MANY_REQUESTS */
+                if (restartable && live() && !started && !retried) {
+                    logState("Google error $error al empezar: reconocedor nuevo")
+                    dropRecognizer()
+                    startGoogle(followUp, timeoutMs, retried = true)
+                    return
+                }
+                if (restartable) dropRecognizerLater()
+                finish(null, error)
+            }
             override fun onResults(results: Bundle?) = finish(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull(), null)
             override fun onPartialResults(partialResults: Bundle?) {
+                if (!live()) return
                 val t = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.takeIf { it.isNotBlank() } ?: return
+                if (heardBeganAt == 0L) heardBeganAt = System.currentTimeMillis()
                 _state.update { it.copy(heard = t) }
                 // «Rendimiento», «radares», «ruta»: en cuanto el parcial lo dice y se queda quieto, se
                 // hace (Google aún esperaría 1,2 s de silencio y luego el resultado final).
@@ -1029,9 +1125,8 @@ object VoiceAssistant {
                 val cmd = VoiceCommands.afterWakeWord(t)?.ifBlank { null } ?: t
                 if (VoiceCommands.quick(cmd) != null) quickJob = scope.launch {
                     delay(QUICK_STABLE_MS)
-                    if (google === r && _state.value.heard == t) {
+                    if (live() && _state.value.heard == t) {
                         logState("orden rápida «$cmd» sin esperar al final de Google")
-                        runCatching { r.cancel() }
                         finish(t, null)
                     }
                 }
@@ -1050,11 +1145,15 @@ object VoiceAssistant {
                     .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1_200L)
                     .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, app.packageName),
             )
-        }.onFailure { finish(null, -1); return }
+        }.onFailure {
+            dropRecognizer()
+            if (!retried) { startGoogle(followUp, timeoutMs, retried = true); return }
+            finish(null, -1); return
+        }
         // Si nadie habla en el tiempo de escucha, se cierra (Google a veces espera mucho más).
         scope.launch {
             delay(timeoutMs + 1_000)
-            if (google === r && !started) { r.cancel(); finish(null, SpeechRecognizer.ERROR_SPEECH_TIMEOUT) }
+            if (live() && !started) finish(null, SpeechRecognizer.ERROR_SPEECH_TIMEOUT)
         }
     }
 
@@ -1067,10 +1166,28 @@ object VoiceAssistant {
 
     private var quickJob: kotlinx.coroutines.Job? = null
 
+    /** El reconocedor de Google, creado una vez y reutilizado (conectarse a su servicio cada vez tardaba). */
+    private var recognizer: SpeechRecognizer? = null
+
+    private fun recognizer(): SpeechRecognizer? = recognizer
+        ?: runCatching { SpeechRecognizer.createSpeechRecognizer(app) }.onFailure { Log.w(TAG, "Reconocedor", it) }.getOrNull()?.also { recognizer = it }
+
+    /** Acaba la escucha de Google en curso (suelta el micrófono) sin desconectar el reconocedor. */
     private fun stopGoogle() {
-        google?.let { runCatching { it.destroy() } }
+        google?.let { runCatching { it.cancel() } }
         google = null
+        googleSession++
     }
+
+    /** Desconecta el reconocedor de Google (la app sale de pantalla o falla): se creará otro. */
+    private fun dropRecognizer() {
+        stopGoogle()
+        recognizer?.let { runCatching { it.destroy() } }
+        recognizer = null
+    }
+
+    /** Tras un error del servicio: se desconecta en cuanto acabe lo que está pasando. */
+    private fun dropRecognizerLater() = scope.launch { delay(50); if (google == null) dropRecognizer() }
 
     // ---------------------------------------------------------------- órdenes y respuestas
 
@@ -1087,16 +1204,20 @@ object VoiceAssistant {
         // En la escucha seguida se descarta lo suelto (ruido, la radio); una frase de verdad se contesta.
         // Lo oído justo después de hablar puede ser el final de su propia voz (en una tablet el altavoz
         // sigue sonando cuando el motor ya dice que ha terminado): contestarlo cortaba la respuesta.
-        val echo = inFollowUp && !waitingAnswer && command !is Command.Cancel &&
+        // Solo puede ser su eco si empezó a oírse justo al callarse: antes una pregunta de verdad que
+        // repetía palabras de la respuesta («llévame a la gasolinera más cercana») se tiraba como eco.
+        val soonAfter = heardBeganAt == 0L || heardBeganAt - lastSpeechEndAt < ECHO_WINDOW_MS
+        val echo = inFollowUp && !waitingAnswer && command !is Command.Cancel && soonAfter &&
             (VoiceCommands.isEcho(text, lastSaid) || VoiceCommands.normalize(text) == VoiceCommands.normalize(lastSaid))
         if (echo) Log.i(TAG, "Eco de su propia voz, se ignora: «$text»")
         if (echo || inFollowUp && !waitingAnswer && ((command is Command.Unknown && words < 3) || command == Command.Yes || command == Command.Another)) {
             // Sin «Hola Athos» y sin sentido: será la radio o alguien hablando. No se contesta.
             // Si se había callado por esa voz, sigue donde iba.
-            if (wasAuto) pausedText?.let { rest -> pausedText = null; logState("no era una orden: sigo"); say(rest); return }
+            if (wasAuto) { echoRef.falseAlarm(); pausedText?.let { rest -> pausedText = null; logState("no era una orden: sigo"); say(rest); return } }
             _state.update { it.copy(phase = AssistantPhase.WAITING, heard = null, followUp = false, paused = false) }
             return
         }
+        if (wasAuto) echoRef.trueAlarm()
         _state.update { it.copy(heard = text, followUp = false, paused = false) }
         if (command == Command.Cancel || command == Command.Quiet || command == Command.No) hush("«$text»")
         lastActivityAt = now
@@ -2079,6 +2200,17 @@ object VoiceAssistant {
                     if (utteranceId?.startsWith(ROBOT_ID) != true) SpeechPulse.word()
                     chunkIndex(utteranceId)?.let { i -> spokenPos = (speechOffsets.getOrNull(i) ?: 0) + start }
                 }
+                // El audio que va a sonar (copia del que sale por el altavoz): referencia del eco para poder
+                // cortarla hablando encima ([EchoRef]). Solo de los trozos de la frase en curso.
+                override fun onBeginSynthesis(utteranceId: String?, sampleRateInHz: Int, audioFormat: Int, channelCount: Int) {
+                    if (utteranceId == null || chunkIndex(utteranceId) == null) return
+                    synthRate[utteranceId] = if (audioFormat == AudioFormat.ENCODING_PCM_16BIT) sampleRateInHz * channelCount.coerceAtLeast(1) else 0
+                }
+                override fun onAudioAvailable(utteranceId: String?, audio: ByteArray?) {
+                    val id = utteranceId ?: return
+                    val rate = synthRate[id] ?: return
+                    if (rate > 0 && audio != null && chunkIndex(id) != null) echoRef.refBytes(audio, rate, System.currentTimeMillis())
+                }
                 override fun onError(utteranceId: String?, errorCode: Int) {
                     ttsLastError = "error $errorCode al hablar"
                     @Suppress("DEPRECATION") onError(utteranceId)
@@ -2267,6 +2399,8 @@ object VoiceAssistant {
         SpeechPulse.speaking(true)
         unmuteJob?.cancel()
         stopSpeaking()
+        echoRef.newSpeech()
+        synthRate.clear()
         // Por frases: empieza a sonar antes (no espera a preparar todo el texto, que con poca
         // conexión o la voz TARS tardaba) y una explicación larga no depende de una sola síntesis.
         val written = SpeechChunks.split(text)
@@ -2394,6 +2528,8 @@ object VoiceAssistant {
                 spokenPos = speechOffsets.getOrNull(i + 1) ?: (_state.value.reply?.length ?: 0)
                 val tr = track
                 val out = gained(pcm.samples)
+                // Lo que va a sonar, antes de escribirlo (write espera a que haya hueco en la pista).
+                echoRef.ref(out, out.size, rate, System.currentTimeMillis())
                 val n = withContext(Dispatchers.IO) { runCatching { tr.write(out, 0, out.size) }.getOrDefault(-1) }
                 if (n < 0 || replyId != rid) return
                 SpeechPulse.robotSamples(out, n)
@@ -2443,7 +2579,10 @@ object VoiceAssistant {
         unmuteJob?.cancel()
         // Margen: algunos motores (tablets Xiaomi) avisan y dejan de decir «hablando» con el final
         // aún en el altavoz; se volvía a escuchar antes de tiempo y se oía a sí misma.
-        unmuteJob = finishWhenSilent(500L, why)
+        // Si se sabe lo que suena y con qué retraso vuelve, se espera justo a que acabe (antes 0,5 s fijos).
+        val end = echoRef.refEndMs
+        val margin = if (echoRef.ready && end > 0) (end + echoRef.lag * EchoRef.FRAME_MS + 150 - System.currentTimeMillis()).coerceIn(100L, 1_500L) else 500L
+        unmuteJob = finishWhenSilent(margin, why)
     }
 
     /** Voz TARS ya procesada de frases cortas (las confirmaciones de pantalla se repiten mucho). */
@@ -2496,9 +2635,11 @@ object VoiceAssistant {
         unmuteJob?.cancel()
         listenAfterReply = 0
         stopSpeaking()
+        SpeechPulse.speaking(false)
         muted = false
         resetRecognizer = true
         val now = System.currentTimeMillis()
+        lastSpeechEndAt = now
         if (action != VoiceCommands.Barge.STOP && rest != null) { pausedText = rest; pausedAt = now } else pausedText = null
         if (action == VoiceCommands.Barge.STOP) hush("«$text» mientras hablaba")
         when (action) {
@@ -2515,13 +2656,16 @@ object VoiceAssistant {
     private fun onVoiceOver(ratio: Float) {
         if (_state.value.phase != AssistantPhase.ANSWERING || !muted) return
         val rest = remainingText(_state.value.reply.orEmpty(), spokenPos)
-        logState("voz encima de la suya (${"%.1f".format(ratio)}×): me callo y escucho")
+        logState("voz encima de la suya (" + (if (ratio >= 0) "${"%.1f".format(ratio)}× su eco" else echoRef.describe()) + "): me callo y escucho")
         noteCut("hablaste encima")
         unmuteJob?.cancel()
         listenAfterReply = 0
         stopSpeaking()
+        SpeechPulse.speaking(false)
         muted = false
         resetRecognizer = true
+        feedPreroll = true
+        lastSpeechEndAt = System.currentTimeMillis()
         pausedText = rest; pausedAt = System.currentTimeMillis()
         autoResume = rest != null
         listenFollowUp(VOICE_OVER_LISTEN_MS, paused = rest != null)
@@ -2541,6 +2685,7 @@ object VoiceAssistant {
         logState("escucha ${ms / 1000} s" + if (paused) " (en pausa, «sigue»)" else "")
         if (audioJob?.isActive != true) backToVosk()
         followUp = true
+        heardBeganAt = 0L
         listenUntil = System.currentTimeMillis() + ms
         _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, engine = "Vosk", followUp = true, paused = paused, level = 0f) }
     }
@@ -2572,7 +2717,8 @@ object VoiceAssistant {
         if (_state.value.phase == AssistantPhase.ANSWERING) {
             val took = System.currentTimeMillis() - speechStartedAt
             lastSpeechEnd = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()) +
-                " · $why · ${took / 1000} s (lectura ~${speechEstimateMs / 1000} s) · ${speechOffsets.size} trozos · «${_state.value.reply.orEmpty().take(30)}…»"
+                " · $why · ${took / 1000} s (lectura ~${speechEstimateMs / 1000} s) · ${speechOffsets.size} trozos · «${_state.value.reply.orEmpty().take(30)}…» · ${echoRef.describe()}"
+            lastSpeechEndAt = System.currentTimeMillis()
         }
         unmuteJob?.cancel()
         muted = false
@@ -2600,8 +2746,10 @@ object VoiceAssistant {
             audioJob?.isActive == true && resumed && follow > 0 -> {
                 // Conversación seguida: se puede contestar sin volver a decir «Hola Athos».
                 followUp = true
+                heardBeganAt = 0L
                 listenUntil = System.currentTimeMillis() + follow
                 _state.update { it.copy(phase = AssistantPhase.LISTENING, heard = null, engine = "Vosk", followUp = true, level = 0f) }
+                cue()
             }
             audioJob?.isActive == true -> set(AssistantPhase.WAITING)
             installJob?.isActive == true -> set(AssistantPhase.DOWNLOADING)
