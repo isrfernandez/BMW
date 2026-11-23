@@ -39,7 +39,7 @@ fun DriverBanner(modifier: Modifier = Modifier) {
         ) {
             Column {
                 Text("Conduce ${s.name}" + if (s.capi) " · Zeus" else "", style = MaterialTheme.typography.titleMedium, color = Cockpit.Text)
-                Text(if (s.how == DriverId.How.LAST) "Último conductor" else "Reconocido ${s.how.text}", style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
+                Text(when (s.how) { DriverId.How.LAST -> "Último conductor"; DriverId.How.GUEST -> "Modo invitado, ajustes de fábrica"; else -> "Reconocido ${s.how.text}" }, style = MaterialTheme.typography.bodyMedium, color = Cockpit.TextDim)
             }
             FocusTile(onClick = { VoiceAssistant.askWho(ctx) }) {
                 Text("No soy yo", Modifier.padding(horizontal = 20.dp, vertical = 10.dp), style = MaterialTheme.typography.titleMedium)

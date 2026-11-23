@@ -40,6 +40,8 @@ sealed interface Command {
     /** «Repite», «¿qué has dicho?». */
     data object Repeat : Command
     data object Thanks : Command
+    /** Sin identificar o sin querer perfil: sigue como invitado. */
+    data object Guest : Command
     /** «Sí», «vale», «venga»: contesta a lo último que preguntó el asistente. */
     data object Yes : Command
     /** «No» a una pregunta del asistente (sale de [Conversation], no del texto). */
@@ -570,6 +572,14 @@ object VoiceCommands {
     private val WEATHER_WORDS = arrayOf("tiempo", "temperatura", "llover", "llueve", "lluvia", "clima", "frio", "calor", "sol", "nieve", "nevar", "grados")
     private val YES = setOf("si", "vale", "venga", "claro", "dale", "por favor", "adelante", "de acuerdo", "ok", "okey", "bueno", "vale vale", "si si", "claro que si", "vamos alla", "por supuesto")
     /** «Soy de Madrid», «soy un desastre»: no son nombres. */
+    /** «Luis», «Ana María»: un nombre solo, como respuesta a «¿cómo te llamas?». */
+    fun bareName(t: String): String? {
+        val w = t.trim().removePrefix("me llamo ").removePrefix("soy ").trim().split(' ').filter { it.isNotBlank() }
+        if (w.isEmpty() || w.size > 3 || w.any { !it.matches(Regex("[a-zñ]{2,20}")) } || w.first() in NOT_NAMES) return null
+        if (w.any { it in setOf("no", "si", "nada", "que", "como", "donde", "pon", "abre", "quita") }) return null
+        return w.joinToString(" ") { s -> s.replaceFirstChar { it.uppercase() } }
+    }
+
     private val NOT_NAMES = setOf("de", "del", "un", "una", "el", "la", "muy", "tu", "su", "mas", "nuevo", "nueva", "yo")
 
     private val ANOTHER = setOf("otro", "otra", "otra mas", "otro mas", "siguiente", "la siguiente", "el siguiente", "y otra", "y otro", "uno mas", "una mas", "mas", "cuentame otro", "dime otro", "dime otra")

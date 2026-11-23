@@ -24,7 +24,7 @@ import org.json.JSONObject
  * algún byte cambia.
  */
 object DriverId {
-    enum class How(val text: String) { WIFI("por tu móvil"), VOICE("por tu voz"), SAID("por tu nombre"), LAST("último conductor") }
+    enum class How(val text: String) { WIFI("por tu móvil"), VOICE("por tu voz"), SAID("por tu nombre"), LAST("último conductor"), GUEST("modo invitado") }
     data class Greeting(val profileId: String, val name: String, val capi: Boolean, val how: How, val at: Long = System.currentTimeMillis())
 
     /** Aviso en pantalla de quién conduce (unos segundos tras arrancar o al reconocerlo). */
@@ -35,6 +35,9 @@ object DriverId {
 
     /** Alguien ha dicho quién es en este arranque: la red del móvil ya no cambia de conductor. */
     @Volatile var answered = false
+
+    /** Pedir en pantalla el PIN de Zeus para entrar en su perfil (nombre del perfil). */
+    val askPin = MutableStateFlow<String?>(null)
 
     /** Se ha preguntado «¿quién conduce?» y se espera respuesta. */
     @Volatile var asked = false
