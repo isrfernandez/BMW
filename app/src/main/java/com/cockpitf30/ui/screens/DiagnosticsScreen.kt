@@ -180,9 +180,31 @@ fun DiagnosticsScreen() {
             item {
                 DiagCard("Botón de voz del volante") {
                     Info(com.cockpitf30.assistant.VoiceButton.claimNote, Cockpit.TextDim)
-                    Info("Pulsa el botón y mira «Eventos de entrada» (abajo): se apunta cualquier tecla, aviso del coche o apertura de la app de voz.", Cockpit.TextDim)
-                    ChipRow(listOf("Volver a asignar la tecla de voz"), -1) {
-                        Thread({ com.cockpitf30.assistant.VoiceButton.claim(context) }, "boton-voz").start()
+                    var code by remember { mutableStateOf(com.cockpitf30.assistant.VoiceButton.wheelCode(context)) }
+                    var learning by remember { mutableStateOf(false) }
+                    LaunchedEffect(learning) {
+                        while (learning) {
+                            kotlinx.coroutines.delay(300)
+                            if (System.currentTimeMillis() > com.cockpitf30.assistant.VoiceButton.learnUntil) {
+                                learning = false; code = com.cockpitf30.assistant.VoiceButton.wheelCode(context)
+                            }
+                        }
+                    }
+                    Info(
+                        when {
+                            learning -> "Pulsa ahora el botón de voz del volante (15 s)…"
+                            code >= 0 -> "Botón de voz del volante aprendido: tecla %02X %02X de la caja CAN. Pulsarlo es como decir «Hola Athoox».".format(code shr 8, code and 0xFF)
+                            else -> "Sin aprender. La radio no avisa del botón de voz, pero la caja CAN manda las teclas del volante: pulsa Aprender y luego el botón."
+                        },
+                        if (code >= 0 && !learning) Cockpit.BlueLight else Cockpit.Text,
+                    )
+                    Info("Última tecla del volante: ${com.cockpitf30.assistant.VoiceButton.lastWheel ?: "ninguna desde que arrancó la app"}", Cockpit.TextDim)
+                    ChipRow(listOf("Aprender botón de voz", "Olvidarlo", "Volver a asignar la tecla de voz"), -1) {
+                        when (it) {
+                            0 -> { com.cockpitf30.assistant.VoiceButton.learnUntil = System.currentTimeMillis() + 15_000; learning = true }
+                            1 -> { com.cockpitf30.assistant.VoiceButton.setWheelCode(context, -1); code = -1 }
+                            else -> Thread({ com.cockpitf30.assistant.VoiceButton.claim(context) }, "boton-voz").start()
+                        }
                     }
                 }
             }
@@ -200,7 +222,7 @@ fun DiagnosticsScreen() {
             item {
                 val tripLog by com.cockpitf30.vehicle.trip.TripComputer.summaryLog.collectAsStateWithLifecycle()
                 DiagCard("Resumen al apagar el motor") {
-                    Info("Se enseña al apagar el motor (rpm a cero o ACC apagado) si el trayecto pasa de ${com.cockpitf30.vehicle.trip.TripComputer.SUMMARY_MIN_KM} km; si la radio se apaga antes, al volver a arrancar.", Cockpit.TextDim)
+                    Info("Se enseña al apagar el motor (rpm a cero o contacto quitado) si el trayecto pasa de ${com.cockpitf30.vehicle.trip.TripComputer.SUMMARY_MIN_KM} km; si la radio se apaga antes, al volver a arrancar.", Cockpit.TextDim)
                     ChipRow(listOf("Ver el resumen ahora"), -1) { com.cockpitf30.vehicle.trip.TripComputer.showSummary() }
                     if (tripLog.isEmpty()) Info("Sin eventos todavía", Cockpit.TextDim)
                     tripLog.take(15).forEach { Mono(it) }
@@ -420,7 +442,9 @@ private fun vehicleSummary(v: com.cockpitf30.vehicle.VehicleState): String =
 /** Lo que dice la caja CAN y no cabe en VehicleState: freno de mano, cinturones, litros, kilometraje. */
 private fun canBoxSummary(values: Map<String, String>): String {
     fun yes(k: String, si: String, no: String) = when (values[k]) { "true" -> si; "false" -> no; else -> "?" }
-    return "ACC ${yes("can.acc", "sí", "no")} · freno de mano ${yes("can.handbrake", "puesto", "quitado")} · " +
+    // «ACC» aquí es el contacto de la llave (accesorios), no el control de crucero activo: con el
+    // motor en marcha siempre está puesto.
+    return "contacto (llave) ${yes("can.acc", "puesto", "quitado")} · freno de mano ${yes("can.handbrake", "puesto", "quitado")} · " +
         "cierre ${yes("can.central_lock", "cerrado", "abierto")} · cinturón conductor ${yes("can.belt_driver", "puesto", "sin poner")} · " +
         "combustible ${values["can.fuel_liters"] ?: "?"} · km ${values["can.mileage"] ?: "?"} · autonomía ${values["can.fuel_range"] ?: "?"} · " +
         "d7 (¿temperatura?) ${values["can.d7_raw"] ?: "?"} · d8 ${values["can.d8_raw"] ?: "?"} · velocidad ${values["can.speed"] ?: "?"} · rpm ${values["can.rpm"] ?: "?"}"

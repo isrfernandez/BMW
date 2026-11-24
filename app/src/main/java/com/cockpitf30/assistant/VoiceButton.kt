@@ -45,9 +45,53 @@ object VoiceButton {
     val KEYS = setOf(KeyEvent.KEYCODE_VOICE_ASSIST, KeyEvent.KEYCODE_SEARCH, KeyEvent.KEYCODE_ASSIST)
 
     private var lastAt = 0L
+    @Volatile private var appCtx: Context? = null
+
+    // ── Teclas del volante que manda la caja CAN (tramas 0x20–0x22) ─────────────
+    // En la prueba del 23/11 el botón no llegó por ningún aviso de Android (ni CAR_KEY ni la app de
+    // voz), pero la caja sí manda tramas 0x22 («22 81 01», «22 82 01») con las teclas del volante.
+    // No sabemos qué código es el de voz: se aprende (Diagnóstico › Botón de voz › Aprender).
+
+    private const val KEY_WHEEL = "wheel_voice_code"
+    /** Hasta cuándo la próxima tecla del volante se guarda como la de voz. */
+    @Volatile var learnUntil = 0L
+    /** Última tecla del volante (Diagnóstico). */
+    @Volatile var lastWheel: String? = null
+        private set
+    private var lastWheelHex = ""
+    private var lastWheelAt = 0L
+
+    fun wheelCode(ctx: Context): Int = ctx.getSharedPreferences("cockpit", Context.MODE_PRIVATE).getInt(KEY_WHEEL, -1)
+    fun setWheelCode(ctx: Context, code: Int) { ctx.getSharedPreferences("cockpit", Context.MODE_PRIVATE).edit().putInt(KEY_WHEEL, code).apply() }
+
+    /** Trama de tecla del volante [type] con sus datos (código, estado…). Hilo cualquiera. */
+    fun onWheelFrame(type: Int, data: ByteArray) {
+        val ctx = appCtx ?: return
+        if (data.isEmpty()) return
+        val code = (type shl 8) or (data[0].toInt() and 0xFF)
+        val state = if (data.size > 1) data[1].toInt() and 0xFF else 1
+        val hex = "%02X ".format(type) + data.joinToString(" ") { "%02X".format(it) }
+        val now = System.currentTimeMillis()
+        // La caja repite la trama mientras se mantiene: solo cuenta cuando cambia o tras una pausa.
+        val fresh = hex != lastWheelHex || now - lastWheelAt > 600
+        lastWheelHex = hex; lastWheelAt = now
+        if (!fresh) return
+        lastWheel = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()) + " · $hex"
+        VehicleRepository.logInput("Volante (caja CAN): $hex")
+        if (state == 0) return // soltar
+        if (now < learnUntil) {
+            learnUntil = 0L
+            setWheelCode(ctx, code)
+            VehicleRepository.logInput("Botón de voz aprendido: tecla ${"%02X %02X".format(type, code and 0xFF)}")
+            android.os.Handler(android.os.Looper.getMainLooper()).post { VoiceAssistant.note("botón de voz del volante aprendido: $hex") }
+            return
+        }
+        if (code == wheelCode(ctx)) android.os.Handler(android.os.Looper.getMainLooper()).post { press(ctx, "volante (caja CAN) $hex") }
+    }
 
     fun register(context: Context) {
         val app = context.applicationContext
+        appCtx = app
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context, intent: Intent) {
                 val extras = intent.extras?.keySet()?.joinToString { k -> "$k=${intent.extras?.get(k)}" }.orEmpty()

@@ -54,6 +54,8 @@ object CanBoxData {
             }
             CanBoxFrames.decode(f).forEach { (k, v) -> values[k] = v }
             if (f.type == CanBoxFrames.TYPE_BASE) baseSeen = true
+            // Teclas del volante: el botón de voz (aprendido en Diagnóstico) abre el asistente.
+            if (f.type in 0x20..0x22) com.cockpitf30.assistant.VoiceButton.onWheelFrame(f.type, f.data)
         }
         if (frames.isNotEmpty()) onFrame?.invoke()
     }
