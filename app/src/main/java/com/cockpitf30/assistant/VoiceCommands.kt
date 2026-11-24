@@ -327,6 +327,7 @@ object VoiceCommands {
         put(Screen.FUEL, "gasolineras", "gasolinera", "las gasolineras")
         put(Screen.MAINTENANCE, "mantenimiento", "el mantenimiento", "revisiones")
         put(Screen.TOURISM, "turismo")
+        put(Screen.CONNECTIONS, "conexiones", "las conexiones", "wifi", "el wifi", "wi fi", "el wi fi", "bluetooth", "el bluetooth", "cobertura", "la cobertura", "datos moviles", "satelites", "los satelites")
         put(Screen.PHONE, "telefono", "el telefono", "agenda")
         put(Screen.APPS, "aplicaciones", "apps", "las aplicaciones")
         put(Screen.SETTINGS, "ajustes", "los ajustes", "configuracion")
@@ -526,6 +527,7 @@ object VoiceCommands {
         return when {
             has("gasolinera") && has("cercana", "cerca", "proxima") -> Command.Info(InfoTopic.FUEL_NEAR)
             has("turismo", "turistic", "emblematic") -> Command.Open(Screen.TOURISM)
+            has("conexion", "wifi", "wi fi", "bluetooth", "cobertura", "satelite", "datos moviles", "4g", "señal gps", "senal gps") -> Command.Open(Screen.CONNECTIONS)
             has("radar", "radares", "multa", "en ruta", "en el camino", "por el camino", "destino") -> Command.Open(Screen.ROUTE)
             has("rendimiento", "potencia", "fuerzas g", "fuerza g", "altitud", "pendiente", "telemetria") -> Command.Open(Screen.PERFORMANCE)
             has("gasolinera", "repostar", "echar gasoil", "echar gasolina") -> Command.Open(Screen.FUEL)

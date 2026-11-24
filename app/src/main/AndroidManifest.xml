@@ -7,6 +7,15 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- Ver el móvil conectado (llave del Capi). En la radio (Android 10) basta con BLUETOOTH. -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <!-- Conexiones: buscar, emparejar, conectar y olvidar aparatos Bluetooth (Android de la radio y emulador). -->
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Conexiones: buscar redes Wi-Fi y guardarlas (redes sugeridas). -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <!-- Conexiones: tipo de red de la SIM (4G/3G) y si los datos móviles están activados. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <!-- Cerrar Google Maps del todo con «cierra el mapa». -->
     <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />

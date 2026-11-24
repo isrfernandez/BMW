@@ -474,6 +474,7 @@ private fun CockpitRoot(navActions: SharedFlow<NavAction>) {
                 Screen.MAINTENANCE -> com.cockpitf30.ui.screens.MaintenanceScreen()
                 Screen.RADIO -> com.cockpitf30.ui.screens.RadioScreen()
                 Screen.TOURISM -> com.cockpitf30.ui.screens.TourismScreen()
+                Screen.CONNECTIONS -> com.cockpitf30.ui.screens.ConnectionsScreen()
             }
         }
             com.cockpitf30.ui.components.MapsGuidanceBanner(Modifier.align(androidx.compose.ui.Alignment.TopCenter).padding(top = 14.dp))

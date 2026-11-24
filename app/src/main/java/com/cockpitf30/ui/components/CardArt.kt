@@ -50,6 +50,7 @@ enum class CardTheme(val from: Color, val to: Color) {
     SERVICE(Color(0xFF00A88F), Color(0xFF9CFFD9)),
     RADIO(Color(0xFF1C69D8), Color(0xFF3DDC97)),
     TOURISM(Color(0xFFB8733F), Color(0xFF7FD3FF)),
+    CONNECT(Color(0xFF1C69D8), Color(0xFF7C8CFF)),
 }
 
 /**
@@ -117,6 +118,12 @@ fun BoxScope.CardArt(theme: CardTheme) {
         CardTheme.TOURISM -> Box(Modifier.align(Alignment.TopEnd).padding(top = 14.dp, end = 30.dp).size(160.dp)) {
             Canvas(Modifier.fillMaxSize()) { rings(theme) }
             GlassBadge(theme, Modifier.align(Alignment.Center).size(110.dp)) { GradientIcon(Icons.Filled.Place, theme, 54) }
+        }
+        CardTheme.CONNECT -> Box(Modifier.align(Alignment.TopEnd).padding(top = 14.dp, end = 30.dp).size(160.dp)) {
+            Canvas(Modifier.fillMaxSize()) { rings(theme) }
+            GlassBadge(theme, Modifier.align(Alignment.Center).size(110.dp)) {
+                Canvas(Modifier.size(58.dp)) { wifiWaves(theme) }
+            }
         }
         CardTheme.WEATHER, CardTheme.MODE, CardTheme.RADAR, CardTheme.RADIO -> Unit
     }
@@ -215,6 +222,17 @@ private fun DrawScope.mapGrid(theme: CardTheme) {
     }
     drawPath(pin, Brush.linearGradient(listOf(Color.White, theme.to, theme.from), Offset(cx - r, cy - r), Offset(cx + r, cy + r * 2)))
     drawCircle(Color(0xFF0B0C10), r * 0.38f, Offset(cx, cy))
+}
+
+/** Ondas de Wi-Fi con el degradado de la tarjeta. */
+private fun DrawScope.wifiWaves(theme: CardTheme) {
+    val w = size.width
+    val b = Brush.linearGradient(listOf(Color.White, theme.to))
+    val cx = w / 2; val cy = size.height * 0.86f
+    for (r in listOf(0.80f, 0.54f, 0.28f)) {
+        drawArc(b, 225f, 90f, false, Offset(cx - w * r, cy - w * r), Size(w * r * 2, w * r * 2), style = Stroke(w * 0.09f, cap = StrokeCap.Round))
+    }
+    drawCircle(b, w * 0.08f, Offset(cx, cy - w * 0.02f))
 }
 
 private fun DrawScope.rings(theme: CardTheme) {

@@ -153,6 +153,8 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
             Card("weather", "Tiempo", "", CardTheme.WEATHER, { onOpen(Screen.WEATHER) }),
             Card("vehicle", "Vehículo", "iDrive original del coche", CardTheme.VEHICLE, { onOpen(Screen.VEHICLE) }),
             Card("phone", "Teléfono", "Marcador y contactos", CardTheme.PHONE, { onOpen(Screen.PHONE) }),
+            // Wi-Fi, Bluetooth, cobertura de la SIM y GPS sin salir de la app.
+            Card("connect", "Conexiones", "Wi-Fi, Bluetooth, 4G y GPS", CardTheme.CONNECT, { onOpen(Screen.CONNECTIONS) }, Alignment.BottomStart) { ConnectBody() },
             Card("service", "Mantenimiento", "Aceite, neumáticos e ITV", CardTheme.SERVICE, { onOpen(Screen.MAINTENANCE) }, Alignment.BottomStart) { ServiceBody() },
             Card("diag", "Diagnóstico", "Información técnica y depuración", CardTheme.DIAG, { onOpen(Screen.DIAGNOSTICS) }),
         ).filter { it.id != "diag" || capi }.associateBy { it.id }
@@ -469,6 +471,30 @@ private fun TripBody() {
     }
 }
 
+/** Wi-Fi y cobertura de la SIM de un vistazo (se mira cada 5 s mientras se ve la tarjeta). */
+@Composable
+private fun ConnectBody() {
+    val context = LocalContext.current
+    var snap by remember { mutableStateOf(com.cockpitf30.system.Connectivity.snapshot(context)) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(5000)
+            snap = com.cockpitf30.system.Connectivity.snapshot(context)
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (snap.cell.simReady) {
+            com.cockpitf30.ui.screens.Bars(snap.cell.level, Modifier.size(width = 26.dp, height = 20.dp))
+            Text(snap.cell.tech ?: "SIM", style = MaterialTheme.typography.titleLarge, maxLines = 1)
+        }
+        if (snap.wifi.ssid != null) {
+            com.cockpitf30.ui.screens.Bars(snap.wifi.level, Modifier.size(width = 26.dp, height = 20.dp))
+            Text(snap.wifi.ssid!!, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.width(110.dp))
+        }
+        if (!snap.cell.simReady && snap.wifi.ssid == null) Text(if (snap.net.internet) "Internet" else "Sin Internet", style = MaterialTheme.typography.titleLarge, color = Cockpit.TextDim)
+    }
+}
+
 /** Lo más urgente del mantenimiento, con su color. */
 @Composable
 private fun ServiceBody() {
@@ -557,4 +583,4 @@ internal fun launch(context: Context, intent: Intent) {
     }
 }
 
-enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, SETTINGS, WEATHER, PHONE, FUEL, PERFORMANCE, ROUTE, MAINTENANCE, RADIO, TOURISM }
+enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, SETTINGS, WEATHER, PHONE, FUEL, PERFORMANCE, ROUTE, MAINTENANCE, RADIO, TOURISM, CONNECTIONS }

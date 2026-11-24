@@ -1148,6 +1148,7 @@ object VoiceAssistant {
         Screen.TRIP -> "Viaje"
         Screen.FUEL -> "Gasolineras"
         Screen.TOURISM -> "Turismo"
+        Screen.CONNECTIONS -> "Conexiones"
         Screen.PHONE -> "Teléfono"
         Screen.APPS -> "Aplicaciones"
         Screen.SETTINGS -> "Ajustes"
@@ -1505,6 +1506,7 @@ object VoiceAssistant {
                 Screen.MAINTENANCE -> Maintenance.spoken(com.cockpitf30.ui.screens.serviceStatuses(settings())) ?: "Mantenimiento: todo al día"
                 Screen.RADIO -> "Abro la radio"
                 Screen.TOURISM -> "Lo más interesante de la zona, dónde comer y dónde dormir"
+                Screen.CONNECTIONS -> "Wi-Fi, Bluetooth, cobertura y GPS"
             }
         }
         is Command.Info -> info(c.topic, now)
