@@ -416,13 +416,14 @@ private fun BtPanel(b: BtState) {
                         Btn(if (b.powered == false) "Encender" else "Apagar", accent) { Connectivity.setBt(ctx, b.powered == false) }
                         Btn(if (b.searching) "Parar búsqueda" else "Buscar dispositivos") { Connectivity.searchBt(ctx) }
                     }
-                    Btn("App Bluetooth") { Connectivity.openBtApp(ctx) }
+                    Btn("Ajustes Android") { Connectivity.openAndroidBt(ctx) }
+                    Btn("App de la radio") { Connectivity.openBtApp(ctx) }
                 }
             },
         )
         if (b.source == BtSource.NONE) {
             Text("No llego al Bluetooth de la radio", style = MaterialTheme.typography.headlineSmall)
-            Note("Ni el servicio del coche ni Android responden. «App Bluetooth» abre la de la radio para emparejar el móvil.")
+            Note("Ni el servicio del coche ni Android responden. «Ajustes Android» abre el Bluetooth de Android; «App de la radio», la de serie.")
             return@Column
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(28.dp)) {

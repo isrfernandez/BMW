@@ -158,8 +158,8 @@ internal class AthosText(
 /** Altura del centro del anillo (y del triángulo) en el panel, como fracción del alto. */
 internal const val RING_Y = 0.52f
 
-/** athoox_core.mp4 (1440×360): la franja [CRYSTAL_REGION] de athos_intro.mp4, que es lo que se ve en la vista Athoox. */
-internal const val CORE_ASPECT = 1440f / 360f
+/** athoox_core.mp4 (1152×288 desde 1.0.13, antes 1440×360: un 36 % menos que decodificar): la franja [CRYSTAL_REGION] de athos_intro.mp4, que es lo que se ve en la vista Athoox. */
+internal const val CORE_ASPECT = 1152f / 288f
 /** Centro del cristal en athoox_core.mp4 (fracciones): el de [CRYSTAL_FOCUS] pasado a la franja. */
 internal val CORE_FOCUS = Offset(0.505f, (0.3633f * 720f - 12f) / 480f)
 

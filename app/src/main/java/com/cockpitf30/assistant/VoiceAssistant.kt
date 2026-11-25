@@ -160,6 +160,17 @@ object VoiceAssistant {
     private const val ECHO_WINDOW_MS = 1_500L
     /** Lo que escucha tras callarse por una voz encima; si nadie dice nada, sigue. */
     private const val VOICE_OVER_LISTEN_MS = 4_500L
+    /** Letras por segundo que dice la voz (para saber por dónde va si el motor no lo cuenta). */
+    private const val SPOKEN_CHARS_PER_S = 14L
+    /**
+     * Explicaciones largas (turismo, «háblame de eso»): aunque «callarse al hablarle encima» esté
+     * apagado, una voz claramente más fuerte que su eco un rato (gritarle «¡cancela!») la calla y
+     * escucha; lo dicho entra en la orden. Más exigente que el modo general para que su propia voz
+     * no la corte.
+     */
+    private const val LONG_REPLY_CHARS = 180
+    private const val SHOUT_RATIO = 2.6f
+    private const val SHOUT_BLOCKS = 4
     /** Tiempo que debe mantenerse en el parcial una orden de interrupción para hacerle caso. */
     private const val BARGE_STABLE_MS = 700L
     /** Lo mismo para una orden de corte inconfundible («cancela», «detente»…), buscada en todo lo transcrito. */
@@ -517,6 +528,16 @@ object VoiceAssistant {
                         val ratio = voiceOverEcho(echoLevels).second
                         _state.update { it.copy(lastText = "(hablando) $hit") }
                         withContext(Dispatchers.Main) { safely("interrupción") { logState("oído mientras habla: «$hit» (micro ${"%.1f".format(ratio)}× su eco; libre: «${fRaw.takeLast(40)}»)"); onBargeIn(hit) } }
+                    } else if (hit == null && !voiceOver && (_state.value.reply?.length ?: 0) >= LONG_REPLY_CHARS &&
+                        echoLevels.size >= VOICE_OVER_MIN_BLOCKS && now - mutedSince > VOICE_OVER_GRACE_MS) {
+                        // Explicación larga: gritarle encima la corta (ver [LONG_REPLY_CHARS]).
+                        val ratio = voiceOverEcho(echoLevels).second
+                        overCount = if (ratio >= SHOUT_RATIO) overCount + 1 else 0
+                        if (overCount >= SHOUT_BLOCKS) {
+                            overCount = 0
+                            bargeRec.reset(); freeRec.reset()
+                            withContext(Dispatchers.Main) { safely("voz encima") { onVoiceOver(ratio) } }
+                        }
                     } else if (hit == null && !voiceOver) {
                         // Sin «callarse al hablarle encima» (por defecto): solo cortan «Hola Athoox», las
                         // palabras de corte, tocar la tarjeta o el botón de voz del volante. En la radio su
@@ -1181,7 +1202,7 @@ object VoiceAssistant {
     private fun listUsers(): String {
         val all = com.cockpitf30.system.Profiles.list(app).filter { it.name.isNotBlank() }
         val cur = com.cockpitf30.system.Profiles.current(app)
-        if (all.isEmpty()) return "Aún no hay usuarios. Preséntate: di soy, y tu nombre."
+        if (all.isEmpty()) return "Aún no hay usuarios. Te abro Ajustes, Usuarios: cada conductor va con su llave del coche."
         if (all.size == 1) return "Solo te conozco a ti, ${all[0].name}."
         val names = all.map { it.name }
         val list = names.dropLast(1).joinToString(", ") + " y " + names.last()
@@ -1581,7 +1602,12 @@ object VoiceAssistant {
         // Los conductores ya no se crean ni se cambian por voz: van por la llave y Ajustes › Usuarios.
         is Command.SetName, Command.Guest -> USERS_BY_KEY
         is Command.DeleteUser -> "Los usuarios se borran en Ajustes, Usuarios."
-        Command.ListUsers -> listUsers()
+        Command.ListUsers -> {
+            // También abre Ajustes › Usuarios, donde se cambian, se ven sus preferencias y se borran.
+            com.cockpitf30.ui.screens.SettingsNav.pending = com.cockpitf30.ui.screens.SettingsSection.USERS
+            navigator?.invoke(Screen.SETTINGS)
+            listUsers()
+        }
         Command.WhoIsCapi -> whoIsCapi()
         is Command.UserPrefs -> userPrefs(c.name)
         is Command.Parking -> parking(c.send)
@@ -2528,7 +2554,11 @@ object VoiceAssistant {
         // Todo lo que ya ha dicho (y un poco más): el eco llega con 1-3 s de retraso, y en una
         // explicación larga («construida para la defensa…») una «para» de hace 40 letras la cortaba.
         // Sin posición (voz con filtro, o el motor no la da) se mira la frase entera.
-        val window = if (pos <= 0) reply else reply.substring(0, (pos + 60).coerceAtMost(reply.length))
+        // Sin posición (o al principio, en el primer trozo) se estima por el tiempo hablando (~14 letras/s):
+        // antes se miraba la explicación entera y una «para» de su final ignoraba tu «para» del principio.
+        val elapsed = (System.currentTimeMillis() - _state.value.replyAt).coerceAtLeast(0)
+        val est = (elapsed * SPOKEN_CHARS_PER_S / 1000).toInt()
+        val window = reply.substring(0, (maxOf(pos, est) + 60).coerceIn(0, reply.length))
         if (" ${VoiceCommands.normalize(window)} ".contains(" $w ")) return true
         // «Canceló», «vasta», «detenta»…: si en lo que dice sale algo que suena a la misma orden, es su eco.
         return w in VoiceCommands.stopKinds(window)

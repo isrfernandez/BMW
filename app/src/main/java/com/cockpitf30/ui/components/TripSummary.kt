@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -122,6 +123,27 @@ internal fun SummaryPanel(s: TripSummaryInfo) {
                 Spacer(Modifier.height(6.dp))
                 AthosStripe()
             }
+            // Dónde se queda el coche: QR para el móvil o compartir, sin buscarlo en Ajustes.
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            var note by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+            note?.let { Text(it, style = MaterialTheme.typography.labelLarge, color = Cockpit.TextDim, modifier = Modifier.padding(end = 16.dp)) }
+            FocusTile(onClick = {
+                if (com.cockpitf30.nav.ParkingSpot.saveNow(ctx)) { TripComputer.dismissSummary(); com.cockpitf30.nav.ParkingSpot.showing.value = true }
+                else note = "Aún sin posición GPS buena"
+            }) {
+                Text("QR de la ubicación", Modifier.padding(horizontal = 22.dp, vertical = 12.dp), style = MaterialTheme.typography.titleMedium)
+            }
+            Spacer(Modifier.width(12.dp))
+            FocusTile(onClick = {
+                note = when {
+                    !com.cockpitf30.nav.ParkingSpot.saveNow(ctx) -> "Aún sin posición GPS buena"
+                    !com.cockpitf30.nav.ParkingSpot.share(ctx) -> "No hay apps para compartir: usa el QR"
+                    else -> null
+                }
+            }) {
+                Text("Compartir ubicación", Modifier.padding(horizontal = 22.dp, vertical = 12.dp), style = MaterialTheme.typography.titleMedium)
+            }
+            Spacer(Modifier.width(12.dp))
             FocusTile(onClick = { TripComputer.dismissSummary() }, modifier = Modifier.focusRequester(close)) {
                 Text("Cerrar", Modifier.padding(horizontal = 26.dp, vertical = 12.dp), style = MaterialTheme.typography.titleMedium)
             }

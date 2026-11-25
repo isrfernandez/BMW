@@ -70,6 +70,23 @@ object ParkingSpot {
         prefs(ctx).edit().putString(KEY, "${p.lat},${p.lon},${p.at},${p.accuracyM ?: ""}").apply()
     }
 
+    /**
+     * Guarda ya la posición actual si es buena (al terminar el viaje: el resumen sale al parar el
+     * motor, antes de los 10 s quieto). true si hay ubicación guardada después.
+     */
+    fun saveNow(ctx: Context): Boolean {
+        load(ctx)
+        val route = RouteTracker.state.value
+        val pos = route.position
+        val fix = route.fix
+        val good = pos != null && route.live && !route.estimated && fix != null && (fix.accuracyM ?: 0f) <= MAX_ACCURACY_M
+        if (good) {
+            val old = _spot.value
+            if (old == null || RouteTracker.distance(GeoPoint(old.lat, old.lon), pos!!) >= MOVED_M) save(ctx, Parked(pos!!.lat, pos.lon, System.currentTimeMillis(), fix!!.accuracyM))
+        }
+        return _spot.value != null
+    }
+
     fun email(ctx: Context): String? = prefs(ctx).getString(KEY_EMAIL, null)?.takeIf { it.isNotBlank() }
     fun setEmail(ctx: Context, v: String?) { prefs(ctx).edit().putString(KEY_EMAIL, v?.trim()).apply() }
 

@@ -733,6 +733,19 @@ object Connectivity {
         open(activity, listOf(Intent().setComponent(RADIO_BT_APP), Intent(Settings.ACTION_BLUETOOTH_SETTINGS)))
     }
 
+    /**
+     * Ajustes de Bluetooth de Android, no la app de la radio: la acción general la puede atender la
+     * app del fabricante, así que primero se pide la pantalla de Ajustes por su nombre.
+     */
+    fun openAndroidBt(activity: Context) {
+        open(activity, listOf(
+            Intent().setComponent(ComponentName("com.android.settings", "com.android.settings.Settings\$BluetoothSettingsActivity")),
+            Intent(Settings.ACTION_BLUETOOTH_SETTINGS).setPackage("com.android.settings"),
+            Intent().setComponent(ComponentName("com.android.settings", "com.android.settings.bluetooth.BluetoothPairingDetail")),
+            Intent(Settings.ACTION_BLUETOOTH_SETTINGS),
+        ))
+    }
+
     // ── SIM / datos móviles ──────────────────────────────────────────────────
 
     private var phoneListener: PhoneStateListener? = null

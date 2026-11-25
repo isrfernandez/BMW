@@ -696,7 +696,7 @@ private fun panelShape(g: GeoPx): Triple<Path, Rect, Float> {
 
 /**
  * Vídeo de la vista Athoox: res/raw/athoox_core.mp4, la franja del cristal y sus órbitas del vídeo
- * de la presentación (sin el rótulo) a 1440×360, H.264 Baseline. Tiene su propio reproductor: se
+ * de la presentación (sin el rótulo) a 1152×288 (antes 1440×360), H.264 Baseline a 1 Mb/s. Tiene su propio reproductor: se
  * prepara detrás de la presentación (primer fotograma listo, parado) y arranca al acabar, con la
  * pantalla en negro. Cubre el panel, recortado a su forma y desplazado con la página igual que
  * las lecturas que se pintan encima. Solo corre mientras se ve y con la app delante.

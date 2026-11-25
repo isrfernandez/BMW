@@ -389,7 +389,11 @@ object VoiceCommands {
             }
         // Coche aparcado.
         if (has("donde he aparcado", "donde he dejado el coche", "donde esta el coche", "donde esta aparcado", "donde aparque", "donde deje el coche",
-                "ubicacion del coche", "localizacion del coche", "posicion del coche", "donde he estacionado", "coche aparcado")) {
+                "ubicacion del coche", "localizacion del coche", "posicion del coche", "donde he estacionado", "coche aparcado") ||
+            t == "ubicacion" || t == "la ubicacion" || t == "mi ubicacion" || t == "localizacion" ||
+            has("compartir ubicacion", "comparte la ubicacion", "comparte mi ubicacion", "compartir la ubicacion", "compartir mi ubicacion",
+                "envia la ubicacion", "enviar la ubicacion", "manda la ubicacion", "mandar la ubicacion", "pasame la ubicacion",
+                "qr de la ubicacion", "codigo qr", "ensename la ubicacion", "muestra la ubicacion", "dame la ubicacion")) {
             return Command.Parking(when {
                 has("correo", "email", "mail", "e mail") -> ParkingSend.EMAIL
                 has("envia", "enviar", "manda", "mandar", "comparte", "compartir", "pasa", "pasame") -> ParkingSend.SHARE
@@ -403,7 +407,10 @@ object VoiceCommands {
             ?.let { m -> m.groupValues[1].takeIf { it !in setOf("radio", "pantalla", "voz", "copiloto", "avisos", "usuario", "usuarios", "fabrica") }?.let { n -> return Command.UserPrefs(n.replaceFirstChar { it.uppercase() }) } }
         Regex("^como (?:tiene|ha) configurad[oa] (?:el coche |athoox |todo )?([a-zñ]{2,20})").find(t)?.let { m -> return Command.UserPrefs(m.groupValues[1].replaceFirstChar { it.uppercase() }) }
         if (has("mis preferencias", "mis ajustes", "mi configuracion", "como tengo configurado")) return Command.UserPrefs(null)
-        if (has("que usuarios hay", "que usuarios tienes", "lista de usuarios", "que conductores hay", "quien conduce", "cuantos usuarios")) return Command.ListUsers
+        if (has("que usuarios hay", "que usuarios tienes", "lista de usuarios", "que conductores hay", "quien conduce", "cuantos usuarios",
+                "ajustes de usuarios", "pantalla de usuarios", "gestion de usuarios", "los usuarios", "los conductores") ||
+            Regex("^(?:cambia|cambiar) (?:de )?(?:conductor|usuario|perfil)$").matches(t) ||
+            Regex("^(?:(?:abre|abreme|muestra|muestrame|ensename|ver|ve a|pon|dime) )?(?:los |las )?(?:usuarios|conductores|perfiles)$").matches(t)) return Command.ListUsers
         // «Soy Luis», «me llamo Luis», «cambia de conductor a Luis»: pasa a su perfil (o lo crea).
         (Regex("^(?:hola )?(?:yo )?(?:me llamo|mi nombre es|llamame|soy) ([a-zñ ]{2,30})$").find(t)
             ?: Regex("^cambia(?:r)? (?:de )?(?:usuario|conductor|perfil) a ([a-zñ ]{2,30})$").find(t))?.let { m ->
