@@ -2221,8 +2221,14 @@ object VoiceAssistant {
     fun testQuestion(context: Context) {
         app = context.applicationContext
         initTts()
-        say("¿Te llevo a la gasolinera más cercana? ¿O prefieres seguir?")
+        // La misma pregunta dos veces, sin y con subida, para comparar.
+        noTone = setOf("Primero, sin entonación, ¿te llevo a casa?")
+        val head = if (robotBroken) "Aviso: con este motor de voz no puedo cambiar el tono. " else ""
+        say("${head}Primero, sin entonación, ¿te llevo a casa? Ahora con entonación, ¿te llevo a casa?")
     }
+
+    /** Trozos que se dicen sin subir el tono (la prueba de Ajustes). */
+    @Volatile private var noTone: Set<String> = emptySet()
 
     /** Diagnóstico: probar la voz con una frase. */
     fun testVoice(context: Context) {
@@ -2372,7 +2378,7 @@ object VoiceAssistant {
                 val pcm = robotPreloaded.remove(ids[i]) ?: if (robotReady[ids[i]] == true) withContext(Dispatchers.Default) {
                     val st = settings().assistantRobotStrength
                     val filter = settings().assistantRobotVoice && st.filter
-                    val rise = if (settings().assistantQuestionTone) QuestionTone.riseFor(chunks[i]) else 0f
+                    val rise = if (settings().assistantQuestionTone && chunks[i] !in noTone) QuestionTone.riseFor(chunks[i]) else 0f
                     RobotVoice.readWav(file)?.let { if (filter) RobotVoice.process(it, st) else it }?.let { QuestionTone.apply(it, rise) }
                 }?.also { p -> if (key != null && chunks[i].length <= ROBOT_CACHE_CHARS && p.samples.isNotEmpty()) synchronized(robotCache) { robotCache[key] = p } } else null
                 file.delete()
@@ -2476,7 +2482,7 @@ object VoiceAssistant {
     }
     private val robotPreloaded = java.util.concurrent.ConcurrentHashMap<String, Pcm>()
     private const val ROBOT_CACHE_CHARS = 40
-    private fun robotKey(chunk: String) = "${settings().assistantRobotVoice && settings().assistantRobotStrength.filter}|${settings().assistantQuestionTone}|${settings().assistantRobotStrength}|${runCatching { tts?.voice?.name }.getOrNull()}|$chunk"
+    private fun robotKey(chunk: String) = "${chunk in noTone}|${settings().assistantRobotVoice && settings().assistantRobotStrength.filter}|${settings().assistantQuestionTone}|${settings().assistantRobotStrength}|${runCatching { tts?.voice?.name }.getOrNull()}|$chunk"
 
     private fun robotFile(id: String) = java.io.File(app.cacheDir, "$id.wav")
 
