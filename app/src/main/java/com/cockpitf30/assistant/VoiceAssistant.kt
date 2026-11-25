@@ -1657,7 +1657,7 @@ object VoiceAssistant {
             // Una pregunta que no sabe contestar: se ofrece preguntársela a Google (con un «sí»).
             conversation.ask(Pending.Confirm(Command.AskGoogle(c.text)), now)
             Personality.line("unknown.question")
-        } else Personality.line(if (kotlin.random.Random.nextDouble() < Personality.jokeChance(humor())) "unknown.funny" else "unknown")
+        } else Personality.line(unknownKey(c.text))
     }
 
     /**
@@ -2194,6 +2194,36 @@ object VoiceAssistant {
         say("Volumen del asistente al ${settings().assistantVolume} por ciento.")
     }
 
+    /** Racha de órdenes no entendidas seguidas (se reinicia al entender una). */
+    private var unknownRun = 0
+    private var unknownAt = 0L
+
+    /**
+     * Qué tipo de «no te entiendo» toca: la primera vez casi siempre el corto («¿Puedes repetirlo?»,
+     * que deja escuchando); si vuelve a fallar en poco rato, uno que da ideas; con humor, a veces uno
+     * gracioso. Una frase de una o dos palabras suele ser ruido mal oído: corto.
+     */
+    private fun unknownKey(text: String): String {
+        val now = System.currentTimeMillis()
+        unknownRun = if (now - unknownAt < 60_000L) unknownRun + 1 else 1
+        unknownAt = now
+        val r = kotlin.random.Random.nextDouble()
+        return when {
+            text.trim().split(' ').size <= 2 && unknownRun == 1 -> "unknown.short"
+            unknownRun == 1 && r < 0.65 -> "unknown.short"
+            r < Personality.jokeChance(humor()) -> "unknown.funny"
+            unknownRun >= 2 -> "unknown"
+            else -> "unknown.short"
+        }
+    }
+
+    /** Ajustes: probar la entonación de pregunta. */
+    fun testQuestion(context: Context) {
+        app = context.applicationContext
+        initTts()
+        say("¿Te llevo a la gasolinera más cercana? ¿O prefieres seguir?")
+    }
+
     /** Diagnóstico: probar la voz con una frase. */
     fun testVoice(context: Context) {
         app = context.applicationContext
@@ -2264,7 +2294,10 @@ object VoiceAssistant {
         if (t != null && ttsReady && settings().assistantSpeaks && chunks.isNotEmpty()) {
             // No escuchar mientras habla la radio: se oiría a sí misma.
             muted = true
-            if (settings().assistantRobotVoice && settings().assistantRobotStrength.filter && !robotBroken && startRobot(t, chunks)) {
+            val filter = settings().assistantRobotVoice && settings().assistantRobotStrength.filter
+            // Preguntas: por el mismo camino (audio del motor → efecto → altavoz) para subir el tono al final.
+            val question = settings().assistantQuestionTone && chunks.any { QuestionTone.riseFor(it) > 0f }
+            if ((filter || question) && !robotBroken && startRobot(t, chunks)) {
                 // El final lo marca la reproducción ([playRobotChunks]).
             } else {
                 speakPlain(t, chunks, 0)
@@ -2338,7 +2371,9 @@ object VoiceAssistant {
                 val key: String? = robotKey(chunks[i])
                 val pcm = robotPreloaded.remove(ids[i]) ?: if (robotReady[ids[i]] == true) withContext(Dispatchers.Default) {
                     val st = settings().assistantRobotStrength
-                    RobotVoice.readWav(file)?.let { RobotVoice.process(it, st) }
+                    val filter = settings().assistantRobotVoice && st.filter
+                    val rise = if (settings().assistantQuestionTone) QuestionTone.riseFor(chunks[i]) else 0f
+                    RobotVoice.readWav(file)?.let { if (filter) RobotVoice.process(it, st) else it }?.let { QuestionTone.apply(it, rise) }
                 }?.also { p -> if (key != null && chunks[i].length <= ROBOT_CACHE_CHARS && p.samples.isNotEmpty()) synchronized(robotCache) { robotCache[key] = p } } else null
                 file.delete()
                 if (replyId != rid) return
@@ -2441,7 +2476,7 @@ object VoiceAssistant {
     }
     private val robotPreloaded = java.util.concurrent.ConcurrentHashMap<String, Pcm>()
     private const val ROBOT_CACHE_CHARS = 40
-    private fun robotKey(chunk: String) = "${settings().assistantRobotStrength}|${runCatching { tts?.voice?.name }.getOrNull()}|$chunk"
+    private fun robotKey(chunk: String) = "${settings().assistantRobotVoice && settings().assistantRobotStrength.filter}|${settings().assistantQuestionTone}|${settings().assistantRobotStrength}|${runCatching { tts?.voice?.name }.getOrNull()}|$chunk"
 
     private fun robotFile(id: String) = java.io.File(app.cacheDir, "$id.wav")
 

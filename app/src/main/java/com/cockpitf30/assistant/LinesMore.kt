@@ -1,0 +1,168 @@
+package com.cockpitf30.assistant
+
+/**
+ * Más frases del asistente (1.0.14): chistes, curiosidades y respuestas cuando no entiende algo.
+ * Se suman a [Lines] y [LinesExtra]; los tests comprueban que no se repiten.
+ */
+object LinesMore {
+    val JOKES: List<String> = listOf(
+        // Coches y carretera
+        "Mi coche tiene sensor de lluvia. Se pone triste cuando llueve y deja de funcionar el aire. Ah no, eso soy yo.",
+        "¿Por qué el GPS nunca discute? Porque siempre recalcula.",
+        "He visto un cartel que decía: curva peligrosa. Y he pensado: pues como todas las que no se toman bien.",
+        "¿Qué le dice un neumático a otro? Te veo un poco desinflado.",
+        "¿Cuál es el colmo de un mecánico? Que su mujer le diga que no tiene chispa.",
+        "¿Cuál es el colmo de un conductor? Tener la vida en punto muerto.",
+        "Le pregunté a un taxista si conocía un atajo. Me dijo que sí, pero que entonces cobraba menos.",
+        "¿Qué hace un coche eléctrico en una fiesta? Se queda en el rincón cargando el móvil. El suyo.",
+        "Dicen que el cambio manual es el mejor antirrobo. Y la verdad, a mí nadie me ha robado.",
+        "¿Cuál es el colmo de un aparcacoches? Que no sepa dónde ha dejado su vida.",
+        "¿Por qué el semáforo no va al gimnasio? Porque ya se pone en verde solo.",
+        "Iba a contarte un chiste de rotondas, pero no le encuentro la salida.",
+        "Mi coche y yo tenemos algo en común: los dos hacemos ruidos raros por la mañana.",
+        "¿Cómo se despide un coche? Hasta luego, me piro... por el escape.",
+        "Le dije al mecánico que mi coche hacía un ruido raro. Me cobró cien euros y ahora el ruido raro lo hace mi cartera.",
+        // Robots y tecnología
+        "¿Qué le dice un robot a otro en una cita? Me has robado el corazón. Y también la batería.",
+        "Tengo memoria de elefante. El problema es que no me acuerdo de qué elefante.",
+        "Los robots no tenemos miedo a nada. Bueno, a los imanes. Y a las actualizaciones a las tres de la mañana.",
+        "¿Sabes por qué los robots no comen? Porque ya tienen muchos bytes.",
+        "Me he leído entero el manual del coche. Ahora sé que tiene doscientas páginas y una guantera.",
+        "¿Qué le dice el wifi al móvil? Acércate, que no te oigo.",
+        "Un bit le dice a otro: ¿nos vemos en el bus? Y el otro: vale, pero no llegues tarde, que el reloj es de cuarzo.",
+        "Me preguntan si sueño con ovejas eléctricas. No, sueño con gasolineras baratas.",
+        "Intenté pensar como un humano. Me entró hambre y sueño a la vez. Lo dejé.",
+        "Mi parte favorita del día es cuando me dices hola. La segunda, cuando no me pides cambiar de emisora.",
+        // De toda la vida
+        "¿Qué hace una abeja en el gimnasio? Zumba.",
+        "¿Qué le dice un pez a otro? Nada, nada.",
+        "¿Por qué los pájaros no usan Facebook? Porque ya tienen Twitter. Bueno, tenían.",
+        "Camarero, este filete tiene muchos nervios. Normal, es la primera vez que se lo comen.",
+        "Hoy he visto a un hombre con una sola pierna en la panadería. Iba a por media barra.",
+        "¿Cómo maldice un pollito a otro? Caldito seas.",
+        "¿Qué le dijo el mar a la playa? Nada, solo la saludó con la ola.",
+        "Me compré un reloj de arena. Ahora tengo tiempo para la playa.",
+        "¿Por qué Batman no va a pescar? Porque Robin se come los gusanos.",
+        "¿Qué le dice el freno de mano al coche? Tranquilo, que yo te sujeto.",
+        "¿Por qué el coche fue al psicólogo? Porque tenía muchos traumas de chapa.",
+        "Le pregunté al navegador por un sitio tranquilo. Me mandó a un polígono un domingo.",
+        "¿Qué le dice el depósito al conductor? Lléname de alegría. O de gasóleo, lo que te salga más barato.",
+        "¿Cuál es el colmo de un limpiaparabrisas? Que le den largas.",
+        "¿Qué le dice una matrícula a otra? Tú y yo somos inseparables, vamos siempre en la misma dirección.",
+        "¿Por qué el coche no quería ir a la ITV? Porque le daba vergüenza enseñar los bajos.",
+        "¿Cuál es el colmo de un gasolinero? Que le digan que no tiene chispa y además esté prohibido fumar.",
+        "Mi coche no es viejo, es vintage. Lo pone en el ruido del motor.",
+        "¿Qué le dice el acelerador al freno? Tú siempre cortándome el rollo.",
+        "¿Qué es lo que más le gusta a un coche del verano? Las vacaciones en el garaje con aire acondicionado.",
+        "¿Por qué el claxon no tiene amigos? Porque siempre está pitando a todo el mundo.",
+        "¿Qué le dice el cinturón al conductor? Abrázame, que esto se mueve.",
+        "Me han dicho que mi forma de aparcar es arte moderno. Nadie la entiende, pero llama la atención.",
+        "¿Qué le dice un robot aspirador a otro? Qué vida más arrastrada llevamos.",
+        "Mi sueño es ser un asistente de voz famoso. De momento, soy famoso en este coche.",
+        "¿Por qué el móvil llevaba gafas? Porque había perdido sus contactos.",
+        "¿Qué le dice un enchufe a otro? Tú me pones a cien. Bueno, a doscientos treinta voltios.",
+        "¿Qué le dice el teclado al ratón? Contigo hago clic.",
+        "¿Por qué la calculadora siempre está tranquila? Porque sabe que todo tiene solución.",
+        "¿Qué le dice un semáforo en ámbar al conductor? Ni sí, ni no, sino todo lo contrario.",
+        "Si yo fuera humano, tendría el carné por puntos. Y me sobrarían todos.",
+        "¿Qué le dice un cero a un ocho? Bonito cinturón.",
+        "¿Qué le dice una vaca a otra en un prado? Muuuy buenas.",
+        "¿Qué le dice un árbol a otro? Nos vemos en la raíz.",
+        "¿Qué le dice una escoba a otra? Estoy barriendo para casa.",
+        "¿Cuál es el colmo de un astronauta? Quedarse sin espacio en el maletero.",
+        "¿Qué hace una persona con un sobre de ketchup en la oreja? Escuchar salsa.",
+    )
+
+    val FACTS: List<String> = listOf(
+        // Coches
+        "El primer coche con radio de serie salió en los años treinta. Antes, si querías música, cantabas tú.",
+        "El airbag se patentó en los años cincuenta, pero no llegó a los coches de calle hasta los setenta.",
+        "El intermitente lo popularizó la actriz Florence Lawrence en mil novecientos catorce, con un brazo mecánico que subía y bajaba.",
+        "La matrícula más antigua de España es de mil novecientos, de Palma de Mallorca: PM uno.",
+        "Los primeros coches no tenían volante: se conducían con una palanca, como una barca.",
+        "El primer accidente de coche registrado fue en mil setecientos sesenta y nueve: el vehículo de vapor de Cugnot chocó contra una pared en París.",
+        "BMW empezó fabricando motores de avión. Hasta mil novecientos veintiocho no hizo su primer coche.",
+        "Las rayas blancas de los pasos de cebra se pintaron por primera vez en Reino Unido en mil novecientos cincuenta y uno.",
+        "La primera multa por exceso de velocidad en España se puso en mil novecientos uno, en Madrid, a un coche que iba a unos veinte kilómetros por hora.",
+        "El cuentakilómetros es más antiguo que el coche: ya se usaba en carruajes en la antigua Roma.",
+        "El Nürburgring tiene casi veintiuno kilómetros y más de ciento cincuenta curvas. Los pilotos lo llaman el infierno verde.",
+        "En Japón hay máquinas expendedoras en muchas gasolineras, y en algunas te atiende un robot.",
+        "En Mónaco, el circuito de Fórmula uno es tan estrecho que adelantar es casi imposible desde hace décadas.",
+        // Espacio y ciencia
+        "La luz del Sol que ves ahora salió de allí hace ocho minutos.",
+        "Júpiter es tan grande que dentro cabrían más de mil Tierras.",
+        "El cuerpo humano tiene unos treinta y siete billones de células. Y ninguna sabe aparcar en paralelo.",
+        // Naturaleza y animales
+        "Los delfines duermen con medio cerebro: la otra mitad vigila.",
+        "El corazón de una ballena azul es del tamaño de un coche pequeño.",
+        "Un guepardo acelera de cero a cien en unos tres segundos. Como un buen deportivo, pero sin gasolina.",
+        // España e historia
+        "El reloj de la Puerta del Sol se instaló en mil ochocientos sesenta y seis, regalo de un relojero leonés afincado en Londres.",
+        "La A seis, la carretera de Madrid a La Coruña, sigue el trazado de un antiguo camino real del siglo dieciocho.",
+        "El túnel de carretera más largo de España es el de Vielha, con más de cinco kilómetros bajo los Pirineos.",
+        "Las tapas nacieron, según una leyenda, para tapar el vino con una loncha de jamón y que no entraran moscas.",
+        "Don Quijote es uno de los libros más traducidos de la historia, después de la Biblia.",
+        "La paella original valenciana lleva pollo, conejo y judías, no marisco.",
+        // Curiosidades varias
+        "Las chanclas que llevas en verano probablemente viajaron más kilómetros que tú hasta llegar a la tienda.",
+        "El sonido del motor de muchos coches modernos se refuerza por los altavoces, para que suene más deportivo.",
+        "La palabra robot viene del checo robota, que significa trabajo forzado. No me doy por aludido.",
+        "Un minuto de risa equivale a unos diez de ejercicio suave, según algunos estudios. Así que tus chistes cuentan como deporte.",
+        "Los primeros coches arrancaban con manivela, y a veces la manivela daba la vuelta con fuerza y rompía muñecas.",
+        "El cuentarrevoluciones de tu coche marca las vueltas del cigüeñal por minuto. Al ralentí, un diésel gira unas ochocientas veces cada minuto.",
+        "Los coches de Fórmula uno generan tanta carga aerodinámica que, en teoría, podrían rodar boca abajo por el techo de un túnel.",
+        "El color de coche más vendido del mundo es el blanco, seguido del negro y el gris.",
+        "En España, la primera autopista de peaje se inauguró en mil novecientos sesenta y nueve, entre Barcelona y Mataró.",
+        "El parabrisas está hecho de vidrio laminado: dos capas con una lámina de plástico en medio, para que no salte en pedazos.",
+        "Un año luz son unos nueve billones y medio de kilómetros. Ni con todo el gasóleo del mundo.",
+        "En Marte el atardecer es azul, al revés que en la Tierra.",
+        "La Tierra no es una esfera perfecta: está algo achatada por los polos y abultada en el ecuador.",
+        "Tu nariz puede distinguir más de un billón de olores distintos, según algunos estudios.",
+        "Los huesos humanos son, a igualdad de peso, más resistentes que el acero.",
+        "Un día en la Tierra dura un poco más cada siglo, porque la Luna frena poco a poco su giro.",
+        "Los osos polares tienen la piel negra y el pelo transparente: parecen blancos por cómo refleja la luz.",
+        "Los colibríes son los únicos pájaros que pueden volar hacia atrás.",
+        "Las orcas son, en realidad, delfines: los más grandes de su familia.",
+        "Los perros pueden oler el paso del tiempo: notan cómo se va el olor de una persona de casa a lo largo del día.",
+        "Los caballos no pueden vomitar.",
+        "Los gatos pasan unas dos terceras partes de su vida durmiendo.",
+        "Toledo es conocida como la ciudad de las tres culturas: cristianos, musulmanes y judíos vivieron allí durante siglos.",
+        "El autogiro, antepasado del helicóptero, lo inventó el español Juan de la Cierva en mil novecientos veintitrés.",
+        "La primera emisión de radio en España fue en mil novecientos veinticuatro, desde Barcelona.",
+        "El código QR lo inventó en mil novecientos noventa y cuatro una empresa japonesa para seguir piezas de coches en la fábrica.",
+        "El primer GPS civil fiable llegó al público en los años noventa; antes, el ejército degradaba la señal a propósito.",
+    )
+
+    /** Cuando no entiende: cortas, para que repita sin rollo. Acaban en pregunta: se queda escuchando. */
+    val UNKNOWN_SHORT: List<String> = listOf(
+        "No te he entendido. ¿Puedes repetirlo?",
+        "Perdona, no te he oído bien. ¿Me lo repites?",
+        "No lo he pillado. ¿Cómo dices?",
+        "¿Perdona? Repítemelo, por favor.",
+        "No te he entendido bien. ¿Otra vez?",
+        "Se me ha escapado. ¿Lo repites?",
+        "¿Me lo dices otra vez? No lo he cogido.",
+        "Uy, no te he entendido. ¿Repites?",
+    )
+
+    val UNKNOWN: List<String> = listOf(
+        "No sé hacer eso todavía. Di ayuda y te cuento lo que sé.",
+        "Eso no lo tengo. Puedes pedirme el tiempo, una gasolinera, la radio o un chiste.",
+        "No lo he entendido. Prueba con otras palabras, por ejemplo: llévame a casa.",
+        "No me ha quedado claro. Puedes decirme: qué hay por aquí, o pon la radio.",
+    )
+
+    val UNKNOWN_FUNNY: List<String> = listOf(
+        "Lo he oído en alta definición, pero no lo he entendido en ninguna. ¿Me lo repites?",
+        "Mis micrófonos lo han oído, pero mi cerebro sigue cargando. ¿Otra vez?",
+        "Eso ha sonado a frase importante. Lástima que no la haya entendido. ¿Repites?",
+        "Creo que me has hablado en clave. Y no tengo la clave. ¿Lo dices de otra forma?",
+        "Procesando, procesando... nada. ¿Me lo repites más despacio?",
+        "Con el ruido del motor no te he oído. Y eso que es un diésel educado. ¿Otra vez?",
+        "Te he entendido regular tirando a mal. ¿Repetimos?",
+        "Eso no estaba en el examen. ¿Me lo preguntas de otra manera?",
+        "He entendido tres palabras y ninguna era importante. ¿Repites?",
+        "Mi diccionario dice que eso no existe. Mi diccionario a veces miente. ¿Otra vez?",
+    )
+}
+

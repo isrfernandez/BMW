@@ -191,7 +191,8 @@ object Lines {
         "ack" to listOf("Vale", "De acuerdo", "Hecho", "Entendido", "Muy bien", "Listo", "Ahora mismo", "Claro", "Marchando", "Enseguida"),
         "cancel" to listOf("Vale", "De acuerdo", "Entendido", "Como quieras", "Cancelado", "Sin problema", "Lo dejamos", "Olvidado"),
         "thanks" to listOf("De nada", "A ti", "Para eso estoy", "No hay de qué", "Cuando quieras", "Un placer", "A mandar", "Siempre a tu servicio"),
-        "unknown" to listOf(
+        "unknown.short" to LinesMore.UNKNOWN_SHORT,
+        "unknown" to LinesMore.UNKNOWN + listOf(
             "No te he entendido. Prueba con: qué tiempo hace, o pregunta a Google y tu pregunta.",
             "No lo he pillado. Puedes decirme, por ejemplo: gasolinera más cercana.",
             "Eso no lo sé hacer. Di ayuda y te cuento lo que sé.",
@@ -199,7 +200,7 @@ object Lines {
             "No he cogido eso. Prueba con: cuéntame un chiste, o qué hay por aquí.",
             "Eso se me escapa. Di ayuda y te digo lo que puedo hacer.",
         ),
-        "unknown.funny" to listOf(
+        "unknown.funny" to LinesMore.UNKNOWN_FUNNY + listOf(
             "No te he entendido. Y mira que lo he intentado. Prueba con: qué tiempo hace.",
             "Eso no está en mi programación. Prueba con: qué tiempo hace, o pregunta a Google.",
             "Ni idea. Y eso que tengo mucha memoria. Di ayuda y te cuento lo que sé.",
@@ -237,7 +238,7 @@ object Lines {
     )
 
     /** Chistes para «cuéntame un chiste». Secos, de coches, de espacio, de robots o de toda la vida. */
-    val JOKES: List<String> = LinesExtra.JOKES + listOf(
+    val JOKES: List<String> = LinesExtra.JOKES + LinesMore.JOKES + listOf(
         // Coches y carretera
         "¿Qué le dice un semáforo a otro? No me mires, que me estoy cambiando.",
         "¿Por qué el coche no fue al médico? Porque ya tenía su propio chequeo de luces.",
@@ -414,7 +415,7 @@ object Lines {
     )
 
     /** Curiosidades para «cuéntame una curiosidad», «dato curioso». Ciertas y cortas. */
-    val FACTS: List<String> = LinesExtra.FACTS + listOf(
+    val FACTS: List<String> = LinesExtra.FACTS + LinesMore.FACTS + listOf(
         "El logotipo de BMW no es una hélice: viene de los colores de Baviera, azul y blanco. Lo de la hélice fue un anuncio de los años veinte.",
         "BMW significa Bayerische Motoren Werke: fábrica bávara de motores. Empezó haciendo motores de avión.",
         "La forma de la parrilla de los BMW se llama doble riñón. Lleva casi un siglo en sus coches.",

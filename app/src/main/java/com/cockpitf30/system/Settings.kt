@@ -66,6 +66,11 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_ASSISTANT_TTS, true)
         set(value) = prefs.edit().putBoolean(KEY_ASSISTANT_TTS, value).apply()
 
+    /** Entonación de pregunta: sube el tono al final de las frases que acaban en «?» ([com.cockpitf30.assistant.QuestionTone]). */
+    var assistantQuestionTone: Boolean
+        get() = prefs.getBoolean(KEY_ASSISTANT_QUESTION_TONE, true)
+        set(value) = prefs.edit().putBoolean(KEY_ASSISTANT_QUESTION_TONE, value).apply()
+
     /** Voz al estilo TARS: hombre adulto, grave y pausada (false = voz normal de la radio, sin cambios). */
     var assistantRobotVoice: Boolean
         get() = prefs.getBoolean(KEY_ASSISTANT_ROBOT, true)
@@ -433,6 +438,7 @@ class AppSettings(context: Context) {
         const val KEY_ASSISTANT = "assistant_enabled"
         const val KEY_ASSISTANT_TTS = "assistant_tts"
         const val KEY_ASSISTANT_ROBOT = "assistant_robot_voice"
+        const val KEY_ASSISTANT_QUESTION_TONE = "assistant_question_tone"
         const val KEY_ASSISTANT_STRENGTH = "assistant_voice_style"
         const val KEY_ASSISTANT_HUMOR = "assistant_humor"
         const val KEY_ASSISTANT_VOICE = "assistant_voice_name"

@@ -289,6 +289,12 @@ private fun AssistantSettings() {
                 assistant.testVoice(ctx)
             }
         }
+        var qTone by remember { mutableStateOf(settings.assistantQuestionTone) }
+        ChoiceRow("Entonación de pregunta", "Sube el tono al final de las preguntas («¿Te llevo?»), que el motor de voz dice como afirmaciones.", listOf("Sí", "No"), if (qTone) 0 else 1) {
+            qTone = it == 0
+            settings.assistantQuestionTone = qTone
+            if (qTone) assistant.testQuestion(ctx)
+        }
         var voiceName by remember { mutableStateOf(settings.assistantVoiceName) }
         val voices = remember(voice.phase, voiceName) { assistant.spanishVoices() }
         if (voices.isNotEmpty()) {
