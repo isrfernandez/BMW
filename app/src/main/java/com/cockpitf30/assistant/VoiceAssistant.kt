@@ -2186,8 +2186,9 @@ object VoiceAssistant {
                 else chosen
             if (pick != null) t.voice = pick else t.setLanguage(Locale("es", "ES"))
             val st = settings().assistantRobotStrength
-            t.setPitch(if (robot) st.pitch else 1f)
-            t.setSpeechRate(if (robot) st.rate else 1f)
+            // Encima del estilo, los ajustes de velocidad y tono del conductor.
+            t.setPitch((if (robot) st.pitch else 1f) * settings().assistantPitch / 100f)
+            t.setSpeechRate((if (robot) st.rate else 1f) * settings().assistantSpeechRate / 100f)
         }.onFailure { Log.w(TAG, "Voz", it) }
     }
 
@@ -2290,8 +2291,8 @@ object VoiceAssistant {
         if (net.isEmpty()) return null
         if (base?.isNetworkConnectionRequired == true) return base
         val twin = base?.name?.lowercase()?.substringBeforeLast('-')
+        // Solo la misma voz en versión de red: otra distinta cambiaba la voz elegida (p. ej. la masculina).
         return net.firstOrNull { twin != null && it.name.lowercase().substringBeforeLast('-') == twin }
-            ?: net.sortedWith(compareBy({ it.locale.country != (base?.locale?.country ?: "ES") }, { it.quality < android.speech.tts.Voice.QUALITY_HIGH }, { it.name })).first()
     }
 
     /** Diagnóstico: probar la voz con una frase. */
@@ -2544,7 +2545,7 @@ object VoiceAssistant {
     }
     private val robotPreloaded = java.util.concurrent.ConcurrentHashMap<String, Pcm>()
     private const val ROBOT_CACHE_CHARS = 40
-    private fun robotKey(chunk: String) = "${settings().assistantRobotVoice && settings().assistantRobotStrength.filter}|${settings().assistantRobotStrength}|${runCatching { tts?.voice?.name }.getOrNull()}|$chunk"
+    private fun robotKey(chunk: String) = "${settings().assistantSpeechRate}|${settings().assistantPitch}|${settings().assistantRobotVoice && settings().assistantRobotStrength.filter}|${settings().assistantRobotStrength}|${runCatching { tts?.voice?.name }.getOrNull()}|$chunk"
 
     private fun robotFile(id: String) = java.io.File(app.cacheDir, "$id.wav")
 

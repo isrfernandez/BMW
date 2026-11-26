@@ -289,8 +289,16 @@ private fun AssistantSettings() {
                 assistant.testVoice(ctx)
             }
         }
+        var rate by remember { mutableStateOf(settings.assistantSpeechRate) }
+        StepperRow("Velocidad", "Sobre la del tipo de voz. 100 % = normal.", "$rate %",
+            onMinus = { rate = (rate - 5).coerceAtLeast(50); settings.assistantSpeechRate = rate; assistant.applyVoice(); assistant.testVoice(ctx) },
+            onPlus = { rate = (rate + 5).coerceAtMost(200); settings.assistantSpeechRate = rate; assistant.applyVoice(); assistant.testVoice(ctx) })
+        var pitch by remember { mutableStateOf(settings.assistantPitch) }
+        StepperRow("Tono", "Menos = más grave. 100 % = el del tipo de voz.", "$pitch %",
+            onMinus = { pitch = (pitch - 5).coerceAtLeast(50); settings.assistantPitch = pitch; assistant.applyVoice(); assistant.testVoice(ctx) },
+            onPlus = { pitch = (pitch + 5).coerceAtMost(150); settings.assistantPitch = pitch; assistant.applyVoice(); assistant.testVoice(ctx) })
         var netVoice by remember { mutableStateOf(settings.assistantNetVoice) }
-        ChoiceRow("Voz con Internet", "Con datos, la voz de Google de mayor calidad: más natural y entona las preguntas. Sin cobertura vuelve sola a la voz del coche.", listOf("Sí", "No"), if (netVoice) 0 else 1) {
+        ChoiceRow("Voz con Internet", "Con datos, la misma voz en su versión de red de Google (si la tiene). Sin cobertura vuelve sola a la del coche.", listOf("Sí", "No"), if (netVoice) 0 else 1) {
             netVoice = it == 0
             settings.assistantNetVoice = netVoice
             assistant.applyVoice()

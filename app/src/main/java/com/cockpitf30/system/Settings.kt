@@ -73,8 +73,18 @@ class AppSettings(context: Context) {
 
     /** Con Internet, la variante «network» de la voz de Google (más natural; entona las preguntas). */
     var assistantNetVoice: Boolean
-        get() = prefs.getBoolean(KEY_ASSISTANT_NET_VOICE, true)
-        set(value) = prefs.edit().putBoolean(KEY_ASSISTANT_NET_VOICE, value).apply()
+        get() = prefs.getBoolean(KEY_ASSISTANT_NET_VOICE_V2, false)
+        set(value) = prefs.edit().putBoolean(KEY_ASSISTANT_NET_VOICE_V2, value).apply()
+
+    /** Velocidad de la voz en % sobre la del estilo elegido (50..200). */
+    var assistantSpeechRate: Int
+        get() = prefs.getInt(KEY_ASSISTANT_SPEECH_RATE, 100)
+        set(value) = prefs.edit().putInt(KEY_ASSISTANT_SPEECH_RATE, value.coerceIn(50, 200)).apply()
+
+    /** Tono de la voz en % sobre el del estilo elegido (50..150): menos = más grave. */
+    var assistantPitch: Int
+        get() = prefs.getInt(KEY_ASSISTANT_PITCH, 100)
+        set(value) = prefs.edit().putInt(KEY_ASSISTANT_PITCH, value.coerceIn(50, 150)).apply()
 
     /** Voz al estilo TARS: hombre adulto, grave y pausada (false = voz normal de la radio, sin cambios). */
     var assistantRobotVoice: Boolean
@@ -443,7 +453,9 @@ class AppSettings(context: Context) {
         const val KEY_ASSISTANT = "assistant_enabled"
         const val KEY_ASSISTANT_TTS = "assistant_tts"
         const val KEY_ASSISTANT_ROBOT = "assistant_robot_voice"
-        const val KEY_ASSISTANT_NET_VOICE = "assistant_net_voice"
+        const val KEY_ASSISTANT_NET_VOICE_V2 = "assistant_net_voice_v2"
+        const val KEY_ASSISTANT_SPEECH_RATE = "assistant_speech_rate"
+        const val KEY_ASSISTANT_PITCH = "assistant_pitch"
         const val KEY_ASSISTANT_HOME_GREETING = "assistant_home_greeting"
         const val KEY_ASSISTANT_STRENGTH = "assistant_voice_style"
         const val KEY_ASSISTANT_HUMOR = "assistant_humor"
