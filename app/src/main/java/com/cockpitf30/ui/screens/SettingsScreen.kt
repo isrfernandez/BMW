@@ -289,11 +289,12 @@ private fun AssistantSettings() {
                 assistant.testVoice(ctx)
             }
         }
-        var qTone by remember { mutableStateOf(settings.assistantQuestionTone) }
-        ChoiceRow("Entonación de pregunta", "Sube el tono al final de las preguntas («¿Te llevo?»), que el motor de voz dice como afirmaciones.", listOf("Sí", "No"), if (qTone) 0 else 1) {
-            qTone = it == 0
-            settings.assistantQuestionTone = qTone
-            if (qTone) assistant.testQuestion(ctx)
+        var netVoice by remember { mutableStateOf(settings.assistantNetVoice) }
+        ChoiceRow("Voz con Internet", "Con datos, la voz de Google de mayor calidad: más natural y entona las preguntas. Sin cobertura vuelve sola a la voz del coche.", listOf("Sí", "No"), if (netVoice) 0 else 1) {
+            netVoice = it == 0
+            settings.assistantNetVoice = netVoice
+            assistant.applyVoice()
+            assistant.testNetVoice(ctx)
         }
         var voiceName by remember { mutableStateOf(settings.assistantVoiceName) }
         val voices = remember(voice.phase, voiceName) { assistant.spanishVoices() }
@@ -625,6 +626,24 @@ private fun DrivingSettings(onOpen: (Screen) -> Unit) {
         var noTrip by remember { mutableStateOf(false) }
         ActionRow("Ver el resumen", if (noTrip) "Aún no hay ningún trayecto guardado: sale en cuanto hagas el primero." else "El del trayecto en curso o el último.", "Ver") {
             noTrip = !TripComputer.showSummary(System.currentTimeMillis())
+        }
+    }
+    SettingGroup("Casa") {
+        val home by com.cockpitf30.nav.HomeArrival.home.collectAsStateWithLifecycle()
+        var homeNote by remember { mutableStateOf<String?>(null) }
+        ActionRow(
+            "Ubicación de casa",
+            homeNote ?: when {
+                home == null -> "Sin guardar. Pulsa en casa (o di «esta es mi casa»); si no, se aprende sola tras ${com.cockpitf30.nav.HomeArrival.NIGHTS} noches aparcado en el mismo sitio."
+                home!!.manual -> "Guardada a mano."
+                else -> "Aprendida de dónde duerme el coche. Si no es, guárdala aquí estando en casa."
+            },
+            "Guardar aquí",
+        ) { homeNote = if (com.cockpitf30.nav.HomeArrival.setHere(ctx)) "Guardada: esta es casa." else "Aún sin buena señal de GPS." }
+        var greet by remember { mutableStateOf(settings.assistantHomeGreeting) }
+        ChoiceRow("Avisar al llegar", "«Ya estamos en casa» al volver.", listOf("Sí", "No"), if (greet) 0 else 1) {
+            greet = it == 0
+            settings.assistantHomeGreeting = greet
         }
     }
     SettingGroup("Coche aparcado") {

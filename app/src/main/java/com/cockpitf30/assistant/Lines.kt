@@ -192,6 +192,7 @@ object Lines {
         "cancel" to listOf("Vale", "De acuerdo", "Entendido", "Como quieras", "Cancelado", "Sin problema", "Lo dejamos", "Olvidado"),
         "thanks" to listOf("De nada", "A ti", "Para eso estoy", "No hay de qué", "Cuando quieras", "Un placer", "A mandar", "Siempre a tu servicio"),
         "unknown.short" to LinesMore.UNKNOWN_SHORT,
+        "home.arrived" to LinesMore.HOME_ARRIVED,
         "unknown" to LinesMore.UNKNOWN + listOf(
             "No te he entendido. Prueba con: qué tiempo hace, o pregunta a Google y tu pregunta.",
             "No lo he pillado. Puedes decirme, por ejemplo: gasolinera más cercana.",

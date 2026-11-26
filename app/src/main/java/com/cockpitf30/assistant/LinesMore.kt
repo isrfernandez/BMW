@@ -133,15 +133,31 @@ object LinesMore {
         "El primer GPS civil fiable llegó al público en los años noventa; antes, el ejército degradaba la señal a propósito.",
     )
 
+    /** Al llegar a casa. */
+    val HOME_ARRIVED: List<String> = listOf(
+        "Ya estamos en casa.",
+        "Ya estamos en casa, {name}.",
+        "Hogar, dulce hogar.",
+        "Llegamos a casa. Buen viaje.",
+        "En casa, sanos y salvos.",
+        "Ya estamos aquí. Casa, por fin.",
+        "Casa a la vista. Fin del trayecto.",
+        "Misión cumplida: estamos en casa.",
+        "Hemos llegado a casa, {name}. Gracias por conducir con cuidado.",
+        "Ya en casa. Descansa, que te lo has ganado.",
+        "Llegamos. No te olvides nada en el coche.",
+        "Casa. El mejor destino de todos.",
+    )
+
     /** Cuando no entiende: cortas, para que repita sin rollo. Acaban en pregunta: se queda escuchando. */
     val UNKNOWN_SHORT: List<String> = listOf(
         "No te he entendido. ¿Puedes repetirlo?",
         "Perdona, no te he oído bien. ¿Me lo repites?",
         "No lo he pillado. ¿Cómo dices?",
-        "¿Perdona? Repítemelo, por favor.",
+        "Perdona, ¿me lo repites, por favor?",
         "No te he entendido bien. ¿Otra vez?",
         "Se me ha escapado. ¿Lo repites?",
-        "¿Me lo dices otra vez? No lo he cogido.",
+        "No lo he cogido. ¿Me lo dices otra vez?",
         "Uy, no te he entendido. ¿Repites?",
     )
 

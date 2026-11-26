@@ -58,6 +58,8 @@ sealed interface Command {
     data class SetName(val name: String, val confirmed: Boolean = false) : Command
     /** «¿Cómo me llamo?». */
     data object AskName : Command
+    /** «Esta es mi casa»: guardar la posición actual como casa. */
+    data object SetHome : Command
     /** «Borra el usuario Luis»; [confirmed] tras el «sí». */
     data class DeleteUser(val name: String, val confirmed: Boolean = false) : Command
     /** «¿Qué usuarios hay?». */
@@ -387,6 +389,9 @@ object VoiceCommands {
                 val name = m.groupValues[1].trim().removePrefix("de ").removePrefix("a ").trim()
                 if (name.isNotBlank()) return Command.DeleteUser(name.split(' ').joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } })
             }
+        // Casa.
+        if (Regex("^(?:esta es|aqui es|aqui esta) (?:mi|nuestra) casa$|^aqui vivo$|^(?:guarda|guardar|graba|memoriza|apunta) (?:aqui |esto |esta ubicacion |esta posicion )?(?:como )?(?:mi |la |nuestra )?casa(?: aqui)?$").containsMatchIn(t))
+            return Command.SetHome
         // Coche aparcado.
         if (has("donde he aparcado", "donde he dejado el coche", "donde esta el coche", "donde esta aparcado", "donde aparque", "donde deje el coche",
                 "ubicacion del coche", "localizacion del coche", "posicion del coche", "donde he estacionado", "coche aparcado") ||

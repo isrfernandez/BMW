@@ -1490,6 +1490,20 @@ object VoiceAssistant {
      * Aviso en ruta: como [announce], pero si el asistente está escuchando o hablando devuelve false
      * para que se intente un poco después (y no corte lo que se está diciendo).
      */
+    /** Llegada a casa: la frase en cuanto no esté escuchando ni hablando (hasta un minuto). Se dice aunque Maps esté delante. */
+    fun greetHome() {
+        scope.launch {
+            repeat(30) {
+                val phase = _state.value.phase
+                if (phase != AssistantPhase.LISTENING && phase != AssistantPhase.ANSWERING) {
+                    announce(Personality.line("home.arrived"), urgent = true)
+                    return@launch
+                }
+                delay(2_000)
+            }
+        }
+    }
+
     fun announceIfFree(text: String): Boolean {
         val phase = _state.value.phase
         if (phase == AssistantPhase.LISTENING || phase == AssistantPhase.ANSWERING) return false
@@ -1611,6 +1625,7 @@ object VoiceAssistant {
         Command.WhoIsCapi -> whoIsCapi()
         is Command.UserPrefs -> userPrefs(c.name)
         is Command.Parking -> parking(c.send)
+        Command.SetHome -> if (com.cockpitf30.nav.HomeArrival.setHere(app)) "Hecho, aquí es casa. Cuando volvamos te lo diré." else "Aún no tengo buena señal de GPS. Prueba en un momento."
         Command.AskName -> Personality.chat(if (Personality.userName.isNullOrBlank()) "name.unknown" else "name.ask", humor())
         is Command.Copilot -> {
             val on = c.on ?: true
@@ -2063,6 +2078,12 @@ object VoiceAssistant {
                 }
                 override fun onError(utteranceId: String?, errorCode: Int) {
                     ttsLastError = "error $errorCode al hablar"
+                    // La voz con Internet ha fallado (red lenta o caída): 10 min con la del coche.
+                    if (errorCode == TextToSpeech.ERROR_NETWORK || errorCode == TextToSpeech.ERROR_NETWORK_TIMEOUT ||
+                        runCatching { tts?.voice?.isNetworkConnectionRequired == true }.getOrDefault(false)) {
+                        netVoiceOffUntil = System.currentTimeMillis() + 10 * 60_000L
+                        scope.launch { applyVoice() }
+                    }
                     @Suppress("DEPRECATION") onError(utteranceId)
                 }
                 override fun onDone(utteranceId: String?) {
@@ -2154,7 +2175,15 @@ object VoiceAssistant {
             val robot = settings().assistantRobotVoice
             val voices = t.voices.orEmpty().filter { it.locale.language == "es" && !it.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) }
             // Sin elegir: una voz masculina local si el motor la marca así (TARS es grave), si no la de siempre.
-            val pick = voices.firstOrNull { it.name == name } ?: if (robot) maleVoice(voices) else null
+            val chosen = voices.firstOrNull { it.name == name } ?: if (robot) maleVoice(voices) else null
+            // Con Internet (y sin voz de robot, que pasa por archivo), la versión de red: más natural y
+            // con entonación de pregunta. Sin cobertura, la local. La elegida a mano «de red» se respeta.
+            val online = !robot && settings().assistantNetVoice && online() && System.currentTimeMillis() > netVoiceOffUntil
+            voiceOnline = online
+            val base = chosen ?: runCatching { t.defaultVoice }.getOrNull()?.takeIf { it.locale.language == "es" }
+            val pick = if (online) networkTwin(voices, base) ?: chosen
+                else if (chosen?.isNetworkConnectionRequired == true && !online()) voices.firstOrNull { !it.isNetworkConnectionRequired && it.name.substringBeforeLast('-') == chosen.name.substringBeforeLast('-') } ?: chosen
+                else chosen
             if (pick != null) t.voice = pick else t.setLanguage(Locale("es", "ES"))
             val st = settings().assistantRobotStrength
             t.setPitch(if (robot) st.pitch else 1f)
@@ -2217,18 +2246,53 @@ object VoiceAssistant {
         }
     }
 
-    /** Ajustes: probar la entonación de pregunta. */
-    fun testQuestion(context: Context) {
+    /** Ajustes: probar la voz con Internet (o decir por qué no se usa). */
+    fun testNetVoice(context: Context) {
         app = context.applicationContext
         initTts()
-        // La misma pregunta dos veces, sin y con subida, para comparar.
-        noTone = setOf("Primero, sin entonación, ¿te llevo a casa?")
-        val head = if (robotBroken) "Aviso: con este motor de voz no puedo cambiar el tono. " else ""
-        say("${head}Primero, sin entonación, ¿te llevo a casa? Ahora con entonación, ¿te llevo a casa?")
+        applyVoice()
+        val net = runCatching { tts?.voice?.isNetworkConnectionRequired == true }.getOrDefault(false)
+        say(when {
+            net -> "Esta es la voz con Internet. ¿Te llevo a casa? ¿Pongo la radio?"
+            !settings().assistantNetVoice -> "Voz del coche, sin Internet. ¿Te llevo a casa?"
+            settings().assistantRobotVoice -> "Con la voz de robot uso la voz del coche. ¿Te llevo a casa?"
+            !online() -> "Ahora no hay Internet: uso la voz del coche. ¿Te llevo a casa?"
+            else -> "Este motor de voz no tiene voz con Internet en español. ¿Te llevo a casa?"
+        })
     }
 
-    /** Trozos que se dicen sin subir el tono (la prueba de Ajustes). */
-    @Volatile private var noTone: Set<String> = emptySet()
+    /** ¿Hay Internet de verdad (red validada)? */
+    private fun online(): Boolean = runCatching {
+        val cm = app?.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager ?: return false
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }.getOrDefault(false)
+
+    /** Hasta cuándo no se prueba la voz con Internet (tras fallar por red). */
+    @Volatile private var netVoiceOffUntil = 0L
+    /** Con qué estado de red se eligió la voz (para cambiarla si llega o se va la cobertura). */
+    @Volatile private var voiceOnline: Boolean? = null
+
+    /** Antes de hablar: si ha cambiado la cobertura, voz con o sin Internet. */
+    private fun refreshNetVoice() {
+        if (!settings().assistantNetVoice || settings().assistantRobotVoice) return
+        val now = online() && System.currentTimeMillis() > netVoiceOffUntil
+        if (now != voiceOnline) applyVoice()
+    }
+
+    /**
+     * La variante con Internet de [base] en el motor de Google («es-es-x-eea-local» → «…-network»),
+     * o, si no tiene, una de red del mismo país. Null si el motor no tiene voces de red en español.
+     */
+    private fun networkTwin(all: List<android.speech.tts.Voice>, base: android.speech.tts.Voice?): android.speech.tts.Voice? {
+        val net = all.filter { it.isNetworkConnectionRequired && it.locale.language == "es" }
+        if (net.isEmpty()) return null
+        if (base?.isNetworkConnectionRequired == true) return base
+        val twin = base?.name?.lowercase()?.substringBeforeLast('-')
+        return net.firstOrNull { twin != null && it.name.lowercase().substringBeforeLast('-') == twin }
+            ?: net.sortedWith(compareBy({ it.locale.country != (base?.locale?.country ?: "ES") }, { it.quality < android.speech.tts.Voice.QUALITY_HIGH }, { it.name })).first()
+    }
 
     /** Diagnóstico: probar la voz con una frase. */
     fun testVoice(context: Context) {
@@ -2300,10 +2364,9 @@ object VoiceAssistant {
         if (t != null && ttsReady && settings().assistantSpeaks && chunks.isNotEmpty()) {
             // No escuchar mientras habla la radio: se oiría a sí misma.
             muted = true
+            refreshNetVoice()
             val filter = settings().assistantRobotVoice && settings().assistantRobotStrength.filter
-            // Preguntas: por el mismo camino (audio del motor → efecto → altavoz) para subir el tono al final.
-            val question = settings().assistantQuestionTone && chunks.any { QuestionTone.riseFor(it) > 0f }
-            if ((filter || question) && !robotBroken && startRobot(t, chunks)) {
+            if (filter && !robotBroken && startRobot(t, chunks)) {
                 // El final lo marca la reproducción ([playRobotChunks]).
             } else {
                 speakPlain(t, chunks, 0)
@@ -2378,8 +2441,7 @@ object VoiceAssistant {
                 val pcm = robotPreloaded.remove(ids[i]) ?: if (robotReady[ids[i]] == true) withContext(Dispatchers.Default) {
                     val st = settings().assistantRobotStrength
                     val filter = settings().assistantRobotVoice && st.filter
-                    val rise = if (settings().assistantQuestionTone && chunks[i] !in noTone) QuestionTone.riseFor(chunks[i]) else 0f
-                    RobotVoice.readWav(file)?.let { if (filter) RobotVoice.process(it, st) else it }?.let { QuestionTone.apply(it, rise) }
+                    RobotVoice.readWav(file)?.let { if (filter) RobotVoice.process(it, st) else it }
                 }?.also { p -> if (key != null && chunks[i].length <= ROBOT_CACHE_CHARS && p.samples.isNotEmpty()) synchronized(robotCache) { robotCache[key] = p } } else null
                 file.delete()
                 if (replyId != rid) return
@@ -2482,7 +2544,7 @@ object VoiceAssistant {
     }
     private val robotPreloaded = java.util.concurrent.ConcurrentHashMap<String, Pcm>()
     private const val ROBOT_CACHE_CHARS = 40
-    private fun robotKey(chunk: String) = "${chunk in noTone}|${settings().assistantRobotVoice && settings().assistantRobotStrength.filter}|${settings().assistantQuestionTone}|${settings().assistantRobotStrength}|${runCatching { tts?.voice?.name }.getOrNull()}|$chunk"
+    private fun robotKey(chunk: String) = "${settings().assistantRobotVoice && settings().assistantRobotStrength.filter}|${settings().assistantRobotStrength}|${runCatching { tts?.voice?.name }.getOrNull()}|$chunk"
 
     private fun robotFile(id: String) = java.io.File(app.cacheDir, "$id.wav")
 

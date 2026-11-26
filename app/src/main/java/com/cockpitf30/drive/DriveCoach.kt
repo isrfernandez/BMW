@@ -108,6 +108,7 @@ object DriveCoach {
         val demo = VehicleRepository.status.value.sourceName == "Demo"
         val speed = car.speedKmh?.toFloat()
         if (!demo) com.cockpitf30.nav.ParkingSpot.tick(ctx, route, speed, now)
+        if (!demo && com.cockpitf30.nav.HomeArrival.tick(ctx, route, speed, now) && st.assistantHomeGreeting) com.cockpitf30.assistant.VoiceAssistant.greetHome()
 
         // Viaje nuevo: se empieza de cero.
         val active = TripComputer.state.value.current != null
