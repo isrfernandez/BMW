@@ -131,4 +131,21 @@ class ConversationTest {
         val b = Personality.spice("Vale", 100, "open.fuel")
         assertNotEquals(a, b)
     }
+
+    @Test
+    fun identifyByName() {
+        val c = Conversation()
+        c.ask(Pending.Name, 0)
+        assertEquals(Command.SetName("Luis"), c.say("luis", 1_000))
+        c.ask(Pending.Name, 2_000)
+        assertEquals(Command.SetName("Ana Maria"), c.say("ana maria", 3_000))
+        c.ask(Pending.Name, 4_000)
+        assertEquals(Command.Guest, c.say("no", 5_000))
+        // Crear perfil: con «no», modo invitado.
+        c.ask(Pending.Confirm(Command.SetName("Pepe", confirmed = true), no = Command.Guest), 6_000)
+        assertEquals(Command.Guest, c.say("no", 7_000))
+        c.ask(Pending.Confirm(Command.SetName("Pepe", confirmed = true), no = Command.Guest), 8_000)
+        assertEquals(Command.SetName("Pepe", confirmed = true), c.say("sí", 9_000))
+        assertNull(VoiceCommands.bareName("pon la radio"))
+    }
 }

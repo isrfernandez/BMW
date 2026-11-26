@@ -253,7 +253,7 @@ object TripComputer {
     private fun checkEngineOff(now: Long, rpm: Int?, speed: Int?, trip: Trip?) {
         val acc = accState()
         val accOff = lastAcc == true && acc == false
-        if (acc != lastAcc && acc != null) logSummary("ACC ${if (acc) "encendido" else "apagado"}")
+        if (acc != lastAcc && acc != null) logSummary("contacto ${if (acc) "puesto" else "quitado"}")
         lastAcc = acc ?: lastAcc
         if (trip == null) return
         if ((rpm ?: 0) >= 400) {
@@ -262,7 +262,7 @@ object TripComputer {
             if (!accOff) return
         }
         // Con el contacto quitado no se espera: la radio puede apagarse en un par de segundos.
-        if (accOff) return summarize(now, trip, "ACC apagado")
+        if (accOff) return summarize(now, trip, "contacto quitado")
         if (!engineSeen || (speed ?: 0) > 2) { engineOffSince = 0L; return }
         if (engineOffSince == 0L) engineOffSince = now
         if (now - engineOffSince < ENGINE_OFF_MS) return

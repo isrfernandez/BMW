@@ -132,7 +132,10 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
     val weather by WeatherRepository.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val settings = remember { AppSettings(context) }
-    val cards = remember {
+    // Diagnóstico solo para el Capi (se vuelve a mirar al cambiar de conductor).
+    val profileVersion by com.cockpitf30.assistant.VoiceAssistant.profileVersion.collectAsStateWithLifecycle()
+    val capi = remember(profileVersion) { com.cockpitf30.system.Profiles.current(context).capi }
+    val cards = remember(capi) {
         listOf(
             // Antes "Música" (ya está en la barra lateral): ahora el asistente de voz «Hola Athos».
             Card("assistant", "Hola Athoox", "Asistente de voz", CardTheme.ASSIST, { VoiceAssistant.tap(it) }),
@@ -150,12 +153,14 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
             Card("weather", "Tiempo", "", CardTheme.WEATHER, { onOpen(Screen.WEATHER) }),
             Card("vehicle", "Vehículo", "iDrive original del coche", CardTheme.VEHICLE, { onOpen(Screen.VEHICLE) }),
             Card("phone", "Teléfono", "Marcador y contactos", CardTheme.PHONE, { onOpen(Screen.PHONE) }),
+            // Wi-Fi, Bluetooth, cobertura de la SIM y GPS sin salir de la app.
+            Card("connect", "Conexiones", "Wi-Fi, Bluetooth, 4G y GPS", CardTheme.CONNECT, { onOpen(Screen.CONNECTIONS) }, Alignment.BottomStart) { ConnectBody() },
             Card("service", "Mantenimiento", "Aceite, neumáticos e ITV", CardTheme.SERVICE, { onOpen(Screen.MAINTENANCE) }, Alignment.BottomStart) { ServiceBody() },
             Card("diag", "Diagnóstico", "Información técnica y depuración", CardTheme.DIAG, { onOpen(Screen.DIAGNOSTICS) }),
-        ).associateBy { it.id }
+        ).filter { it.id != "diag" || capi }.associateBy { it.id }
     }
     // Quien tenía guardado el orden con "nav" o "music" encuentra la gasolinera o el asistente en el mismo sitio.
-    var order by remember {
+    var order by remember(capi) {
         mutableStateOf(CardOrder.merge(settings.cardOrder.map { when (it) { "nav" -> "fuel"; "music" -> "assistant"; else -> it } }, cards.keys.toList()))
     }
     val fuel = rememberFuelView()
@@ -466,6 +471,30 @@ private fun TripBody() {
     }
 }
 
+/** Wi-Fi y cobertura de la SIM de un vistazo (se mira cada 5 s mientras se ve la tarjeta). */
+@Composable
+private fun ConnectBody() {
+    val context = LocalContext.current
+    var snap by remember { mutableStateOf(com.cockpitf30.system.Connectivity.snapshot(context)) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(5000)
+            snap = com.cockpitf30.system.Connectivity.snapshot(context)
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (snap.cell.simReady) {
+            com.cockpitf30.ui.screens.Bars(snap.cell.level, Modifier.size(width = 26.dp, height = 20.dp))
+            Text(snap.cell.tech ?: "SIM", style = MaterialTheme.typography.titleLarge, maxLines = 1)
+        }
+        if (snap.wifi.ssid != null) {
+            com.cockpitf30.ui.screens.Bars(snap.wifi.level, Modifier.size(width = 26.dp, height = 20.dp))
+            Text(snap.wifi.ssid!!, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.width(110.dp))
+        }
+        if (!snap.cell.simReady && snap.wifi.ssid == null) Text(if (snap.net.internet) "Internet" else "Sin Internet", style = MaterialTheme.typography.titleLarge, color = Cockpit.TextDim)
+    }
+}
+
 /** Lo más urgente del mantenimiento, con su color. */
 @Composable
 private fun ServiceBody() {
@@ -554,4 +583,4 @@ internal fun launch(context: Context, intent: Intent) {
     }
 }
 
-enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, SETTINGS, WEATHER, PHONE, FUEL, PERFORMANCE, ROUTE, MAINTENANCE, RADIO, TOURISM }
+enum class Screen { HOME, VEHICLE, TRIP, APPS, DIAGNOSTICS, SETTINGS, WEATHER, PHONE, FUEL, PERFORMANCE, ROUTE, MAINTENANCE, RADIO, TOURISM, CONNECTIONS }

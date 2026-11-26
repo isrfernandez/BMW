@@ -23,10 +23,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -73,9 +75,16 @@ import com.cockpitf30.ui.theme.numeric
 import com.cockpitf30.vehicle.trip.TripComputer
 
 /** Secciones de Ajustes, en el orden de la columna de la izquierda. */
+/** Abrir Ajustes en una sección concreta (p. ej. «Cambiar» del aviso de conductor → Usuarios). Se usa una vez. */
+object SettingsNav {
+    @Volatile var pending: SettingsSection? = null
+    fun take(): SettingsSection? = pending.also { pending = null }
+}
+
 enum class SettingsSection(val title: String, val hint: String) {
     DISPLAY("Pantalla e iluminación", "Modo diurno, tamaño de letra, Night y luz ambiente"),
     ASSISTANT("Asistente de voz", "«Hola Athoox», voz y personalidad"),
+    USERS("Usuarios", "Conductores, sus preferencias y borrar"),
     DRIVING("Conducción", "Copiloto, briefing, resumen y cambio"),
     ALERTS("Avisos en ruta", "Radares, peligros, descanso, turismo, comer y dormir"),
     RADIO("Radio", "Fuente, volumen y atenuación"),
@@ -91,7 +100,7 @@ enum class SettingsSection(val title: String, val hint: String) {
 @Composable
 fun SettingsScreen(onOpen: (Screen) -> Unit = {}, initialSection: SettingsSection = SettingsSection.DISPLAY) {
     val context = LocalContext.current
-    var section by rememberSaveable { mutableStateOf(com.cockpitf30.ui.components.DemoTour.settingsSection ?: initialSection) }
+    var section by rememberSaveable { mutableStateOf(com.cockpitf30.ui.components.DemoTour.settingsSection ?: SettingsNav.take() ?: initialSection) }
     // El modo demo pasa por todas las secciones.
     val demoSection = com.cockpitf30.ui.components.DemoTour.settingsSection
     androidx.compose.runtime.LaunchedEffect(demoSection) { demoSection?.let { section = it } }
@@ -116,7 +125,8 @@ fun SettingsScreen(onOpen: (Screen) -> Unit = {}, initialSection: SettingsSectio
                     }
                 }
                 // Cada sección empieza arriba del todo.
-                key(section) {
+                val profileVersion by VoiceAssistant.profileVersion.collectAsStateWithLifecycle()
+                key(section, profileVersion) {
                     // Modo demo: las filas se resaltan por turnos enseñando el cambio, sin guardarlo.
                     val demoRows = remember { DemoRows() }
                     LaunchedEffect(demoSection) {
@@ -144,6 +154,7 @@ fun SettingsScreen(onOpen: (Screen) -> Unit = {}, initialSection: SettingsSectio
                         when (section) {
                             SettingsSection.DISPLAY -> DisplaySettings()
                             SettingsSection.ASSISTANT -> AssistantSettings()
+                            SettingsSection.USERS -> UserSettings()
                             SettingsSection.DRIVING -> DrivingSettings(onOpen)
                             SettingsSection.ALERTS -> AlertSettings()
                             SettingsSection.RADIO -> RadioSettings(onOpen)
@@ -230,6 +241,10 @@ private fun AssistantSettings() {
                 onPlus = { vol = (vol + 10).coerceAtMost(150); settings.assistantVolume = vol; assistant.testVolume(ctx) },
             )
         }
+        var over by remember { mutableStateOf(settings.assistantVoiceOver) }
+        ToggleRow("Callarse si le hablas encima (experimental)", "Desactivado, se corta con «Hola Athoox», «para» o «cancela», tocando la tarjeta o con el botón de voz del volante. Activado, también al oír tu voz por encima de la suya, pero con los altavoces del coche puede cortarse sola.", over, enabled = on) {
+            over = it; settings.assistantVoiceOver = it; VoiceAssistant.restartListening(ctx)
+        }
         var follow by remember { mutableStateOf(settings.assistantFollowUp) }
         ToggleRow("Sigue escuchando tras responder", "Puedes decir «otra», «¿y mañana?» o «repite» sin volver a decir «Hola Athoox».", follow, enabled = on) {
             follow = it; settings.assistantFollowUp = it
@@ -274,6 +289,56 @@ private fun AssistantSettings() {
                 assistant.testVoice(ctx)
             }
         }
+        var rate by remember { mutableStateOf(settings.assistantSpeechRate) }
+        StepperRow("Velocidad", "Sobre la del tipo de voz. 100 % = normal.", "$rate %",
+            onMinus = { rate = (rate - 5).coerceAtLeast(50); settings.assistantSpeechRate = rate; assistant.applyVoice(); assistant.testVoice(ctx) },
+            onPlus = { rate = (rate + 5).coerceAtMost(200); settings.assistantSpeechRate = rate; assistant.applyVoice(); assistant.testVoice(ctx) })
+        var pitch by remember { mutableStateOf(settings.assistantPitch) }
+        StepperRow("Tono", "Menos = más grave. 100 % = el del tipo de voz.", "$pitch %",
+            onMinus = { pitch = (pitch - 5).coerceAtLeast(50); settings.assistantPitch = pitch; assistant.applyVoice(); assistant.testVoice(ctx) },
+            onPlus = { pitch = (pitch + 5).coerceAtMost(150); settings.assistantPitch = pitch; assistant.applyVoice(); assistant.testVoice(ctx) })
+        var cloud by remember { mutableStateOf(settings.assistantCloudVoice) }
+        var cloudKey by remember { mutableStateOf(settings.assistantCloudKey) }
+        var editKey by remember { mutableStateOf(false) }
+        ChoiceRow("Voz en la nube (Google)", "Más natural y entona las preguntas. Usa datos y tu clave de Google Cloud; sin cobertura, la voz de la radio.", listOf("Sí", "No"), if (cloud) 0 else 1) {
+            cloud = it == 0
+            settings.assistantCloudVoice = cloud
+            if (cloud && cloudKey == null) editKey = true else if (cloud) assistant.testCloudVoice(ctx)
+        }
+        if (cloud) {
+            ActionRow("Clave de Google Cloud",
+                (if (cloudKey == null) "Sin clave. En console.cloud.google.com: activa «Cloud Text-to-Speech API» y crea una clave de API."
+                else "Guardada (…${cloudKey!!.takeLast(4)}).") + (com.cockpitf30.assistant.CloudTts.lastError?.let { " Último error: $it" } ?: ""),
+                if (cloudKey == null) "Añadir" else "Cambiar") { editKey = true }
+            var cap by remember { mutableStateOf(settings.cloudMonthlyCap) }
+            val used = settings.cloudCharsThisMonth
+            StepperRow("Tope al mes",
+                "Este mes: ${"%,d".format(used).replace(',', '.')} caracteres" + (if (used >= cap) ". Tope alcanzado: voz de la radio hasta el mes que viene." else ". Google da 1 millón gratis al mes."),
+                "${cap / 1000} mil",
+                onMinus = { cap = (cap - 100_000).coerceAtLeast(100_000); settings.cloudMonthlyCap = cap },
+                onPlus = { cap = (cap + 100_000).coerceAtMost(2_000_000); settings.cloudMonthlyCap = cap })
+            var cloudVoice by remember { mutableStateOf(settings.assistantCloudVoiceName) }
+            ChoiceRow("Voz de la nube",
+                "$cloudVoice (${if (cloudVoice in com.cockpitf30.assistant.CloudTts.MALE) "hombre" else "mujer"}). «Cambiar» las va probando.",
+                listOf("Probar", "Cambiar ›"), 0) {
+                if (it == 0) assistant.testCloudVoice(ctx) else cloudVoice = assistant.nextCloudVoice(ctx)
+            }
+        }
+        if (editKey) TextDialog("Clave de API de Google Cloud", cloudKey.orEmpty(), onDismiss = { editKey = false }, keyboard = androidx.compose.ui.text.input.KeyboardType.Text) { v ->
+            val k = v.trim()
+            when {
+                k.isEmpty() -> { settings.assistantCloudKey = null; cloudKey = null; editKey = false; null }
+                k.length < 30 || k.contains(' ') -> "No parece una clave de API (suelen empezar por AIza…)."
+                else -> { settings.assistantCloudKey = k; cloudKey = k; editKey = false; assistant.testCloudVoice(ctx); null }
+            }
+        }
+        var netVoice by remember { mutableStateOf(settings.assistantNetVoice) }
+        ChoiceRow("Voz con Internet", "Con datos, la misma voz en su versión de red de Google (si la tiene). Sin cobertura vuelve sola a la del coche.", listOf("Sí", "No"), if (netVoice) 0 else 1) {
+            netVoice = it == 0
+            settings.assistantNetVoice = netVoice
+            assistant.applyVoice()
+            assistant.testNetVoice(ctx)
+        }
         var voiceName by remember { mutableStateOf(settings.assistantVoiceName) }
         val voices = remember(voice.phase, voiceName) { assistant.spanishVoices() }
         if (voices.isNotEmpty()) {
@@ -313,16 +378,259 @@ private fun AssistantSettings() {
             onMinus = { assistant.setHumor(ctx, humor - 5) }, onPlus = { assistant.setHumor(ctx, humor + 5) })
         val levels = listOf(0, 25, 50, 75, 100)
         ChoiceRow("Niveles rápidos", null, levels.map { "$it %" }, levels.indexOf(humor)) { assistant.setHumor(ctx, levels[it]) }
+        // Los conductores (y su llave) están en Ajustes › Usuarios.
         var name by remember { mutableStateOf(settings.assistantUserName) }
         ActionRow(
             "Memoria",
-            (name?.let { "Sabe que te llamas $it." } ?: "Aún no sabe tu nombre: díselo con «me llamo…».") + " Olvidar borra también las frases recientes.",
+            (name?.let { "Sabe que te llamas $it." } ?: "Aún no sabe tu nombre: ponlo en Usuarios.") + " Olvidar borra también las frases recientes.",
             "Olvidar",
         ) {
             assistant.forgetMemory(ctx)
             name = null
         }
     }
+}
+
+/**
+ * Usuarios: cada conductor con sus preferencias guardadas y su llave; se puede crear, pasar a otro o borrarlo (el
+ * borrado pide confirmar con un segundo toque). Al arrancar, la llave elige el conductor. Por voz solo
+ * «¿qué usuarios hay?».
+ */
+@Composable
+private fun UserSettings() {
+    val ctx = LocalContext.current
+    val profiles = remember { com.cockpitf30.system.Profiles.list(ctx) }
+    val current = remember { com.cockpitf30.system.Profiles.current(ctx) }
+    SettingGroup("Conductores") {
+        Labels(
+            "Cada conductor tiene sus propios ajustes y Athoox recuerda quién condujo el último.",
+            "Al arrancar te reconoce por la llave del coche: asocia la tuya aquí abajo, en «Tu llave». Los conductores se crean y se cambian aquí (ya no por voz). Al perfil de Zeus se entra con su llave o con su PIN.",
+            true, Modifier.fillMaxWidth(),
+        )
+        var adding by remember { mutableStateOf(false) }
+        ActionRow("Nuevo conductor", "Crea un perfil con los ajustes de fábrica y pasa a él. Luego asocia su llave.", "Crear") { adding = true }
+        if (adding) TextDialog("Nombre del nuevo conductor", "", onDismiss = { adding = false }, keyboard = androidx.compose.ui.text.input.KeyboardType.Text) { v ->
+            val n = v.trim().split(Regex("\\s+")).joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } }
+            when {
+                n.length < 2 -> "Escribe un nombre."
+                com.cockpitf30.system.Profiles.find(ctx, n) != null -> "Ya hay un conductor con ese nombre."
+                else -> { adding = false; VoiceAssistant.selectUser(ctx, n, trusted = true); null }
+            }
+        }
+    }
+    // Cambiar el nombre del perfil actual (si el reconocedor entendió mal, o el de Zeus quiere otro).
+    SettingGroup("Tu nombre") {
+        var name by remember { mutableStateOf(current.name) }
+        var editing by remember { mutableStateOf(false) }
+        ActionRow(name.ifBlank { "Sin nombre" }, "Es como te llama Athoox y el nombre de tu perfil." + if (current.capi) " Tienes el rol Zeus." else "", "Cambiar") { editing = true }
+        if (editing) TextDialog("Tu nombre", name, onDismiss = { editing = false }, keyboard = androidx.compose.ui.text.input.KeyboardType.Text) { v ->
+            val n = v.trim().split(Regex("\\s+")).joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } }
+            when {
+                n.length < 2 -> "Escribe un nombre."
+                !com.cockpitf30.system.Profiles.rename(ctx, n) -> "Ya hay otro conductor con ese nombre."
+                else -> { name = n; editing = false; VoiceAssistant.renamed(ctx); null }
+            }
+        }
+    }
+    if (current.name.isNotBlank()) KeyOf(ctx, current)
+    var pinFor by remember { mutableStateOf<com.cockpitf30.system.Profile?>(null) }
+    pinFor?.let { target ->
+        PinDialog("PIN de Zeus para usar su perfil", listOf("PIN"), onDismiss = { pinFor = null }) { v ->
+            when (com.cockpitf30.system.Profiles.checkPin(ctx, v[0])) {
+                null -> { pinFor = null; VoiceAssistant.selectUser(ctx, target.name, trusted = true); null }
+                com.cockpitf30.system.CapiDelete.LOCKED -> { com.cockpitf30.ui.components.AmbientLight.alarm(); "Demasiados intentos. Bloqueado." }
+                else -> { com.cockpitf30.ui.components.AmbientLight.alarm(2_500); "PIN incorrecto." }
+            }
+        }
+    }
+    (listOf(current) + profiles.filter { it.id != current.id }).forEach { p ->
+        val isCurrent = p.id == current.id
+        val title = p.name.ifBlank { "Sin nombre" } + (if (p.capi) " · Zeus" else "") + if (isCurrent) " · conduce ahora" else ""
+        SettingGroup(title) {
+            val prefs = remember(p.id) { com.cockpitf30.system.Profiles.summary(com.cockpitf30.system.Profiles.values(ctx, p.id)) }
+            prefs.forEach { (k, v) ->
+                Row(Modifier.fillMaxWidth().padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(k, style = MaterialTheme.typography.bodyLarge, color = Cockpit.TextDim, modifier = Modifier.width(300.dp))
+                    Text(v, style = MaterialTheme.typography.bodyLarge, color = Cockpit.Text)
+                }
+            }
+            if (p.capi && isCurrent) {
+                CapiControls(ctx)
+            } else if (p.capi) {
+                val pin = com.cockpitf30.system.Profiles.hasPin(ctx)
+                if (p.name.isNotBlank()) ActionRow("Usar este perfil", if (pin) "Pide el PIN de Zeus." else "Carga sus ajustes.", "Usar") {
+                    if (pin) pinFor = p else VoiceAssistant.selectUser(ctx, p.name)
+                }
+                ActionRow("Borrar usuario", "Cuenta protegida: solo Zeus puede borrarla, con su PIN.", "Borrar") {
+                    VoiceAssistant.refuseCapiDelete(ctx)
+                }
+            } else if (!isCurrent) {
+                if (p.name.isNotBlank()) ActionRow("Usar este perfil", "Carga sus ajustes.", "Usar") {
+                    VoiceAssistant.selectUser(ctx, p.name)
+                }
+                var confirm by remember(p.id) { mutableStateOf(false) }
+                ActionRow(
+                    "Borrar usuario",
+                    if (confirm) "Se borrarán sus ajustes. Pulsa otra vez para confirmar." else "Borra el perfil y todos sus ajustes. Los viajes y el mantenimiento del coche no se tocan.",
+                    if (confirm) "Confirmar" else "Borrar",
+                ) { if (confirm) VoiceAssistant.deleteUserFromSettings(ctx, p.id) else confirm = true }
+            } else if (profiles.size > 1) {
+                Labels("Para borrar este perfil, cambia antes a otro conductor.", null, false, Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+/** El Capi conduciendo: su PIN y el borrado de su propia cuenta. */
+/** La llave del coche del conductor actual: con ella le reconoce al arrancar. */
+@Composable
+private fun KeyOf(ctx: android.content.Context, me: com.cockpitf30.system.Profile) {
+    var has by remember(me.id) { mutableStateOf(com.cockpitf30.system.CarKey.has(ctx, me.id)) }
+    var note by remember { mutableStateOf<String?>(null) }
+    SettingGroup("Tu llave, ${com.cockpitf30.system.Profiles.callName(me)}") {
+        ActionRow(
+            "Llave del coche",
+            note ?: if (has) "Asociada. Al arrancar con ella, Athoox pasa a tu perfil. Si cambias de llave, arranca con la nueva y pulsa Cambiar."
+            else "Sin asociar. Arranca el coche con tu llave y pulsa Asociar: desde entonces, al arrancar con ella, Athoox sabrá que eres tú.",
+            if (has) "Cambiar" else "Asociar",
+        ) {
+            if (com.cockpitf30.system.CarKey.associate(ctx, me.id)) { has = true; note = "Asociada a la llave de este arranque. Si otro conductor la tenía, se le ha quitado." }
+            else note = "Aún no llegan los datos de la caja del coche. Espera unos segundos con el contacto puesto y vuelve a pulsar."
+        }
+        if (has) ActionRow("Quitar la llave", null, "Quitar") { com.cockpitf30.system.CarKey.forget(ctx, me.id); has = false; note = null }
+    }
+}
+
+@Composable
+private fun CapiControls(ctx: android.content.Context) {
+    var dialog by remember { mutableStateOf<String?>(null) }
+    val hasPin = remember(dialog) { com.cockpitf30.system.Profiles.hasPin(ctx) }
+    val scope = rememberCoroutineScope()
+    var keyLabel by remember { mutableStateOf(com.cockpitf30.system.PhoneKey.registered(ctx)) }
+    var keyNote by remember { mutableStateOf<String?>(null) }
+    // Segundo factor: el móvil del Capi conectado por Bluetooth.
+    ActionRow(
+        "Móvil llave",
+        keyNote ?: (keyLabel?.let { "$it. Para borrar tu cuenta tiene que estar conectado, además del PIN." }
+            ?: "Ninguno. Conecta tu móvil por Bluetooth y pulsa Registrar: será la llave para borrar tu cuenta."),
+        if (keyLabel == null) "Registrar" else "Cambiar",
+    ) {
+        scope.launch {
+            val phones = com.cockpitf30.system.PhoneKey.connected(ctx)
+            val first = phones.firstOrNull()
+            keyNote = if (first != null && com.cockpitf30.system.PhoneKey.register(ctx, first)) {
+                keyLabel = first.label; null
+            } else "No veo ningún móvil conectado. Si el teléfono está conectado y aun así no sale, esta radio no deja verlo: entonces vale solo el PIN."
+        }
+    }
+    ActionRow(
+        "PIN de Zeus",
+        if (hasPin) "Protege tu cuenta: hace falta para borrarla. Se teclea aquí, nunca en voz alta." else "Aún no tienes PIN. Sin él nadie puede borrar tu cuenta, ni siquiera tú.",
+        if (hasPin) "Cambiar" else "Crear",
+    ) { dialog = "pin" }
+    ActionRow("Borrar mi cuenta", "Pide tu PIN y tu móvil llave conectado. El rol Zeus pasa al conductor más antiguo, o al primero que se presente si no queda nadie.", "Borrar") {
+        if (!hasPin) { dialog = "pin"; return@ActionRow }
+        scope.launch {
+            if (com.cockpitf30.system.PhoneKey.present(ctx)) { keyNote = null; dialog = "delete" }
+            else {
+                com.cockpitf30.ui.components.AmbientLight.alarm(3_000)
+                keyNote = "Para borrar tu cuenta conecta antes tu móvil llave ($keyLabel) por Bluetooth."
+            }
+        }
+    }
+    when (dialog) {
+        "pin" -> PinDialog(
+            title = if (hasPin) "Cambiar el PIN" else "Crear el PIN de Zeus",
+            fields = if (hasPin) listOf("PIN actual", "PIN nuevo (4 a 8 cifras)", "Repite el PIN nuevo") else listOf("PIN (4 a 8 cifras)", "Repite el PIN"),
+            onDismiss = { dialog = null },
+        ) { v ->
+            val (old, new, again) = if (hasPin) Triple(v[0], v[1], v[2]) else Triple(null, v[0], v[1])
+            when {
+                !com.cockpitf30.system.Profiles.validPin(new) -> "El PIN tiene que tener de 4 a 8 cifras."
+                new != again -> "Los dos PIN no coinciden."
+                hasPin && com.cockpitf30.system.Profiles.lockLeftMs(ctx) > 0 -> "Demasiados intentos. Espera unos minutos."
+                !com.cockpitf30.system.Profiles.setPin(ctx, new, old) -> "El PIN actual no es correcto."
+                else -> {
+                    dialog = null
+                    // Si aún no hay llave, el móvil conectado ahora se queda como llave.
+                    if (keyLabel == null) scope.launch {
+                        com.cockpitf30.system.PhoneKey.connected(ctx).firstOrNull()?.let { if (com.cockpitf30.system.PhoneKey.register(ctx, it)) keyLabel = it.label }
+                    }
+                    null
+                }
+            }
+        }
+        "delete" -> PinDialog(
+            title = "Borrar la cuenta de Zeus",
+            fields = listOf("Tu PIN"),
+            onDismiss = { dialog = null },
+        ) { v ->
+            when (com.cockpitf30.system.Profiles.deleteCapi(ctx, v[0])) {
+                com.cockpitf30.system.CapiDelete.OK -> { dialog = null; VoiceAssistant.capiDeleted(ctx); null }
+                com.cockpitf30.system.CapiDelete.LOCKED -> {
+                    com.cockpitf30.ui.components.AmbientLight.alarm()
+                    "Demasiados intentos. Bloqueado ${(com.cockpitf30.system.Profiles.lockLeftMs(ctx) / 60_000 + 1)} min."
+                }
+                com.cockpitf30.system.CapiDelete.WRONG_PIN -> { com.cockpitf30.ui.components.AmbientLight.alarm(2_500); "PIN incorrecto." }
+                com.cockpitf30.system.CapiDelete.NO_PIN -> "Crea antes tu PIN."
+                com.cockpitf30.system.CapiDelete.NOT_CAPI -> "Solo Zeus puede hacer esto."
+            }
+        }
+    }
+}
+
+/** Diálogo con una casilla de texto. [onConfirm] devuelve el error o null si vale. */
+@Composable
+private fun TextDialog(
+    title: String, initial: String, onDismiss: () -> Unit,
+    keyboard: androidx.compose.ui.text.input.KeyboardType = androidx.compose.ui.text.input.KeyboardType.Email,
+    onConfirm: (String) -> String?,
+) {
+    var value by remember { mutableStateOf(initial) }
+    var error by remember { mutableStateOf<String?>(null) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                androidx.compose.material3.OutlinedTextField(
+                    value = value, onValueChange = { value = it.take(80) }, singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = keyboard),
+                )
+                error?.let { Text(it, color = Cockpit.Alert, style = MaterialTheme.typography.labelLarge) }
+            }
+        },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = { error = onConfirm(value) }) { Text("Guardar") } },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancelar") } },
+    )
+}
+
+/** Diálogo con [fields] casillas de PIN (cifras ocultas). [onConfirm] devuelve el error o null si vale. */
+@Composable
+private fun PinDialog(title: String, fields: List<String>, onDismiss: () -> Unit, onConfirm: (List<String>) -> String?) {
+    val values = remember { mutableStateListOf(*Array(fields.size) { "" }) }
+    var error by remember { mutableStateOf<String?>(null) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                fields.forEachIndexed { i, label ->
+                    androidx.compose.material3.OutlinedTextField(
+                        value = values[i],
+                        onValueChange = { v -> values[i] = v.filter { it.isDigit() }.take(8) },
+                        label = { Text(label) },
+                        singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword),
+                    )
+                }
+                error?.let { Text(it, color = Cockpit.Alert, style = MaterialTheme.typography.labelLarge) }
+            }
+        },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = { error = onConfirm(values.toList()) }) { Text("Aceptar") } },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancelar") } },
+    )
 }
 
 @Composable
@@ -361,6 +669,43 @@ private fun DrivingSettings(onOpen: (Screen) -> Unit) {
         var noTrip by remember { mutableStateOf(false) }
         ActionRow("Ver el resumen", if (noTrip) "Aún no hay ningún trayecto guardado: sale en cuanto hagas el primero." else "El del trayecto en curso o el último.", "Ver") {
             noTrip = !TripComputer.showSummary(System.currentTimeMillis())
+        }
+    }
+    SettingGroup("Casa") {
+        val home by com.cockpitf30.nav.HomeArrival.home.collectAsStateWithLifecycle()
+        var homeNote by remember { mutableStateOf<String?>(null) }
+        ActionRow(
+            "Ubicación de casa",
+            homeNote ?: when {
+                home == null -> "Sin guardar. Pulsa en casa (o di «esta es mi casa»); si no, se aprende sola tras ${com.cockpitf30.nav.HomeArrival.NIGHTS} noches aparcado en el mismo sitio."
+                home!!.manual -> "Guardada a mano."
+                else -> "Aprendida de dónde duerme el coche. Si no es, guárdala aquí estando en casa."
+            },
+            "Guardar aquí",
+        ) { homeNote = if (com.cockpitf30.nav.HomeArrival.setHere(ctx)) "Guardada: esta es casa." else "Aún sin buena señal de GPS." }
+        var greet by remember { mutableStateOf(settings.assistantHomeGreeting) }
+        ChoiceRow("Avisar al llegar", "«Ya estamos en casa» al volver.", listOf("Sí", "No"), if (greet) 0 else 1) {
+            greet = it == 0
+            settings.assistantHomeGreeting = greet
+        }
+    }
+    SettingGroup("Coche aparcado") {
+        val spot by com.cockpitf30.nav.ParkingSpot.spot.collectAsStateWithLifecycle()
+        ActionRow(
+            "Dónde está el coche",
+            spot?.let { "Guardado el ${it.day()} a las ${it.time()}. Sale como QR para el móvil y se puede compartir." }
+                ?: "Se guarda solo al llevar unos segundos parado con buena señal de GPS.",
+            "Ver QR",
+        ) { com.cockpitf30.nav.ParkingSpot.showing.value = true }
+        var email by remember { mutableStateOf(com.cockpitf30.nav.ParkingSpot.email(ctx)) }
+        var editing by remember { mutableStateOf(false) }
+        ActionRow("Correo para la ubicación", email ?: "Ninguno. Con un correo guardado, «Enviar» abre el correo ya escrito.", if (email == null) "Añadir" else "Cambiar") { editing = true }
+        if (editing) TextDialog("Correo para la ubicación del coche", email.orEmpty(), onDismiss = { editing = false }) { v ->
+            when {
+                v.isBlank() -> { com.cockpitf30.nav.ParkingSpot.setEmail(ctx, null); email = null; editing = false; null }
+                !com.cockpitf30.nav.ParkingSpot.validEmail(v) -> "Ese correo no parece válido."
+                else -> { com.cockpitf30.nav.ParkingSpot.setEmail(ctx, v); email = v.trim(); editing = false; null }
+            }
         }
     }
     SettingGroup("Cuadro") {
@@ -416,6 +761,7 @@ private fun alertHint(c: AlertCategory): String = when (c) {
     AlertCategory.TOURISM -> "Monumentos, miradores y pueblos con artículo en Wikipedia, con foto."
     AlertCategory.FOOD -> "Restaurantes a la hora de comer o cenar, y hoteles y campings por la noche o tras tres horas al volante."
     AlertCategory.WIND -> "Viento de proa, de través o de popa según el rumbo, en términos náuticos, cuando sopla con fuerza."
+    AlertCategory.ROAD -> "Cuestas y viento que se notan en el esfuerzo, el ritmo del viaje y los túneles o zonas sin cobertura."
 }
 
 @Composable
@@ -568,9 +914,11 @@ private fun SystemSettings(onOpen: (Screen) -> Unit) {
         ) { BatteryOptimization.request(ctx) }
     }
     SettingGroup("Acerca de") {
-        ActionRow("Athoox ${installedVersion(ctx)}", "Información técnica, datos del CAN e informe para depurar.", "Diagnóstico ›") {
-            onOpen(Screen.DIAGNOSTICS)
-        }
+        if (com.cockpitf30.system.Profiles.current(ctx).capi) {
+            ActionRow("Athoox ${installedVersion(ctx)}", "Información técnica, datos del CAN, informe para depurar y modo demo.", "Diagnóstico ›") {
+                onOpen(Screen.DIAGNOSTICS)
+            }
+        } else Labels("Athoox ${installedVersion(ctx)}", "Diagnóstico y modo demo: solo para Zeus.", true, Modifier.fillMaxWidth())
     }
 }
 

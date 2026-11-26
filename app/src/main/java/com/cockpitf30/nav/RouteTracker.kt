@@ -34,6 +34,8 @@ data class RouteState(
     val time: Long = 0,
     /** Datos de la última posición real, para el ordenador de viaje. */
     val fix: GpsFix? = null,
+    /** La posición es estimada a ciegas (túnel, sin GPS) con la velocidad del coche y el último rumbo. */
+    val estimated: Boolean = false,
 )
 
 /**
@@ -172,13 +174,40 @@ object RouteTracker {
 
     private var demoMeters = 0.0
 
-    private fun push(p: GeoPoint, bearing: Float, live: Boolean, time: Long, reset: Boolean, fix: GpsFix? = null) {
+    /** Metros recorridos a ciegas desde la última posición real. */
+    @Volatile var blindMeters = 0.0
+        private set
+    /** Tope de la estimación a ciegas: más allá el error ya no compensa. */
+    private const val MAX_BLIND_M = 5000.0
+
+    /**
+     * Túnel o sin GPS: avanza la posición con la velocidad del coche ([speedKmh], del CAN) por el
+     * último rumbo conocido. Lo llama [com.cockpitf30.drive.DriveCoach] cada segundo mientras va a
+     * ciegas. Devuelve false si ya no se estima (sin posición previa o demasiado lejos).
+     */
+    fun deadReckon(speedKmh: Float, dtSeconds: Double): Boolean {
+        val s = _state.value
+        val p = s.position ?: return false
+        if (!s.live || demoOverride || blindMeters >= MAX_BLIND_M) return false
+        val d = speedKmh / 3.6 * dtSeconds
+        if (d <= 0) return true
+        blindMeters += d
+        val r = 6_371_000.0
+        val b = Math.toRadians(s.bearing.toDouble())
+        val lat = p.lat + Math.toDegrees(d * cos(b) / r)
+        val lon = p.lon + Math.toDegrees(d * sin(b) / (r * cos(Math.toRadians(p.lat))))
+        push(GeoPoint(lat, lon), s.bearing, live = true, time = System.currentTimeMillis(), reset = false, estimated = true)
+        return true
+    }
+
+    private fun push(p: GeoPoint, bearing: Float, live: Boolean, time: Long, reset: Boolean, fix: GpsFix? = null, estimated: Boolean = false) {
+        if (!estimated) blindMeters = 0.0
         val s = _state.value
         val base = if (reset) emptyList() else s.track
         val track = if (base.isEmpty() || distance(base.last(), p) >= MIN_STEP_M) {
             (base + p).let { if (it.size > MAX_POINTS) it.drop(it.size - MAX_POINTS) else it }
         } else base
-        _state.value = RouteState(p, bearing, track, live, time, fix ?: s.fix.takeIf { live })
+        _state.value = RouteState(p, bearing, track, live, time, fix ?: s.fix.takeIf { live }, estimated)
     }
 
     fun distance(a: GeoPoint, b: GeoPoint): Double {

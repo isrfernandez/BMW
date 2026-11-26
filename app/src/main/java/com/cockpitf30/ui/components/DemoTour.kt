@@ -178,7 +178,8 @@ object DemoTour {
             }
         },
         Step(Screen.RADIO, "Radio", "FM e Internet con favoritas. Al arrancar vuelve sola la última emisora; baja cuando hablan Maps o Athoox.", 6),
-        Step(Screen.PHONE, "Teléfono", "Agenda y llamadas; también por voz: «Hola Athoox, llama a…».", 5),
+        Step(Screen.PHONE, "Teléfono", "Agenda y llamadas; también por voz: «Hola Athoox, llama a…».", 4),
+        Step(Screen.CONNECTIONS, "Conexiones", "Wi-Fi, Bluetooth, cobertura de la SIM 4G y GPS sin salir de Athoox: conectar, emparejar y ver la señal.", 5),
         Step(Screen.MAINTENANCE, "Mantenimiento", "Aceite, frenos, ITV y demás avisos con los kilómetros que faltan.", 5),
         Step(Screen.APPS, "Apps", "Todas las apps de la radio, en grupos y en el orden que quieras.", 5),
         Step(Screen.PERFORMANCE, "Rendimiento · modo Sport", "Paleta roja, potencia y par estimados, G-meter, altitud y cronómetro automático.", 27, mode = DriveMode.SPORT) {

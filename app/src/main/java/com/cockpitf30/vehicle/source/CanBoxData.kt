@@ -54,6 +54,8 @@ object CanBoxData {
             }
             CanBoxFrames.decode(f).forEach { (k, v) -> values[k] = v }
             if (f.type == CanBoxFrames.TYPE_BASE) baseSeen = true
+            // Teclas del volante: el botón de voz (aprendido en Diagnóstico) abre el asistente.
+            if (f.type in 0x20..0x22) com.cockpitf30.assistant.VoiceButton.onWheelFrame(f.type, f.data)
         }
         if (frames.isNotEmpty()) onFrame?.invoke()
     }
@@ -65,6 +67,9 @@ object CanBoxData {
         stats.toSortedMap().forEach { (t, s) -> add("0x%02X ×%d  %s".format(t, s.count, s.last)) }
         if (bad.get() > 0) add("suma incorrecta ×${bad.get()}")
     }
+
+    /** Última trama de ese tipo en hex, o null. */
+    fun last(type: Int): String? = stats[type]?.last
 
     fun framesTotal(): Long = stats.values.sumOf { it.count }
 }

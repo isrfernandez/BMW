@@ -80,7 +80,7 @@ fun DiagnosticsScreen() {
     val modes = remember { SourceMode.entries.filter { it != SourceMode.SERIAL || settings.sourceMode == SourceMode.SERIAL } }
 
     // Lo de la radio va al principio: el informe completo pasa de 150 KB y al compartir se recorta.
-    fun report() = buildReport(context, status, input) + radioReport(radioValues, radioChanges, vehicle)
+    fun report() = buildReport(context, status, input) + radioReport(radioValues, radioChanges, vehicle, context)
 
     val first = remember { FocusRequester() }
     InitialFocus(first)
@@ -130,6 +130,15 @@ fun DiagnosticsScreen() {
                 }
             }
             item {
+                DiagCard("Quién conduce (llave)") {
+                    Info("Tramas de la llave de este arranque: ${com.cockpitf30.system.DriverId.keyNote ?: com.cockpitf30.system.CarKey.describe()}")
+                    Info("Se parece a: ${com.cockpitf30.system.DriverId.keyMatch ?: "aún sin mirar"}")
+                    Info("Huella de arranque (arranca con cada llave y mira si cambia algún byte):")
+                    com.cockpitf30.system.DriverId.starts(context).ifEmpty { listOf("Aún ninguna: se guarda 20 s después de arrancar, si llegan tramas de la caja.") }
+                        .forEach { Info(it) }
+                }
+            }
+            item {
                 // Google Maps baja la FM con la «mezcla de navegación» de la propia radio (no pasa por la app).
                 val carValues by com.cockpitf30.vehicle.source.RadioCarData.values.collectAsStateWithLifecycle()
                 var mix by remember { mutableStateOf<String?>(null) }
@@ -171,9 +180,31 @@ fun DiagnosticsScreen() {
             item {
                 DiagCard("Botón de voz del volante") {
                     Info(com.cockpitf30.assistant.VoiceButton.claimNote, Cockpit.TextDim)
-                    Info("Pulsa el botón y mira «Eventos de entrada» (abajo): se apunta cualquier tecla, aviso del coche o apertura de la app de voz.", Cockpit.TextDim)
-                    ChipRow(listOf("Volver a asignar la tecla de voz"), -1) {
-                        Thread({ com.cockpitf30.assistant.VoiceButton.claim(context) }, "boton-voz").start()
+                    var code by remember { mutableStateOf(com.cockpitf30.assistant.VoiceButton.wheelCode(context)) }
+                    var learning by remember { mutableStateOf(false) }
+                    LaunchedEffect(learning) {
+                        while (learning) {
+                            kotlinx.coroutines.delay(300)
+                            if (System.currentTimeMillis() > com.cockpitf30.assistant.VoiceButton.learnUntil) {
+                                learning = false; code = com.cockpitf30.assistant.VoiceButton.wheelCode(context)
+                            }
+                        }
+                    }
+                    Info(
+                        when {
+                            learning -> "Pulsa ahora el botón de voz del volante (15 s)…"
+                            code >= 0 -> "Botón de voz del volante aprendido: tecla %02X %02X de la caja CAN. Pulsarlo es como decir «Hola Athoox».".format(code shr 8, code and 0xFF)
+                            else -> "Sin aprender. La radio no avisa del botón de voz, pero la caja CAN manda las teclas del volante: pulsa Aprender y luego el botón."
+                        },
+                        if (code >= 0 && !learning) Cockpit.BlueLight else Cockpit.Text,
+                    )
+                    Info("Última tecla del volante: ${com.cockpitf30.assistant.VoiceButton.lastWheel ?: "ninguna desde que arrancó la app"}", Cockpit.TextDim)
+                    ChipRow(listOf("Aprender botón de voz", "Olvidarlo", "Volver a asignar la tecla de voz"), -1) {
+                        when (it) {
+                            0 -> { com.cockpitf30.assistant.VoiceButton.learnUntil = System.currentTimeMillis() + 15_000; learning = true }
+                            1 -> { com.cockpitf30.assistant.VoiceButton.setWheelCode(context, -1); code = -1 }
+                            else -> Thread({ com.cockpitf30.assistant.VoiceButton.claim(context) }, "boton-voz").start()
+                        }
                     }
                 }
             }
@@ -191,7 +222,7 @@ fun DiagnosticsScreen() {
             item {
                 val tripLog by com.cockpitf30.vehicle.trip.TripComputer.summaryLog.collectAsStateWithLifecycle()
                 DiagCard("Resumen al apagar el motor") {
-                    Info("Se enseña al apagar el motor (rpm a cero o ACC apagado) si el trayecto pasa de ${com.cockpitf30.vehicle.trip.TripComputer.SUMMARY_MIN_KM} km; si la radio se apaga antes, al volver a arrancar.", Cockpit.TextDim)
+                    Info("Se enseña al apagar el motor (rpm a cero o contacto quitado) si el trayecto pasa de ${com.cockpitf30.vehicle.trip.TripComputer.SUMMARY_MIN_KM} km; si la radio se apaga antes, al volver a arrancar.", Cockpit.TextDim)
                     ChipRow(listOf("Ver el resumen ahora"), -1) { com.cockpitf30.vehicle.trip.TripComputer.showSummary() }
                     if (tripLog.isEmpty()) Info("Sin eventos todavía", Cockpit.TextDim)
                     tripLog.take(15).forEach { Mono(it) }
@@ -411,13 +442,30 @@ private fun vehicleSummary(v: com.cockpitf30.vehicle.VehicleState): String =
 /** Lo que dice la caja CAN y no cabe en VehicleState: freno de mano, cinturones, litros, kilometraje. */
 private fun canBoxSummary(values: Map<String, String>): String {
     fun yes(k: String, si: String, no: String) = when (values[k]) { "true" -> si; "false" -> no; else -> "?" }
-    return "ACC ${yes("can.acc", "sí", "no")} · freno de mano ${yes("can.handbrake", "puesto", "quitado")} · " +
+    // «ACC» aquí es el contacto de la llave (accesorios), no el control de crucero activo: con el
+    // motor en marcha siempre está puesto.
+    return "contacto (llave) ${yes("can.acc", "puesto", "quitado")} · freno de mano ${yes("can.handbrake", "puesto", "quitado")} · " +
         "cierre ${yes("can.central_lock", "cerrado", "abierto")} · cinturón conductor ${yes("can.belt_driver", "puesto", "sin poner")} · " +
         "combustible ${values["can.fuel_liters"] ?: "?"} · km ${values["can.mileage"] ?: "?"} · autonomía ${values["can.fuel_range"] ?: "?"} · " +
         "d7 (¿temperatura?) ${values["can.d7_raw"] ?: "?"} · d8 ${values["can.d8_raw"] ?: "?"} · velocidad ${values["can.speed"] ?: "?"} · rpm ${values["can.rpm"] ?: "?"}"
 }
 
-private fun radioReport(values: Map<String, String>, changes: List<String>, vehicle: com.cockpitf30.vehicle.VehicleState): String = buildString {
+private fun radioReport(values: Map<String, String>, changes: List<String>, vehicle: com.cockpitf30.vehicle.VehicleState, context: android.content.Context): String = buildString {
+    appendLine()
+    appendLine("== Asistente")
+    val va = com.cockpitf30.assistant.VoiceAssistant
+    appendLine("fase ${va.state.value.phase} · motor ${va.state.value.engine ?: "-"} · Google disponible ${va.googleAvailable()}")
+    va.lastSpeechEnd?.let { appendLine("Última frase dicha: $it") }
+    va.lastCut?.let { appendLine("Último corte: $it") }
+    va.lastFailure?.let { appendLine("Último fallo: $it") }
+    va.stateLog.value.forEach { appendLine(it) }
+    appendLine()
+    appendLine("== Fluidez")
+    com.cockpitf30.system.FrameStats.summary().forEach { appendLine(it) }
+    appendLine()
+    appendLine("== Llave")
+    appendLine("Tramas: ${com.cockpitf30.system.DriverId.keyNote ?: com.cockpitf30.system.CarKey.describe()} · se parece a: ${com.cockpitf30.system.DriverId.keyMatch ?: "?"}")
+    com.cockpitf30.system.DriverId.starts(context).forEach { appendLine(it) }
     appendLine()
     appendLine("== Sintonizador FM")
     com.cockpitf30.radio.FactoryTuner.lastProbe?.let { appendLine("Comprobación: ${it.reason}") }

@@ -5,7 +5,9 @@ import com.cockpitf30.ui.screens.Screen
 /** Algo que el asistente ha preguntado y espera que se le conteste. */
 sealed interface Pending {
     /** «¿Te llevo?», «¿Te cuento un chiste?»: con un sí se hace [yes]. */
-    data class Confirm(val yes: Command) : Pending
+    data class Confirm(val yes: Command, val no: Command = Command.No) : Pending
+    /** Ha preguntado «¿cómo te llamas?» al identificar al conductor: basta el nombre solo. */
+    data object Name : Pending
     /** Hay varios contactos con ese nombre: la siguiente frase es el nombre completo o «el segundo». */
     data class ChooseContact(val names: List<String>) : Pending
     /** Ha preguntado algo de charla («¿y tú qué tal?»): lo que se conteste sin sentido de orden se comenta. */
@@ -86,8 +88,13 @@ class Conversation {
         when (p) {
             is Pending.Confirm -> when (parsed) {
                 Command.Yes, Command.GoThere -> return p.yes
-                Command.Cancel -> return Command.No
+                Command.Cancel, Command.No -> return p.no
                 else -> Unit
+            }
+            Pending.Name -> {
+                if (parsed is Command.SetName) return parsed
+                if (parsed == Command.Cancel || parsed == Command.No) return Command.Guest
+                VoiceCommands.bareName(t)?.let { return Command.SetName(it) }
             }
             is Pending.ChooseContact -> {
                 ordinal(t)?.let { i -> p.names.getOrNull(i)?.let { return Command.Call(VoiceCommands.normalize(it)) } }

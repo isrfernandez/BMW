@@ -14,6 +14,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -34,9 +35,10 @@ import kotlinx.coroutines.flow.map
 import kotlin.math.roundToInt
 
 /** Estado de la luz ambiente, ya cuantizado para no redibujar diez veces por segundo. */
-internal enum class GlowMood { CALM, ACCEL, BRAKE, RADAR }
+internal enum class GlowMood { CALM, ACCEL, BRAKE, RADAR, ALARM }
 
-internal fun glowMood(longG: Float, radarAhead: Boolean): Pair<GlowMood, Float> = when {
+internal fun glowMood(longG: Float, radarAhead: Boolean, alarm: Boolean = false): Pair<GlowMood, Float> = when {
+    alarm -> GlowMood.ALARM to 1f
     radarAhead -> GlowMood.RADAR to 1f
     longG <= -0.25f -> GlowMood.BRAKE to ((-longG - 0.25f) / 0.45f).coerceIn(0.3f, 1f)
     longG >= 0.12f -> GlowMood.ACCEL to ((longG - 0.12f) / 0.28f).coerceIn(0.2f, 1f)
@@ -58,24 +60,37 @@ object AmbientLight {
         AppSettings(ctx).ambientLight = on
         holder.value = on
     }
+
+    /** Halo rojo de alarma hasta este instante (p. ej. al intentar borrar al Capi). */
+    val alarmUntil = kotlinx.coroutines.flow.MutableStateFlow(0L)
+
+    /** Pone el halo en rojo [ms] milisegundos, aunque la luz ambiente esté apagada. */
+    fun alarm(ms: Long = 6_000L) { alarmUntil.value = System.currentTimeMillis() + ms }
 }
 
 @Composable
 fun AmbientGlow(modifier: Modifier = Modifier) {
     val ctx = LocalContext.current
-    if (!AmbientLight.enabled(ctx)) return
+    val alarmUntil by AmbientLight.alarmUntil.collectAsState()
+    var alarm by remember { androidx.compose.runtime.mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(alarmUntil) {
+        val left = alarmUntil - System.currentTimeMillis()
+        if (left > 0) { alarm = true; kotlinx.coroutines.delay(left) }
+        alarm = false
+    }
+    if (!AmbientLight.enabled(ctx) && !alarm) return
     val g: State<Float> = remember {
         Telemetry.state.map { (it.longG / 0.05f).roundToInt() * 0.05f }.distinctUntilChanged()
     }.collectAsState(0f)
     val radar by remember { SpeedCameras.state.map { it.ahead != null }.distinctUntilChanged() }.collectAsState(false)
-    val (mood, level) = glowMood(g.value, radar)
+    val (mood, level) = glowMood(g.value, radar, alarm)
     val base = Cockpit.Blue
     val color by animateColorAsState(
-        when (mood) { GlowMood.RADAR, GlowMood.BRAKE -> Color(0xFFFF2A1A); GlowMood.ACCEL -> Cockpit.BlueLight; GlowMood.CALM -> base },
+        when (mood) { GlowMood.RADAR, GlowMood.BRAKE, GlowMood.ALARM -> Color(0xFFFF2A1A); GlowMood.ACCEL -> Cockpit.BlueLight; GlowMood.CALM -> base },
         tween(500), label = "glowColor",
     )
     val strength by animateFloatAsState(0.22f + 0.6f * level, tween(450, easing = FastOutSlowInEasing), label = "glowStrength")
-    val pulse = if (mood == GlowMood.RADAR) {
+    val pulse = if (mood == GlowMood.RADAR || mood == GlowMood.ALARM) {
         rememberInfiniteTransition(label = "glowPulse").animateFloat(0.45f, 1f, infiniteRepeatable(tween(520), RepeatMode.Reverse), label = "p")
     } else remember { mutableFloatStateOf(1f) }
 

@@ -96,6 +96,19 @@ object Radio {
     /** Solo para capturas de pantalla (Paparazzi). */
     internal fun previewState(s: RadioState) { _state.value = s }
 
+    /** Otro conductor ([com.cockpitf30.system.Profiles]): sus favoritos y su volumen. */
+    fun reloadProfile() {
+        if (!started) return
+        val s = settings()
+        _state.update {
+            it.copy(
+                favorites = RadioLogic.favoritesFromJson(s.radioFavorites),
+                fmFavorites = RadioLogic.fmFromJson(s.radioFmFavorites),
+                volume = s.radioVolume,
+            )
+        }
+    }
+
     /** Se llama al arrancar la app: carga favoritos y comprueba el sintonizador en segundo plano. */
     fun init(context: Context) {
         if (started) return

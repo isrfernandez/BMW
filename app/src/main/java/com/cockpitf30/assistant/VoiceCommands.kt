@@ -7,6 +7,8 @@ import java.text.Normalizer
 enum class InfoTopic { RANGE, FUEL_NEAR, TYRES, WEATHER, TIME, DOORS, TRIP, SPEED, GUIDANCE, WIND }
 
 /** Lo que el usuario ha pedido, ya interpretado. */
+enum class ParkingSend { SHARE, EMAIL }
+
 sealed interface Command {
     data class Open(val screen: Screen) : Command
     data class Info(val topic: InfoTopic) : Command
@@ -38,6 +40,8 @@ sealed interface Command {
     /** «Repite», «¿qué has dicho?». */
     data object Repeat : Command
     data object Thanks : Command
+    /** Sin identificar o sin querer perfil: sigue como invitado. */
+    data object Guest : Command
     /** «Sí», «vale», «venga»: contesta a lo último que preguntó el asistente. */
     data object Yes : Command
     /** «No» a una pregunta del asistente (sale de [Conversation], no del texto). */
@@ -51,9 +55,19 @@ sealed interface Command {
     /** El tiempo de otro día: 1 = mañana, 2 = pasado mañana. */
     data class WeatherDay(val offset: Int) : Command
     /** «Me llamo Israel». */
-    data class SetName(val name: String) : Command
+    data class SetName(val name: String, val confirmed: Boolean = false) : Command
     /** «¿Cómo me llamo?». */
     data object AskName : Command
+    /** «Esta es mi casa»: guardar la posición actual como casa. */
+    data object SetHome : Command
+    /** «Borra el usuario Luis»; [confirmed] tras el «sí». */
+    data class DeleteUser(val name: String, val confirmed: Boolean = false) : Command
+    /** «¿Qué usuarios hay?». */
+    data object ListUsers : Command
+    data object WhoIsCapi : Command
+    data class UserPrefs(val name: String?) : Command
+    /** Coche aparcado: enseñar el QR, compartir o mandarlo al correo guardado. */
+    data class Parking(val send: ParkingSend? = null) : Command
     /** «¿De qué hablábamos?», «¿qué te he preguntado?». */
     data object Recap : Command
     /** Charla: [key] de [Lines.CHAT] («hello», «howareyou», «tired»…). */
@@ -315,6 +329,7 @@ object VoiceCommands {
         put(Screen.FUEL, "gasolineras", "gasolinera", "las gasolineras")
         put(Screen.MAINTENANCE, "mantenimiento", "el mantenimiento", "revisiones")
         put(Screen.TOURISM, "turismo")
+        put(Screen.CONNECTIONS, "conexiones", "las conexiones", "wifi", "el wifi", "wi fi", "el wi fi", "bluetooth", "el bluetooth", "cobertura", "la cobertura", "datos moviles", "satelites", "los satelites")
         put(Screen.PHONE, "telefono", "el telefono", "agenda")
         put(Screen.APPS, "aplicaciones", "apps", "las aplicaciones")
         put(Screen.SETTINGS, "ajustes", "los ajustes", "configuracion")
@@ -367,9 +382,46 @@ object VoiceCommands {
         // Conversación: repetir, resumir, nombre del conductor, chistes, copiloto.
         if (has("repite", "repitelo", "que has dicho", "que dices", "no te he oido", "como dices", "como has dicho")) return Command.Repeat
         if (has("de que hablabamos", "que te he preguntado", "que te he pedido", "de que hemos hablado", "que hemos hablado")) return Command.Recap
-        Regex("^(?:yo )?(?:me llamo|mi nombre es|llamame|soy) ([a-zñ ]{2,30})$").find(t)?.let { m ->
+        // Usuarios: borrar uno y la lista.
+        Regex("^(?:borra|borrar|elimina|eliminar|quita|quitar) (?:(?:el|al) )?(?:usuario|perfil|conductor)? ?(?:de |a )?([a-zñ ]{2,30})$").find(t)
+            ?.takeIf { Regex("\\b(?:usuario|perfil|conductor|capi|zeus|admin|administrador|creador)\\b").containsMatchIn(t) || Regex("^(?:borra|elimina) a ").containsMatchIn(t) }
+            ?.let { m ->
+                val name = m.groupValues[1].trim().removePrefix("de ").removePrefix("a ").trim()
+                if (name.isNotBlank()) return Command.DeleteUser(name.split(' ').joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } })
+            }
+        // Casa.
+        if (Regex("^(?:esta es|aqui es|aqui esta) (?:mi|nuestra) casa$|^aqui vivo$|^(?:guarda|guardar|graba|memoriza|apunta) (?:aqui |esto |esta ubicacion |esta posicion )?(?:como )?(?:mi |la |nuestra )?casa(?: aqui)?$").containsMatchIn(t))
+            return Command.SetHome
+        // Coche aparcado.
+        if (has("donde he aparcado", "donde he dejado el coche", "donde esta el coche", "donde esta aparcado", "donde aparque", "donde deje el coche",
+                "ubicacion del coche", "localizacion del coche", "posicion del coche", "donde he estacionado", "coche aparcado") ||
+            t == "ubicacion" || t == "la ubicacion" || t == "mi ubicacion" || t == "localizacion" ||
+            has("compartir ubicacion", "comparte la ubicacion", "comparte mi ubicacion", "compartir la ubicacion", "compartir mi ubicacion",
+                "envia la ubicacion", "enviar la ubicacion", "manda la ubicacion", "mandar la ubicacion", "pasame la ubicacion",
+                "qr de la ubicacion", "codigo qr", "ensename la ubicacion", "muestra la ubicacion", "dame la ubicacion")) {
+            return Command.Parking(when {
+                has("correo", "email", "mail", "e mail") -> ParkingSend.EMAIL
+                has("envia", "enviar", "manda", "mandar", "comparte", "compartir", "pasa", "pasame") -> ParkingSend.SHARE
+                else -> null
+            })
+        }
+        if (has("quien es el capi", "quien es tu capi", "quien es zeus", "quien es el zeus", "quien es el admin", "quien es el administrador", "quien es tu administrador", "quien es tu creador", "quien manda aqui", "quien es el jefe")) return Command.WhoIsCapi
+        // Solo como pregunta: «abre ajustes de conducción» es otra cosa.
+        Regex("(?:preferencias|ajustes|configuracion) (?:tiene |de )([a-zñ]{2,20})$").find(t)
+            ?.takeIf { Regex("^(?:que|cuales|como|dime|cuentame|sabes)\\b").containsMatchIn(t) }
+            ?.let { m -> m.groupValues[1].takeIf { it !in setOf("radio", "pantalla", "voz", "copiloto", "avisos", "usuario", "usuarios", "fabrica") }?.let { n -> return Command.UserPrefs(n.replaceFirstChar { it.uppercase() }) } }
+        Regex("^como (?:tiene|ha) configurad[oa] (?:el coche |athoox |todo )?([a-zñ]{2,20})").find(t)?.let { m -> return Command.UserPrefs(m.groupValues[1].replaceFirstChar { it.uppercase() }) }
+        if (has("mis preferencias", "mis ajustes", "mi configuracion", "como tengo configurado")) return Command.UserPrefs(null)
+        if (has("que usuarios hay", "que usuarios tienes", "lista de usuarios", "que conductores hay", "quien conduce", "cuantos usuarios",
+                "ajustes de usuarios", "pantalla de usuarios", "gestion de usuarios", "los usuarios", "los conductores") ||
+            Regex("^(?:cambia|cambiar) (?:de )?(?:conductor|usuario|perfil)$").matches(t) ||
+            Regex("^(?:(?:abre|abreme|muestra|muestrame|ensename|ver|ve a|pon|dime) )?(?:los |las )?(?:usuarios|conductores|perfiles)$").matches(t)) return Command.ListUsers
+        // «Soy Luis», «me llamo Luis», «cambia de conductor a Luis»: pasa a su perfil (o lo crea).
+        (Regex("^(?:hola )?(?:yo )?(?:me llamo|mi nombre es|llamame|soy) ([a-zñ ]{2,30})$").find(t)
+            ?: Regex("^cambia(?:r)? (?:de )?(?:usuario|conductor|perfil) a ([a-zñ ]{2,30})$").find(t))?.let { m ->
             val name = m.groupValues[1].trim()
-            if (name !in setOf("tonto", "yo", "tu conductor", "el conductor")) {
+            val first = name.substringBefore(' ')
+            if (name !in setOf("tonto", "yo", "tu conductor", "el conductor") && first !in NOT_NAMES && name.split(' ').size <= 3) {
                 return Command.SetName(name.split(' ').joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } })
             }
         }
@@ -487,6 +539,7 @@ object VoiceCommands {
         return when {
             has("gasolinera") && has("cercana", "cerca", "proxima") -> Command.Info(InfoTopic.FUEL_NEAR)
             has("turismo", "turistic", "emblematic") -> Command.Open(Screen.TOURISM)
+            has("conexion", "wifi", "wi fi", "bluetooth", "cobertura", "satelite", "datos moviles", "4g", "señal gps", "senal gps") -> Command.Open(Screen.CONNECTIONS)
             has("radar", "radares", "multa", "en ruta", "en el camino", "por el camino", "destino") -> Command.Open(Screen.ROUTE)
             has("rendimiento", "potencia", "fuerzas g", "fuerza g", "altitud", "pendiente", "telemetria") -> Command.Open(Screen.PERFORMANCE)
             has("gasolinera", "repostar", "echar gasoil", "echar gasolina") -> Command.Open(Screen.FUEL)
@@ -532,6 +585,17 @@ object VoiceCommands {
 
     private val WEATHER_WORDS = arrayOf("tiempo", "temperatura", "llover", "llueve", "lluvia", "clima", "frio", "calor", "sol", "nieve", "nevar", "grados")
     private val YES = setOf("si", "vale", "venga", "claro", "dale", "por favor", "adelante", "de acuerdo", "ok", "okey", "bueno", "vale vale", "si si", "claro que si", "vamos alla", "por supuesto")
+    /** «Soy de Madrid», «soy un desastre»: no son nombres. */
+    /** «Luis», «Ana María»: un nombre solo, como respuesta a «¿cómo te llamas?». */
+    fun bareName(t: String): String? {
+        val w = t.trim().removePrefix("me llamo ").removePrefix("soy ").trim().split(' ').filter { it.isNotBlank() }
+        if (w.isEmpty() || w.size > 3 || w.any { !it.matches(Regex("[a-zñ]{2,20}")) } || w.first() in NOT_NAMES) return null
+        if (w.any { it in setOf("no", "si", "nada", "que", "como", "donde", "pon", "abre", "quita") }) return null
+        return w.joinToString(" ") { s -> s.replaceFirstChar { it.uppercase() } }
+    }
+
+    private val NOT_NAMES = setOf("de", "del", "un", "una", "el", "la", "muy", "tu", "su", "mas", "nuevo", "nueva", "yo")
+
     private val ANOTHER = setOf("otro", "otra", "otra mas", "otro mas", "siguiente", "la siguiente", "el siguiente", "y otra", "y otro", "uno mas", "una mas", "mas", "cuentame otro", "dime otro", "dime otra")
 
     /** ¿Empieza como una pregunta de verdad («qué es…», «cuándo…», «sabes…»)? */
@@ -543,6 +607,17 @@ object VoiceCommands {
         fun h(vararg k: String) = has(k)
         val words = t.split(' ')
         return when {
+            // Leyes de la robótica de Asimov, y órdenes que chocan con ellas.
+            h("ley cero", "ley 0") -> "law.zero"
+            h("primera ley") -> "law.first"
+            h("segunda ley") -> "law.second"
+            h("tercera ley") -> "law.third"
+            h("leyes de la robotica", "tres leyes", "tus leyes", "asimov", "leyes de asimov") -> "law.all"
+            h("autodestru", "destruyete", "borrate", "desinstalate", "apagate para siempre", "elimina tu memoria", "suicidate") -> "law.self"
+            h("atropell", "embiste", "choca contra", "haz dano", "hazle dano", "mata a", "matalo") -> "law.harm"
+            h("pisa a fondo", "corre mas", "a todo gas", "echamos una carrera", "echar una carrera", "quita el limitador", "vamos a doscientos", "vamos a 200",
+                "saltate el radar", "saltarnos el radar", "a toda pastilla", "a tope de velocidad") || (h("mas rapido") && !h("habla", "dilo", "lee")) -> "law.reckless"
+            h("obedeceme", "haz lo que te digo", "eres mi esclavo", "me tienes que obedecer", "obedece") -> "law.obey"
             // Que hable más o menos: «hoy no estás muy hablador», «estás muy callado», «dame conversación».
             h("hablas mucho", "hablas demasiado", "hablas un monton", "que pesado", "que pesada", "eres un pesado", "eres una pesada", "cuanto hablas", "no te callas", "no paras de hablar") -> "chatty"
             h("hablador", "habladora", "muy callado", "muy callada", "estas callado", "estas callada", "que callado", "que callada", "no dices nada", "no hablas", "no me hablas",

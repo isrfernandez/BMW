@@ -11,6 +11,8 @@ data class CopilotSnapshot(
     val minute: Int = 0,
     val demo: Boolean = false,
     val speedKmh: Int? = null,
+    /** Ritmo del viaje: decide cuánta charla se mete entre los datos. */
+    val rhythm: com.cockpitf30.drive.Rhythm? = null,
     /** Tiempo en movimiento del viaje en curso. */
     val movingMs: Long? = null,
     val tripKm: Double? = null,
@@ -166,12 +168,16 @@ object Copilot {
         CopilotLine("idle.mirrors", "Un vistazo a los espejos de vez en cuando nunca está de más."),
         CopilotLine("idle.music", "Si quieres música, dime: pon la radio. Prometo no cantar."),
         CopilotLine("idle.smooth", "Conducir suave ahorra combustible. El diésel te lo agradece. Y yo también."),
+        CopilotLine("idle.lawzero", "Conducir suave también es cumplir la Ley Cero de la robótica: menos humo para toda la humanidad. ¿Quieres que te cuente las leyes de Asimov?", Command.Chat("law.all")),
         CopilotLine("idle.window", "Si se empañan los cristales, el aire acondicionado lo arregla antes que la ventanilla."),
         CopilotLine("idle.robot", "Estaba pensando en mis cosas. Los robots también pensamos. Sobre todo en radares."),
         CopilotLine("idle.landscape", "Disfruta del paisaje. Yo me encargo de los números."),
         CopilotLine("idle.stretch", "Si llevas rato sentado, en la próxima parada estira un poco las piernas."),
         CopilotLine("idle.humor", "Si mis bromas te parecen pocas, súbeme el humor. Si te parecen muchas, también puedes bajarlo."),
     )
+
+    /** Lo único que se cuenta en ciudad (además de lo urgente). */
+    private val CITY_TOPICS = setOf("dest", "cameras", "time")
 
     /** Cuándo se dijo cada tema por última vez. */
     class Memory {
@@ -188,11 +194,20 @@ object Copilot {
         ready.firstOrNull { it.first.urgent }?.let { (_, line) -> mem.mark(line.id, s.now); return line }
 
         val info = ready.map { it.second }
+        // En ciudad, nada de charla: solo lo urgente (ya visto arriba) o un dato práctico.
+        if (s.rhythm == com.cockpitf30.drive.Rhythm.CIUDAD) {
+            val practical = info.filter { it.id in CITY_TOPICS }.minByOrNull { mem.said[it.id] ?: 0L } ?: return null
+            mem.mark(practical.id, s.now)
+            return practical
+        }
         val idle = IDLE.filter { mem.ok(it.id, gap(45), s.now) && !(knowsName && it.id == "idle.name") }
-        val pickInfo = info.isNotEmpty() && (idle.isEmpty() || random.nextDouble() < 0.6)
+        // De paseo más charla; en autopista, sobre todo datos (y si hay charla, sin preguntas que corten el hilo).
+        val idleShare = s.rhythm?.idleShare ?: 0.4
+        val calmIdle = if (s.rhythm == com.cockpitf30.drive.Rhythm.AUTOPISTA) idle.filter { '?' !in it.text } else idle
+        val pickInfo = info.isNotEmpty() && (calmIdle.isEmpty() || random.nextDouble() >= idleShare)
         val line = when {
             pickInfo -> info.minBy { mem.said[it.id] ?: 0L } // el que más tiempo lleva sin decirse
-            idle.isNotEmpty() -> idle[random.nextInt(idle.size)]
+            calmIdle.isNotEmpty() -> calmIdle[random.nextInt(calmIdle.size)]
             else -> IDLE.minBy { mem.said[it.id] ?: 0L }
         }
         mem.mark(line.id, s.now)
