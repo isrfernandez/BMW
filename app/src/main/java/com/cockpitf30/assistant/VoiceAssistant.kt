@@ -2262,6 +2262,30 @@ object VoiceAssistant {
         })
     }
 
+    @Volatile private var cloudReply: String? = null
+    @Volatile private var cloudOffUntil = 0L
+
+    /** ¿Esta frase con la voz en la nube? Con clave, datos y sin fallo reciente. */
+    private fun useCloud(): Boolean = settings().assistantCloudVoice && settings().assistantCloudKey != null &&
+        System.currentTimeMillis() > cloudOffUntil && online()
+
+    /** Ajustes: probar la voz en la nube. Devuelve el error si no ha ido (bloqueante corto: en IO). */
+    fun testCloudVoice(context: Context) {
+        app = context.applicationContext
+        initTts()
+        cloudOffUntil = 0L
+        say(if (online()) "Hola, soy Athoox con la voz de la nube. ¿Te llevo a casa? ¿O prefieres dar una vuelta?" else "Ahora no hay Internet: uso la voz de la radio.")
+    }
+
+    /** Ajustes: siguiente voz de la nube. */
+    fun nextCloudVoice(context: Context): String {
+        val list = CloudTts.VOICES
+        val next = list[(list.indexOf(settings().assistantCloudVoiceName) + 1).mod(list.size)]
+        settings().assistantCloudVoiceName = next
+        testCloudVoice(context)
+        return next
+    }
+
     /** ¿Hay Internet de verdad (red validada)? */
     private fun online(): Boolean = runCatching {
         val cm = app?.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager ?: return false
@@ -2367,7 +2391,9 @@ object VoiceAssistant {
             muted = true
             refreshNetVoice()
             val filter = settings().assistantRobotVoice && settings().assistantRobotStrength.filter
-            if (filter && !robotBroken && startRobot(t, chunks)) {
+            if (useCloud() && startRobot(t, chunks, cloud = true)) {
+                // Voz en la nube: por el mismo camino de audio que la TARS (con su filtro si toca).
+            } else if (filter && !robotBroken && startRobot(t, chunks)) {
                 // El final lo marca la reproducción ([playRobotChunks]).
             } else {
                 speakPlain(t, chunks, 0)
@@ -2405,10 +2431,30 @@ object VoiceAssistant {
     }
 
     /** Pide al motor cada trozo en un WAV (en cola) y arranca la reproducción con efecto TARS. */
-    private fun startRobot(t: TextToSpeech, chunks: List<String>): Boolean {
+    private fun startRobot(t: TextToSpeech, chunks: List<String>, cloud: Boolean = false): Boolean {
         robotReady.clear()
         robotPreloaded.clear()
         val ids = chunks.map { ROBOT_ID + (++robotSeq) }
+        cloudReply = if (cloud) replyId else null
+        if (cloud) {
+            val key = settings().assistantCloudKey ?: return false
+            val voice = settings().assistantCloudVoiceName
+            val st = settings().assistantRobotStrength
+            val rate = (if (settings().assistantRobotVoice) st.rate else 1f) * settings().assistantSpeechRate / 100f
+            for (i in chunks.indices) {
+                synchronized(robotCache) { robotCache[robotKey(chunks[i])] }?.let { robotPreloaded[ids[i]] = it; robotReady[ids[i]] = true }
+            }
+            // En orden, uno tras otro: el primero (frase corta) llega antes y empieza a sonar.
+            scope.launch(Dispatchers.IO) {
+                for (i in chunks.indices) {
+                    if (robotReady[ids[i]] == true) continue
+                    robotReady[ids[i]] = CloudTts.synthesize(key, chunks[i], voice, rate, robotFile(ids[i]))
+                }
+            }
+            val rid = replyId
+            robotJob = scope.launch { playRobotChunks(rid, ids, chunks) }
+            return true
+        }
         for (i in chunks.indices) {
             // Frases cortas ya dichas antes («Rendimiento», «Radares en ruta»): sin volver a sintetizar.
             val cached = synchronized(robotCache) { robotCache[robotKey(chunks[i])] }
@@ -2448,8 +2494,14 @@ object VoiceAssistant {
                 if (replyId != rid) return
                 if (pcm == null || pcm.samples.isEmpty()) {
                     // La voz TARS no sale: lo que falta, con la voz normal (y no se reintenta hasta reiniciar).
-                    Log.w(TAG, "Voz robot no disponible en el trozo $i; voz normal")
-                    robotBroken = true
+                    if (cloudReply == rid) {
+                        // La nube no responde (sin datos, clave…): 5 min con la voz de la radio.
+                        Log.w(TAG, "Voz en la nube: ${CloudTts.lastError}")
+                        cloudOffUntil = System.currentTimeMillis() + 5 * 60_000L
+                    } else {
+                        Log.w(TAG, "Voz robot no disponible en el trozo $i; voz normal")
+                        robotBroken = true
+                    }
                     track?.let { tr -> waitPlayed(tr, written) }
                     if (replyId != rid) return
                     stopPlayer()
@@ -2545,7 +2597,7 @@ object VoiceAssistant {
     }
     private val robotPreloaded = java.util.concurrent.ConcurrentHashMap<String, Pcm>()
     private const val ROBOT_CACHE_CHARS = 40
-    private fun robotKey(chunk: String) = "${settings().assistantSpeechRate}|${settings().assistantPitch}|${settings().assistantRobotVoice && settings().assistantRobotStrength.filter}|${settings().assistantRobotStrength}|${runCatching { tts?.voice?.name }.getOrNull()}|$chunk"
+    private fun robotKey(chunk: String) = "${if (useCloud()) "cloud:" + settings().assistantCloudVoiceName else "local"}|${settings().assistantSpeechRate}|${settings().assistantPitch}|${settings().assistantRobotVoice && settings().assistantRobotStrength.filter}|${settings().assistantRobotStrength}|${runCatching { tts?.voice?.name }.getOrNull()}|$chunk"
 
     private fun robotFile(id: String) = java.io.File(app.cacheDir, "$id.wav")
 

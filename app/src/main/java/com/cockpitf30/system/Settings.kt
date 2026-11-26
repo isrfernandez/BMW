@@ -76,6 +76,19 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_ASSISTANT_NET_VOICE_V2, false)
         set(value) = prefs.edit().putBoolean(KEY_ASSISTANT_NET_VOICE_V2, value).apply()
 
+    /** Voz en la nube (Google Cloud TTS) con la clave del conductor. */
+    var assistantCloudVoice: Boolean
+        get() = prefs.getBoolean("assistant_cloud_voice", false)
+        set(value) = prefs.edit().putBoolean("assistant_cloud_voice", value).apply()
+
+    var assistantCloudKey: String?
+        get() = prefs.getString("assistant_cloud_key", null)?.takeIf { it.isNotBlank() }
+        set(value) = prefs.edit().putString("assistant_cloud_key", value?.trim()).apply()
+
+    var assistantCloudVoiceName: String
+        get() = prefs.getString("assistant_cloud_voice_name", null) ?: com.cockpitf30.assistant.CloudTts.DEFAULT_VOICE
+        set(value) = prefs.edit().putString("assistant_cloud_voice_name", value).apply()
+
     /** Velocidad de la voz en % sobre la del estilo elegido (50..200). */
     var assistantSpeechRate: Int
         get() = prefs.getInt(KEY_ASSISTANT_SPEECH_RATE, 100)

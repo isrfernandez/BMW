@@ -297,6 +297,34 @@ private fun AssistantSettings() {
         StepperRow("Tono", "Menos = más grave. 100 % = el del tipo de voz.", "$pitch %",
             onMinus = { pitch = (pitch - 5).coerceAtLeast(50); settings.assistantPitch = pitch; assistant.applyVoice(); assistant.testVoice(ctx) },
             onPlus = { pitch = (pitch + 5).coerceAtMost(150); settings.assistantPitch = pitch; assistant.applyVoice(); assistant.testVoice(ctx) })
+        var cloud by remember { mutableStateOf(settings.assistantCloudVoice) }
+        var cloudKey by remember { mutableStateOf(settings.assistantCloudKey) }
+        var editKey by remember { mutableStateOf(false) }
+        ChoiceRow("Voz en la nube (Google)", "Más natural y entona las preguntas. Usa datos y tu clave de Google Cloud; sin cobertura, la voz de la radio.", listOf("Sí", "No"), if (cloud) 0 else 1) {
+            cloud = it == 0
+            settings.assistantCloudVoice = cloud
+            if (cloud && cloudKey == null) editKey = true else if (cloud) assistant.testCloudVoice(ctx)
+        }
+        if (cloud) {
+            ActionRow("Clave de Google Cloud",
+                (if (cloudKey == null) "Sin clave. En console.cloud.google.com: activa «Cloud Text-to-Speech API» y crea una clave de API."
+                else "Guardada (…${cloudKey!!.takeLast(4)}).") + (com.cockpitf30.assistant.CloudTts.lastError?.let { " Último error: $it" } ?: ""),
+                if (cloudKey == null) "Añadir" else "Cambiar") { editKey = true }
+            var cloudVoice by remember { mutableStateOf(settings.assistantCloudVoiceName) }
+            ChoiceRow("Voz de la nube",
+                "$cloudVoice (${if (cloudVoice in com.cockpitf30.assistant.CloudTts.MALE) "hombre" else "mujer"}). «Cambiar» las va probando.",
+                listOf("Probar", "Cambiar ›"), 0) {
+                if (it == 0) assistant.testCloudVoice(ctx) else cloudVoice = assistant.nextCloudVoice(ctx)
+            }
+        }
+        if (editKey) TextDialog("Clave de API de Google Cloud", cloudKey.orEmpty(), onDismiss = { editKey = false }, keyboard = androidx.compose.ui.text.input.KeyboardType.Text) { v ->
+            val k = v.trim()
+            when {
+                k.isEmpty() -> { settings.assistantCloudKey = null; cloudKey = null; editKey = false; null }
+                k.length < 30 || k.contains(' ') -> "No parece una clave de API (suelen empezar por AIza…)."
+                else -> { settings.assistantCloudKey = k; cloudKey = k; editKey = false; assistant.testCloudVoice(ctx); null }
+            }
+        }
         var netVoice by remember { mutableStateOf(settings.assistantNetVoice) }
         ChoiceRow("Voz con Internet", "Con datos, la misma voz en su versión de red de Google (si la tiene). Sin cobertura vuelve sola a la del coche.", listOf("Sí", "No"), if (netVoice) 0 else 1) {
             netVoice = it == 0
