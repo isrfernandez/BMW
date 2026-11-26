@@ -2267,7 +2267,7 @@ object VoiceAssistant {
 
     /** ¿Esta frase con la voz en la nube? Con clave, datos y sin fallo reciente. */
     private fun useCloud(): Boolean = settings().assistantCloudVoice && settings().assistantCloudKey != null &&
-        System.currentTimeMillis() > cloudOffUntil && online()
+        System.currentTimeMillis() > cloudOffUntil && settings().cloudCharsThisMonth < settings().cloudMonthlyCap && online()
 
     /** Ajustes: probar la voz en la nube. Devuelve el error si no ha ido (bloqueante corto: en IO). */
     fun testCloudVoice(context: Context) {
@@ -2448,7 +2448,9 @@ object VoiceAssistant {
             scope.launch(Dispatchers.IO) {
                 for (i in chunks.indices) {
                     if (robotReady[ids[i]] == true) continue
-                    robotReady[ids[i]] = CloudTts.synthesize(key, chunks[i], voice, rate, robotFile(ids[i]))
+                    val ok = CloudTts.synthesize(key, chunks[i], voice, rate, robotFile(ids[i]))
+                    if (ok) settings().addCloudChars(chunks[i].length)
+                    robotReady[ids[i]] = ok
                 }
             }
             val rid = replyId

@@ -310,6 +310,13 @@ private fun AssistantSettings() {
                 (if (cloudKey == null) "Sin clave. En console.cloud.google.com: activa «Cloud Text-to-Speech API» y crea una clave de API."
                 else "Guardada (…${cloudKey!!.takeLast(4)}).") + (com.cockpitf30.assistant.CloudTts.lastError?.let { " Último error: $it" } ?: ""),
                 if (cloudKey == null) "Añadir" else "Cambiar") { editKey = true }
+            var cap by remember { mutableStateOf(settings.cloudMonthlyCap) }
+            val used = settings.cloudCharsThisMonth
+            StepperRow("Tope al mes",
+                "Este mes: ${"%,d".format(used).replace(',', '.')} caracteres" + (if (used >= cap) ". Tope alcanzado: voz de la radio hasta el mes que viene." else ". Google da 1 millón gratis al mes."),
+                "${cap / 1000} mil",
+                onMinus = { cap = (cap - 100_000).coerceAtLeast(100_000); settings.cloudMonthlyCap = cap },
+                onPlus = { cap = (cap + 100_000).coerceAtMost(2_000_000); settings.cloudMonthlyCap = cap })
             var cloudVoice by remember { mutableStateOf(settings.assistantCloudVoiceName) }
             ChoiceRow("Voz de la nube",
                 "$cloudVoice (${if (cloudVoice in com.cockpitf30.assistant.CloudTts.MALE) "hombre" else "mujer"}). «Cambiar» las va probando.",

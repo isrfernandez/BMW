@@ -85,6 +85,25 @@ class AppSettings(context: Context) {
         get() = prefs.getString("assistant_cloud_key", null)?.takeIf { it.isNotBlank() }
         set(value) = prefs.edit().putString("assistant_cloud_key", value?.trim()).apply()
 
+    /** Caracteres mandados a la voz en la nube este mes (Google cobra por carácter, espacios incluidos). */
+    val cloudCharsThisMonth: Int
+        get() = prefs.getInt(cloudMonthKey(), 0)
+
+    fun addCloudChars(n: Int) {
+        val k = cloudMonthKey()
+        prefs.edit().putInt(k, prefs.getInt(k, 0) + n).apply()
+    }
+
+    /** Tope mensual de caracteres en la nube; al llegar, voz de la radio hasta el mes siguiente. */
+    var cloudMonthlyCap: Int
+        get() = prefs.getInt("assistant_cloud_cap", 900_000)
+        set(value) = prefs.edit().putInt("assistant_cloud_cap", value.coerceIn(100_000, 2_000_000)).apply()
+
+    private fun cloudMonthKey(): String {
+        val c = java.util.Calendar.getInstance()
+        return "assistant_cloud_chars_%04d%02d".format(c.get(java.util.Calendar.YEAR), c.get(java.util.Calendar.MONTH) + 1)
+    }
+
     var assistantCloudVoiceName: String
         get() = prefs.getString("assistant_cloud_voice_name", null) ?: com.cockpitf30.assistant.CloudTts.DEFAULT_VOICE
         set(value) = prefs.edit().putString("assistant_cloud_voice_name", value).apply()
