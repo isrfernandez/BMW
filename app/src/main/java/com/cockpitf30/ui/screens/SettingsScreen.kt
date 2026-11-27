@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -311,9 +312,12 @@ private fun AssistantSettings() {
                 else "Guardada (…${cloudKey!!.takeLast(4)}).") + (com.cockpitf30.assistant.CloudTts.lastError?.let { " Último error: $it" } ?: ""),
                 if (cloudKey == null) "Añadir" else "Cambiar") { editKey = true }
             var cap by remember { mutableStateOf(settings.cloudMonthlyCap) }
-            val used = settings.cloudCharsThisMonth
+            // Uso del mes, al día mientras la pantalla está abierta (cada frase lo sube).
+            var used by remember { mutableStateOf(settings.cloudCharsThisMonth) }
+            LaunchedEffect(Unit) { while (true) { used = settings.cloudCharsThisMonth; kotlinx.coroutines.delay(3_000) } }
+            CloudUsageBar(used, cap)
             StepperRow("Tope al mes",
-                "Este mes: ${"%,d".format(used).replace(',', '.')} caracteres" + (if (used >= cap) ". Tope alcanzado: voz de la radio hasta el mes que viene." else ". Google da 1 millón gratis al mes."),
+                "Al llegar, voz de la radio hasta el mes siguiente.",
                 "${cap / 1000} mil",
                 onMinus = { cap = (cap - 100_000).coerceAtLeast(100_000); settings.cloudMonthlyCap = cap },
                 onPlus = { cap = (cap + 100_000).coerceAtMost(2_000_000); settings.cloudMonthlyCap = cap })
@@ -1110,3 +1114,48 @@ private fun openStockLauncher(context: android.content.Context) {
         context.startActivity(android.content.Intent(home).setClassName(target.packageName, target.name).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }
+
+/**
+ * Consumo de la voz de Google este mes: barra sobre el millón gratuito, verde → ámbar → roja, con una
+ * marca en el tope de la app (a partir de ahí, voz de la radio).
+ */
+@Composable
+internal fun CloudUsageBar(used: Int, cap: Int) {
+    val free = 1_000_000
+    val scale = maxOf(free, cap).toFloat()
+    val frac = (used / scale).coerceIn(0f, 1f)
+    val ofCap = used.toFloat() / cap
+    val color = when {
+        ofCap >= 1f -> Color(0xFFE5484D)
+        ofCap >= 0.75f -> Color(0xFFF5A524)
+        else -> Color(0xFF3DD68C)
+    }
+    fun n(v: Int) = "%,d".format(java.util.Locale("es", "ES"), v).replace(',', '.')
+    Column(Modifier.fillMaxWidth().padding(start = 4.dp, top = 4.dp, bottom = 8.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+            Text("Voz de Google este mes", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = Cockpit.Text)
+            Text("${(ofCap * 100).toInt().coerceAtMost(999)} % del tope", style = numeric(22, FontWeight.Medium), color = color)
+        }
+        Spacer(Modifier.height(8.dp))
+        val ink = Cockpit.Text
+        Canvas(Modifier.fillMaxWidth().height(18.dp)) {
+            val r = androidx.compose.ui.geometry.CornerRadius(size.height / 2, size.height / 2)
+            drawRoundRect(ink.copy(alpha = 0.14f), cornerRadius = r)
+            if (frac > 0f) drawRoundRect(color, size = size.copy(width = maxOf(size.height, size.width * frac)), cornerRadius = r)
+            // Marcas: tope de la app (fuerte) y millón gratuito (gris), si caben dentro.
+            val xCap = size.width * (cap / scale)
+            drawLine(ink, androidx.compose.ui.geometry.Offset(xCap, -4f), androidx.compose.ui.geometry.Offset(xCap, size.height + 4f), strokeWidth = 4f)
+            if (cap != free) {
+                val xFree = (size.width * (free / scale)).coerceAtMost(size.width - 2f)
+                drawLine(ink.copy(alpha = 0.45f), androidx.compose.ui.geometry.Offset(xFree, 0f), androidx.compose.ui.geometry.Offset(xFree, size.height), strokeWidth = 2f)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "${n(used)} caracteres · tope ${n(cap)} · gratis hasta ${n(free)}" +
+                if (used >= cap) ". Tope alcanzado: voz de la radio hasta el día 1." else "",
+            style = MaterialTheme.typography.bodyMedium, color = Cockpit.Text.copy(alpha = 0.7f),
+        )
+    }
+}
+
